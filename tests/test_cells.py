@@ -75,7 +75,8 @@ def test_cell_label_notation():
 def test_lock_registry_is_data():
     names = [lock.name for lock in CELL_LOCKS]
     assert len(names) == len(set(names)) and "ice" in names
-    assert all(lock.unlock in ("taps", "fills") for lock in CELL_LOCKS)
+    assert all(lock.unlock in ("taps", "fills", "key", "path") for lock in CELL_LOCKS)
+    assert {"lock", "key"} <= set(names)
 
 
 PAL = Palette(buckets={"red": [(50.0, 60.0, 40.0)], "blue": [(35.0, 20.0, -60.0)]},

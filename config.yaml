@@ -61,6 +61,12 @@ vision:                      # vision.py / screens.py; colours come from dataset
   cell_shift_up: 0.1         # objects are drawn overhanging into the row above
   cell_inset: 0.125          # crop inset per side, share of the cell size
   panel_tol: 12.0            # LAB distance to the panel background colour
+  # live crops can be a few px off (pt/px rounding, window edge, hover-chrome frame):
+  edge_margin: 0.03          # share of width ignored at the left/right frame edge (grid finder)
+  counter_search: 0.02       # share of height the "k/5" search extends the counter zone up/down
+  disc_min_hue_deg: 30.0     # face-down tower = centre disc whose LAB hue differs this much from the rim
+  unknown_sand_min: 0.03     # unknown sand colour = a compact cluster of unmatched pixels >= this share of the picture
+  icon_threshold: 0.75       # lock / key icon match (grey shape; L183: icons >= 0.82, other cells <= 0.62)
   empty_tol: 10.0            # LAB distance to the empty-cell colour
   empty_min_frac: 0.5        # share of empty-colour pixels for an empty cell
   face_up_max_ratio: 0.88    # centre V / top-stage rim V below this = face-up (up <= 0.83, down >= 0.93)
@@ -91,6 +97,7 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   weight_exposed: 1.0        # score per exposed share of the colour
   weight_open_bucket: 0.15   # score per bucket the tap connects to the exit (lookahead)
   weight_open_lock: 0.05     # score per lock cell (ice, curtain) the tap connects to the exit
+  weight_key_unlock: 0.15    # score per bucket under a lock that the tap opens (its key gets connected and flies)
   weight_new_colour: 0.05    # bonus for a colour that is not on the belt yet (also the tie-break)
   # demand-aware exposure: avail = contact-layer share of the colour - this x (1 - fill) for
   # every same-colour bucket already on the belt

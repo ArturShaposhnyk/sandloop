@@ -10,7 +10,8 @@ from state import ConveyorBucket, LevelState, Lock
 def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optional[Dict] = None,
                exposed: Optional[Dict] = None, locks=()) -> LevelState:
     """Rows of space-separated cells: '.' empty, 'x' no cell, 'ice3' lock, 'cur2' curtain cell,
-    'red' face-up bucket, 'red_' face-down bucket, 'red/blue' tower (top/body)."""
+    'red' face-up bucket, 'red_' face-down bucket, 'red/blue' tower (top/body),
+    'lock:red' / 'key:red' lock icon / key."""
     grid = []
     for r, line in enumerate(rows):
         out = []
@@ -21,6 +22,10 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
                 out.append(Cell(r, c, Kind.EMPTY))
             elif t.startswith("ice"):
                 out.append(Cell(r, c, Kind.LOCK, lock="ice", unlock="taps", counter=int(t[3:])))
+            elif t.startswith(("lock:", "key:")):
+                kind, _, colour = t.partition(":")
+                out.append(Cell(r, c, Kind.LOCK, lock=kind,
+                                unlock="key" if kind == "lock" else "path", color=colour))
             elif t.startswith("cur"):
                 out.append(Cell(r, c, Kind.LOCK, lock="curtain", unlock="fills",
                                 counter=int(t[3:]), region=0))
@@ -34,7 +39,8 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
     for row in grid:
         for cell in row:
             if cell is not None and cell.kind is Kind.LOCK and cell.region is None:
-                locks.append(Lock(cell.lock, cell.unlock, cell.counter, ((cell.row, cell.col),)))
+                locks.append(Lock(cell.lock, cell.unlock, cell.counter, ((cell.row, cell.col),),
+                                  cell.color))
     st = LevelState(grid, exits, [], [], locks, k, 5, list(conveyor), sand or {}, exposed or {})
     st.tappable = st.playable()
     return st
@@ -159,3 +165,63 @@ def test_state_conveyor_ignores_uncertain_edge_slots(analyzer):
     assert st.conveyor_k == 5
     assert all(b.fill is not None for b in st.conveyor)
     assert [b.color for b in st.conveyor] == ["orange", "cream", "darkred", "cream"]
+
+
+# -- locks and keys (L183, docs/GAME_RULES.md) ----------------------------------------------------
+
+def test_key_connected_by_a_tap_flies_and_opens_its_lock():
+    st = make_state(["red blue x",
+                     "key:yellow pink_ lock:yellow",
+                     "lock:red cyan_ cyan_"])
+    assert st.hidden_buckets == 2                 # one under every lock cell
+    nxt = st.after_tap((0, 0))                    # connects the yellow key to the exit
+    assert nxt.unlocked == [("yellow", ((1, 2),))]
+    assert nxt.cell((1, 0)).kind is Kind.EMPTY    # the key flew away (assumption)
+    assert nxt.cell((1, 2)).kind is Kind.UNKNOWN  # lock open, bucket colour not seen yet
+    assert nxt.cell((2, 0)).kind is Kind.LOCK     # the red lock stays: its key is not here
+    assert [l.kind for l in nxt.locks] == ["lock"]
+    assert st.cell((1, 0)).kind is Kind.LOCK      # original state untouched
+
+
+def test_key_release_chains_and_unconnected_key_stays():
+    st = make_state(["red pink_ x",
+                     "key:blue lock:red green_",
+                     "key:red lock:blue cyan_"])
+    nxt = st.after_tap((0, 0))                    # blue key flies, which connects the red key
+    assert nxt.unlocked == [("blue", ((2, 1),)), ("red", ((1, 1),))]
+    st2 = make_state(["red blue",
+                      "pink_ key:red",
+                      "lock:red cyan_"])
+    assert st2.after_tap((0, 0)).unlocked == []   # the key is still boxed in
+    assert st2.after_tap((0, 1)).unlocked == [("red", ((2, 0),))]
+
+
+def test_key_already_connected_is_no_credit_for_a_tap():
+    st = make_state(["key:red blue",
+                     "lock:red pink_"])
+    nxt = st.after_tap((0, 1))
+    assert nxt.unlocked == [] and nxt.cell((0, 0)).kind is Kind.EMPTY
+
+
+def test_adjacent_lock_cells_of_one_colour_form_one_lock():
+    from state import _merge_lock_icons
+
+    locks = [Lock("lock", "key", None, ((1, 1),), "red"), Lock("lock", "key", None, ((1, 2),), "red"),
+             Lock("lock", "key", None, ((3, 3),), "blue"), Lock("ice", "taps", 2, ((0, 0),))]
+    merged = _merge_lock_icons(locks)
+    assert sorted((l.kind, l.color, l.cells) for l in merged if l.kind == "lock") == [
+        ("lock", "blue", ((3, 3),)), ("lock", "red", ((1, 1), (1, 2)))]
+
+
+def test_strategy_credits_the_lock_a_tap_opens():
+    from config import StrategyConfig
+    from strategy import choose
+
+    st = make_state(["red blue",
+                     "key:yellow pink_",
+                     "lock:yellow cyan_"], sand={"red": 0.3, "blue": 0.3},
+                    exposed={"red": 0.2, "blue": 0.2})
+    d = choose(st, StrategyConfig())
+    red = next(c for c in d.candidates if c.color == "red")
+    assert red.unlocks == [("yellow", ((2, 0),))] and "opens lock yellow with 1 bucket" in red.describe()
+    assert d.move.color == "red"                  # same exposure, but it releases the key

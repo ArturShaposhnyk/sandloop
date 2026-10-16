@@ -78,6 +78,11 @@ class VisionConfig:
     cell_shift_up: float = 0.1        # objects are drawn overhanging into the row above
     cell_inset: float = 0.125         # crop inset per side, share of the cell size
     panel_tol: float = 12.0           # LAB distance to the panel background colour
+    edge_margin: float = 0.03         # share of width ignored at the frame's left/right edge
+    counter_search: float = 0.02      # share of height the k/5 search extends the counter zone
+    disc_min_hue_deg: float = 30.0    # face-down tower: centre disc hue vs the rim's hue
+    unknown_sand_min: float = 0.03    # share of the picture for an unknown sand colour
+    icon_threshold: float = 0.75      # lock / key icon template match (other cells <= 0.62)
     empty_tol: float = 10.0           # LAB distance to the empty-cell colour
     empty_min_frac: float = 0.5       # share of empty-colour pixels for an empty cell
     face_up_max_ratio: float = 0.88   # centre V / top-stage rim V below this = face-up
@@ -109,6 +114,7 @@ class StrategyConfig:
     weight_exposed: float = 1.0           # score per exposed share of the colour
     weight_open_bucket: float = 0.15      # score per bucket the tap connects to the exit
     weight_open_lock: float = 0.05        # score per lock cell the tap connects to the exit
+    weight_key_unlock: float = 0.15       # score per bucket under a lock a released key opens
     weight_new_colour: float = 0.05       # bonus for a colour not on the belt yet
     belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
     stall_s: float = 4.0                  # belt colour without fill growth this long = stalled

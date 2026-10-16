@@ -18,6 +18,16 @@
   from the gold frame on screen and map it to the covered grid cells.
   Under the curtain there are **buckets**, colours unknown until it opens. When it opens they
   become regular buckets and follow the path rule.
+- **Locks and keys** (L183, confirmed by the user):
+  - A **key** (yellow, red, ...) sits in its own grid cell. It is an obstacle for the path rule
+    until a path opens to it.
+  - When the key's cell connects to the exit by the path rule (e.g. the bucket in front of it is
+    released), the key flies by itself to the **lock of the same colour** and opens it.
+  - Under a lock there are **buckets** (not tappable while the lock is there). After it opens
+    they become regular buckets under the path rule (colours unknown until seen).
+  - To confirm on frames: after the key flies its cell is empty (assumed so); every lock in L183
+    covers one cell (adjacent lock cells of one colour are treated as one lock); one lock per
+    colour (with several same-colour locks the bot credits no unlock).
 - Tower bucket = stacked buckets in one cell. Only the top stage is tappable; the next stage
   unlocks only when the top bucket is **filled to 100%** ("clear the top bucket to unlock the
   next colorful stage", shot 030).
@@ -62,6 +72,13 @@
   whose sand is buried under other colors (it will block a conveyor slot).
 - Prefer moves that unlock face-down buckets, ice blocks, and curtains.
 - Avoid deadlock: keep at least one conveyor slot usable.
+
+## Unknown colours
+- New levels bring new bucket / sand colours (L183: green and dark green grass). A bucket colour
+  that matches nothing in the palette makes the cell UNKNOWN (never tapped); sand colours that
+  match nothing are found as compact clusters of unmatched picture pixels. Both are logged,
+  shown in the overlay (magenta) and saved once per run to `dataset/unknown_colours/`; add one
+  with `python -m tools.add_colour <name> <crops>` (or annotate a screenshot and rebuild).
 
 ## Unknown / future obstacles
 Later levels introduce new obstacle / lock types beyond ice and curtains. Vision and strategy

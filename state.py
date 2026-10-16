@@ -27,11 +27,15 @@ Grid = List[List[Optional[Cell]]]
 
 @dataclass(frozen=True)
 class Lock:
-    """A lock in the grid: one ice block, or one multi-cell region such as a curtain."""
-    kind: str                     # "ice", "curtain", ...
+    """A lock in the grid: one ice block, lock icon or key, or one multi-cell region such as a
+    curtain."""
+    kind: str                     # "ice", "curtain", "lock", "key", ...
     unlock: str                   # "taps" (any bucket tapped) | "fills" (a bucket reaches 100%)
+                                  # | "key" (the key of its colour arrives) | "path" (key: flies
+                                  # when the path rule connects it to the exit)
     counter: Optional[int]        # number shown on it, None if not read
     cells: Tuple[Pos, ...]
+    color: Optional[str] = None   # lock / key colour
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,8 @@ class LevelState:
     exposed: Dict[str, float] = field(default_factory=dict)   # share of the contact layer
     unknown_fill_need: float = 0.5
     belt_stalled: Dict[str, float] = field(default_factory=dict)  # colour -> s without fill growth
+    unlocked: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)
+    # ^ after_tap: (colour, lock cells) opened by keys that flew because of the simulated tap
 
     # -- construction ---------------------------------------------------------------------
 
@@ -74,7 +80,8 @@ class LevelState:
             for cell in row:
                 if cell is not None and cell.kind is Kind.LOCK and cell.region is None:
                     locks.append(Lock(cell.lock or "lock", cell.unlock or "", cell.counter,
-                                      ((cell.row, cell.col),)))
+                                      ((cell.row, cell.col),), cell.color))
+        locks = _merge_lock_icons(locks)
         # the k/5 counter is authoritative: edge slots without a label may be end posts or
         # buckets entering/leaving, and at k=0 anything seen on the belt is decoration
         conveyor = [] if gv.counter == 0 else [ConveyorBucket(s.color, s.fill, s.uncertain)
@@ -140,8 +147,8 @@ class LevelState:
 
     @property
     def hidden_buckets(self) -> int:
-        """Buckets of unknown colour: one under every curtain cell."""
-        return sum(len(lock.cells) for lock in self.locks if lock.kind == "curtain")
+        """Buckets of unknown colour: one under every curtain cell and every lock cell."""
+        return sum(len(lock.cells) for lock in self.locks if lock.kind in ("curtain", "lock"))
 
     def pending_buckets(self) -> float:
         """Bucket capacities still to fill: grid + hidden + what the conveyor still needs.
@@ -165,6 +172,7 @@ class LevelState:
         if cell is None or cell.kind is not Kind.BUCKET:
             raise ValueError(f"no bucket at {pos}")
         nxt = copy.deepcopy(self)
+        nxt._release_keys()   # keys already connected are flying anyway: not this tap's credit
         r, c = pos
         if cell.body:
             nxt.grid[r][c] = Cell(r, c, Kind.LOCK, color=cell.body, lock="tower",
@@ -178,12 +186,38 @@ class LevelState:
                 lcell = nxt.grid[lr][lc]
                 if lcell is not None and lcell.kind is Kind.LOCK:
                     lcell.counter = lock.counter
+        nxt.unlocked = nxt._release_keys()
         nxt.conveyor = self.conveyor + [ConveyorBucket(cell.color, 0)]
         nxt.conveyor_k = None if self.conveyor_k is None else self.conveyor_k + 1
         # predicted: a newly connected bucket flips face-up; cells that disagreed stay excluded
         nxt.disagreements = [p for p in self.disagreements if p != pos]
         nxt.tappable = [p for p in nxt.playable() if p not in nxt.disagreements]
         return nxt
+
+    def _release_keys(self) -> List[Tuple[str, Tuple[Pos, ...]]]:
+        """Keys the path rule connects to the exit fly to the lock of their colour: the key's
+        cell empties (assumed, see GAME_RULES.md) and the lock's cells open (buckets of unknown
+        colour until seen: UNKNOWN here). Repeats while a released key connects another key.
+        A key whose colour has no lock, or several separate locks, opens nothing here."""
+        opened: List[Tuple[str, Tuple[Pos, ...]]] = []
+        while True:
+            conn = self.connected()
+            keys = [l for l in self.locks if l.kind == "key" and l.cells[0] in conn]
+            if not keys:
+                return opened
+            for key in keys:
+                (kr, kc), = key.cells
+                self.grid[kr][kc] = Cell(kr, kc, Kind.EMPTY)
+                self.locks.remove(key)
+                targets = [l for l in self.locks if l.kind == "lock" and l.color == key.color]
+                if len(targets) != 1:
+                    continue
+                target = targets[0]
+                self.locks.remove(target)
+                for lr, lc in target.cells:
+                    self.grid[lr][lc] = Cell(lr, lc, Kind.UNKNOWN,
+                                             reason="opened lock: bucket colour not seen yet")
+                opened.append((key.color or "?", target.cells))
 
     def opened_by(self, pos: Pos) -> Tuple[List[Pos], List[Pos]]:
         """Lookahead of one tap: (buckets, lock cells) that become connected to the exit."""
@@ -205,10 +239,34 @@ class LevelState:
                                           sorted(self.grid_buckets().items())) or "-")
             + (f", hidden {self.hidden_buckets}" if self.hidden_buckets else ""),
             "locks: " + (", ".join(f"{l.kind}{'' if l.counter is None else l.counter}"
+                                   f"{'' if l.color is None else ':' + l.color}"
                                    f"@{'+'.join(f'r{r}c{c}' for r, c in l.cells[:1])}"
                                    for l in self.locks) or "-"),
             f"capacity estimate: {'-' if cap is None else f'{cap:.3f}'} of the picture / bucket",
         ]
+
+
+def _merge_lock_icons(locks: List[Lock]) -> List[Lock]:
+    """4-adjacent lock cells of the same colour form one lock (L183 has only single-cell ones;
+    whether a lock can cover several cells is not confirmed yet)."""
+    out = [l for l in locks if l.kind != "lock"]
+    pending = [l for l in locks if l.kind == "lock"]
+    while pending:
+        group = [pending.pop(0)]
+        grew = True
+        while grew:
+            grew = False
+            for l in list(pending):
+                if l.color == group[0].color and any(
+                        abs(r - gr) + abs(c - gc) == 1
+                        for (r, c) in l.cells for g in group for (gr, gc) in g.cells):
+                    group.append(l)
+                    pending.remove(l)
+                    grew = True
+        first = group[0]
+        cells = tuple(sorted(p for g in group for p in g.cells))
+        out.append(Lock(first.kind, first.unlock, first.counter, cells, first.color))
+    return out
 
 
 class BeltTracker:

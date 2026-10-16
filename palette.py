@@ -42,12 +42,14 @@ def median_lab(pixels_bgr: np.ndarray) -> Lab:
 
 @dataclass
 class Palette:
-    """``buckets`` / ``sand``: colour name -> list of LAB centres (several looks per colour,
-    e.g. a face-up and a face-down bucket). ``ui``: UI element name -> one LAB centre."""
+    """``buckets`` / ``sand`` / ``keys``: colour name -> list of LAB centres (several looks per
+    colour, e.g. a face-up and a face-down bucket; ``keys`` = lock and key icons).
+    ``ui``: UI element name -> one LAB centre."""
 
     buckets: Dict[str, List[Lab]] = field(default_factory=dict)
     sand: Dict[str, List[Lab]] = field(default_factory=dict)
     ui: Dict[str, Lab] = field(default_factory=dict)
+    keys: Dict[str, List[Lab]] = field(default_factory=dict)
 
     def nearest(self, lab: Sequence[float], group: str = "buckets",
                 max_dist: Optional[float] = None) -> Tuple[Optional[str], float]:
@@ -88,6 +90,7 @@ class Palette:
         rnd = lambda c: [round(float(v), 2) for v in c]  # noqa: E731
         return {"buckets": {k: [rnd(c) for c in v] for k, v in sorted(self.buckets.items())},
                 "sand": {k: [rnd(c) for c in v] for k, v in sorted(self.sand.items())},
+                "keys": {k: [rnd(c) for c in v] for k, v in sorted(self.keys.items())},
                 "ui": {k: rnd(v) for k, v in sorted(self.ui.items())}}
 
     @classmethod
@@ -95,7 +98,8 @@ class Palette:
         tup = lambda c: tuple(float(v) for v in c)  # noqa: E731
         return cls(buckets={k: [tup(c) for c in v] for k, v in d.get("buckets", {}).items()},
                    sand={k: [tup(c) for c in v] for k, v in d.get("sand", {}).items()},
-                   ui={k: tup(v) for k, v in d.get("ui", {}).items()})
+                   ui={k: tup(v) for k, v in d.get("ui", {}).items()},
+                   keys={k: [tup(c) for c in v] for k, v in d.get("keys", {}).items()})
 
     def save(self, path: Union[str, Path]) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)

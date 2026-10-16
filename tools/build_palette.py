@@ -43,8 +43,11 @@ def read_shot(dataset: Path, seq: str) -> np.ndarray:
 
 
 def parse_label(label: str) -> Tuple[str, Optional[str], Optional[str], Optional[bool], Optional[int]]:
-    """'.', 'x', 'ice17', 'cur12', 'red-up', 'cream/red-down' ->
+    """'.', 'x', 'ice17', 'cur12', 'red-up', 'cream/red-down', 'lock:red', 'key:yellow' ->
     (kind, color, body, face_up, counter)."""
+    for kind in ("lock", "key"):
+        if label.startswith(kind + ":"):
+            return kind, label[len(kind) + 1:], None, None, None
     if label == ".":
         return "empty", None, None, None, None
     if label == "x":
@@ -112,15 +115,17 @@ def build_buckets(dataset: Path, ann: dict, pal: Palette, v: VisionConfig) -> No
 
 
 def build_sand(dataset: Path, ann: dict, pal: Palette, v: VisionConfig,
-               shots: Sequence[str] = ("001", "031")) -> None:
+               shots: Sequence[str] = ("001", "031", "053")) -> None:
     """Cluster the picture pixels of full-picture shots into as many colours as that level has
-    bucket colours, and pair clusters with bucket colours (min total LAB distance)."""
+    (``sand_colors`` of the shot, else its bucket colours), and pair clusters with bucket
+    colours (min total LAB distance)."""
     import cv2
 
     grids = grid_labels(ann)
     for seq in shots:
-        colors = sorted({parse_label(l)[1] for row in grids[seq] for l in row
-                         if parse_label(l)[0] == "bucket"})
+        colors = ann.get("sand_colors", {}).get(seq) or sorted(
+            {parse_label(l)[1] for row in grids[seq] for l in row
+             if parse_label(l)[0] == "bucket"})
         pic = crop_rel_px(read_shot(dataset, seq), v.picture)
         lab = bgr_to_lab(pic).reshape(-1, 3)
         if "picture_empty" in pal.ui:
@@ -135,6 +140,39 @@ def build_sand(dataset: Path, ann: dict, pal: Palette, v: VisionConfig,
                                      for i, c in zip(p, colors)))
         for i, c in zip(best, colors):
             pal.sand.setdefault(c, []).append(tuple(float(x) for x in centres[i]))
+
+
+def build_icons(dataset: Path, ann: dict, pal: Palette, v: VisionConfig, out: Path) -> List[str]:
+    """Lock / key cells: grey icon templates -> ``out``/<kind>-<colour>-<seq>-r<r>c<c>.png and
+    the icon colours -> palette group ``keys``."""
+    import cv2
+
+    from cells import icon_lab
+    from icons import icon_grey
+    from vision import cell_crop, find_lattice
+
+    out.mkdir(parents=True, exist_ok=True)
+    for old in out.glob("*.png"):
+        old.unlink()
+    names, colours = [], {}
+    for seq, rows in grid_labels(ann).items():
+        img = read_shot(dataset, seq)
+        lat = find_lattice(img, pal, v)
+        for r, row in enumerate(rows):
+            for c, label in enumerate(row):
+                kind, colour, _, _, _ = parse_label(label)
+                if kind not in ("lock", "key"):
+                    continue
+                crop = cell_crop(img, lat, r, c, v)
+                name = f"{kind}-{colour}-{seq}-r{r}c{c}"
+                cv2.imwrite(str(out / f"{name}.png"), icon_grey(crop))
+                names.append(name)
+                lab = icon_lab(crop)
+                if lab is not None:
+                    colours.setdefault(colour, []).append(lab)
+    for colour, labs in sorted(colours.items()):
+        pal.keys[colour] = [tuple(float(x) for x in np.median(np.asarray(labs), axis=0))]
+    return names
 
 
 def build_digits(dataset: Path, ann: dict, pal: Palette, v: VisionConfig):
@@ -169,20 +207,22 @@ def build_digits(dataset: Path, ann: dict, pal: Palette, v: VisionConfig):
     for seq, rows in grid_labels(ann).items():
         img = read_shot(dataset, seq)
         lat = find_lattice(img, pal, v)
-        done_curtain = False
         for r, row in enumerate(rows):
             for c, lab in enumerate(row):
                 kind, _, _, _, counter = parse_label(lab)
                 if kind == "ice" and counter is not None:
                     learn(str(counter), lock_digits_roi(img, lat, r, c, v), "light",
                           f"ice {seq} r{r}c{c}")
-                if kind == "curtain" and counter is not None and not done_curtain:
-                    done_curtain = True
-                    for reg in find_curtains(img, lat, pal, v):
-                        bx0, by0, bx1, by1 = reg.box
-                        sign = img[by0 + (by1 - by0) * 3 // 10: by0 + (by1 - by0) * 7 // 10,
-                                   bx0 + (bx1 - bx0) // 4: bx1 - (bx1 - bx0) // 4]
-                        learn(str(counter), sign, "light", f"curtain {seq}")
+        for reg in find_curtains(img, lat, pal, v):   # each curtain learns its own label
+            counters = {parse_label(rows[r][c])[4] for r, c in reg.cells}
+            if len(counters) != 1 or None in counters:
+                if counters != {None}:
+                    problems.append(f"curtain {seq} {reg.cells}: labels {sorted(map(str, counters))}")
+                continue
+            bx0, by0, bx1, by1 = reg.box
+            sign = img[by0 + (by1 - by0) * 3 // 10: by0 + (by1 - by0) * 7 // 10,
+                       bx0 + (bx1 - bx0) // 4: bx1 - (bx1 - bx0) // 4]
+            learn(str(counters.pop()), sign, "light", f"curtain {seq}")
     return reader, problems
 
 
@@ -213,6 +253,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pal = build_ui(dataset, ann, v)
     build_buckets(dataset, ann, pal, v)
     build_sand(dataset, ann, pal, v)
+    icons = build_icons(dataset, ann, pal, v, dataset / "templates" / "icons")
+    from tools.add_colour import merge_extra
+
+    extra = merge_extra(pal, dataset / "extra_colours.json")
     pal.save(cfg.paths.palette)
     reader, problems = build_digits(dataset, ann, pal, v)
     reader.save(dataset / "digits.npz")
@@ -222,6 +266,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"  ui      : {', '.join(sorted(pal.ui))}")
     print(f"  buckets : {', '.join(f'{k}({len(c)})' for k, c in sorted(pal.buckets.items()))}")
     print(f"  sand    : {', '.join(sorted(pal.sand))}")
+    print(f"  keys    : {', '.join(sorted(pal.keys))} (icons: {len(icons)} templates)")
+    if extra:
+        print(f"  extra   : {', '.join(extra)} (dataset/extra_colours.json, tools/add_colour)")
     print(f"digits   : {dataset / 'digits.npz'} — "
           f"{', '.join(f'{k}:{len(t)}' for k, t in sorted(reader.templates.items()))}")
     print(f"templates: {dataset / 'templates'} — {', '.join(names)}")

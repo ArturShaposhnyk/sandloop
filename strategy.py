@@ -13,7 +13,7 @@ Hard rules, a candidate is rejected if any fails:
     keep a slot usable, avoid deadlock);
   * enough of its colour remains to fill it: sand >= margin x (conveyor need + 1) x capacity.
 Score of the rest: avail + buckets / lock cells the tap connects to the exit (one-tap
-lookahead) + a bonus for a colour not on the belt yet. Ties: colour not on the belt, then the
+lookahead) + buckets under a lock that a released key opens + a bonus for a colour not on the belt yet. Ties: colour not on the belt, then the
 front row, then the left.
 
     python -m strategy dataset/screens/*.png   # decisions on saved shots -> debug/strategy-*.png
@@ -45,6 +45,12 @@ class Candidate:
     on_belt: bool = False
     opens: List[Pos] = field(default_factory=list)       # buckets connected by this tap
     opens_locks: List[Pos] = field(default_factory=list)
+    unlocks: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)  # keys released:
+    #   (colour, cells of the lock they open)
+
+    @property
+    def unlocked_buckets(self) -> int:
+        return sum(len(cells) for _, cells in self.unlocks)
 
     @property
     def avail(self) -> float:
@@ -62,6 +68,8 @@ class Candidate:
             return f"r{r}c{c} {self.color}: no - {self.rejected} [{self.numbers()}]"
         extra = f", opens {len(self.opens)} bucket(s)" if self.opens else ""
         extra += f", {len(self.opens_locks)} lock cell(s)" if self.opens_locks else ""
+        extra += "".join(f", opens lock {col} with {len(cells)} bucket(s)"
+                         for col, cells in self.unlocks)
         return f"r{r}c{c} {self.color}: score {self.score:.2f}{extra} [{self.numbers()}]"
 
 
@@ -102,8 +110,10 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
         if cand.rejected:
             continue
         cand.opens, cand.opens_locks = state.opened_by(pos)
+        cand.unlocks = state.after_tap(pos).unlocked
         cand.score = (sc.weight_exposed * cand.avail + sc.weight_open_bucket * len(cand.opens)
                       + sc.weight_open_lock * len(cand.opens_locks)
+                      + sc.weight_key_unlock * cand.unlocked_buckets
                       + (0.0 if cand.on_belt else sc.weight_new_colour))
     allowed = [c for c in cands if c.rejected is None]
     if not allowed:
@@ -149,7 +159,8 @@ def draw_decision(img: "np.ndarray", gv: "GameView", decision: Decision) -> "np.
         for p in decision.move.opens:
             bx0, by0, bx1, by1 = (int(round(a)) for a in lat.rect(*p))
             cv2.rectangle(out, (bx0 + 4, by0 + 4), (bx1 - 4, by1 - 4), (255, 255, 0), 1)
-    lines = [decision.reason] + [c.describe() for c in decision.candidates][:5]
+    unknown = [u.describe().upper() for u in gv.unknown_colours]
+    lines = [decision.reason] + unknown + [c.describe() for c in decision.candidates][:5]
     y0 = int(lat.y0 + lat.rows * lat.ch) + 6
     y1 = min(h, y0 + 20 * len(lines) + 6)
     out[y0:y1] = (out[y0:y1] * 0.25).astype(out.dtype)
@@ -161,8 +172,13 @@ def draw_decision(img: "np.ndarray", gv: "GameView", decision: Decision) -> "np.
         tw = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0][0]
         if tw > w - 12:   # shrink long reason lines to fit instead of cutting them off
             scale *= (w - 12) / tw
-        cv2.putText(out, line, (6, y), cv2.FONT_HERSHEY_SIMPLEX, scale,
-                    (255, 255, 0) if i == 0 else (255, 255, 255), 1, cv2.LINE_AA)
+        colour = ((255, 255, 0) if i == 0 else (255, 0, 255) if i <= len(unknown)
+                  else (255, 255, 255))
+        cv2.putText(out, line, (6, y), cv2.FONT_HERSHEY_SIMPLEX, scale, colour, 1, cv2.LINE_AA)
+    for u in gv.unknown_colours:   # unknown-colour cells: magenta box
+        if u.cell is not None:
+            x0, y0, x1, y1 = (int(round(a)) for a in lat.rect(*u.cell))
+            cv2.rectangle(out, (x0 + 2, y0 + 2), (x1 - 2, y1 - 2), (255, 0, 255), 2)
     return out
 
 
@@ -204,14 +220,20 @@ class Analyzer:
         from digits import DigitReader
         from palette import Palette
         from screens import ScreenClassifier, load_templates
+        from icons import IconMatcher
 
         self.cfg = cfg
         self.palette = Palette.load(cfg.paths.palette)
         self.reader = DigitReader.load(Path(cfg.paths.dataset) / "digits.npz")
+        self.icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons")
         self.classifier = ScreenClassifier(load_templates(Path(cfg.paths.dataset) / "templates"),
                                            cfg.vision)
         self.belt = BeltTracker()
         self.fail_dir = Path(cfg.paths.debug) / "vision_fail"
+        self.colour_dir = Path(cfg.paths.dataset) / "unknown_colours"
+        self.unknown_dir = Path(cfg.paths.dataset) / "unknown"
+        self.colours_seen: set = set()                  # unknown colours saved this run
+        self.cells_seen: set = set()                    # unknown cells (pos, reason) saved
         self.reads = self.fails = self.fails_saved = 0
 
     def analyze(self, img: "np.ndarray", log=print, now: Optional[float] = None,
@@ -226,10 +248,12 @@ class Analyzer:
             return Analysis(screen, reads=self.reads, fails=self.fails)
         self.reads += 1
         try:
-            gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log)
+            gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log,
+                               icons=self.icons)
         except VisionError as e:
             res = Analysis(screen, error=str(e), failure=f"grid: {e}")
         else:
+            self._save_unknowns(img, gv, log)
             st = self.cfg.strategy
             state = LevelState.from_view(gv, st.conveyor_slots, st.unknown_fill_need)
             state.belt_stalled = self.belt.update(state.conveyor,
@@ -242,6 +266,17 @@ class Analyzer:
             self._save_failure(img, res.failure, diff, log)
         res.reads, res.fails = self.reads, self.fails
         return res
+
+    def _save_unknowns(self, img: "np.ndarray", gv: "GameView", log) -> None:
+        """New unknown colours -> dataset/unknown_colours/, new UNKNOWN cells (other reasons)
+        -> dataset/unknown/; each once per run."""
+        from unknown_colours import save_unknown, save_unknown_colours
+
+        save_unknown_colours(img, gv, self.cfg.vision, self.colour_dir, self.colours_seen, log)
+        cells = {(c.row, c.col, c.reason) for c in gv.unknown_cells() if c.lab is None}
+        if cells - self.cells_seen:
+            self.cells_seen |= cells
+            save_unknown(img, gv, self.unknown_dir, log)
 
     def _save_failure(self, img: "np.ndarray", failure: str, diff: Optional[float],
                       log) -> None:

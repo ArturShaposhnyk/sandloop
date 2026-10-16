@@ -34,11 +34,12 @@ class Cell:
     color: Optional[str] = None       # bucket colour (top stage for a tower)
     body: Optional[str] = None        # tower: colour of the stage below, else None
     face_up: Optional[bool] = None    # visual state of a bucket
-    lock: Optional[str] = None        # lock type name (e.g. "ice", "curtain")
-    unlock: Optional[str] = None      # how the lock opens: "taps" | "fills"
+    lock: Optional[str] = None        # lock type name (e.g. "ice", "curtain", "lock", "key")
+    unlock: Optional[str] = None      # how it opens: "taps" | "fills" | "key" | "path"
     counter: Optional[int] = None     # number shown on the lock, if read
     region: Optional[int] = None      # id of the multi-cell lock this cell belongs to
     reason: str = ""                  # why it is UNKNOWN (for the log)
+    lab: Optional[Lab] = None         # UNKNOWN because of its colour: the colour seen (LAB)
 
     @property
     def is_obstacle(self) -> bool:
@@ -49,6 +50,8 @@ class Cell:
         """Same notation as dataset/annotations.json."""
         if self.kind is Kind.EMPTY:
             return "."
+        if self.kind is Kind.LOCK and self.lock in ICON_LOCKS:
+            return f"{self.lock}:{self.color or '?'}"
         if self.kind is Kind.LOCK:
             short = {"curtain": "cur"}.get(self.lock or "", self.lock or "lock")
             return f"{short}{'' if self.counter is None else self.counter}"
@@ -67,6 +70,10 @@ class CellFeatures:
     top_lab: Optional[Lab]     # colour of the upper part of the object (top stage / rim)
     body_lab: Optional[Lab]    # colour of the lower part of the object
     hue_cyan_frac: float   # share of light-cyan pixels (ice body)
+    centre_lab: Optional[Lab] = None  # upper middle: inside of an open bucket / a tower's disc
+    icon: Optional[str] = None        # icon template matched in the cell ("lock", "key"), if any
+    icon_color: Optional[str] = None  # its colour from the palette's ``keys`` group
+    icon_lab: Optional[Lab] = None    # the icon's colour as seen
 
 
 @dataclass(frozen=True)
@@ -76,16 +83,35 @@ class CellLock:
     unlock: str                                            # "taps" | "fills"
     detect: Callable[[CellFeatures, VisionConfig], bool]
     counter_polarity: str = "light"                         # digit colour for digits.py
+    coloured: bool = False         # has a colour (lock/key pairs); unknown colour = UNKNOWN cell
+    before_empty: bool = False     # checked before "empty" (a key sits on an empty-looking cell)
 
 
 def _is_ice(f: CellFeatures, v: VisionConfig) -> bool:
     return f.white_frac >= v.ice_min_white and f.dark_frac >= v.ice_min_dark and f.hue_cyan_frac > 0.3
 
 
-# Single-cell locks, checked in order after "empty" and before "bucket".
+# Icon locks (vision.IconMatcher): a LOCK covers buckets and opens when the KEY of the same
+# colour flies to it; the key flies once the path rule connects its cell to the exit.
+ICON_LOCKS = ("lock", "key")
+
+# Single-cell locks, checked in order after "empty" (unless before_empty) and before "bucket".
 CELL_LOCKS: List[CellLock] = [
+    CellLock("lock", "key", lambda f, v: f.icon == "lock", coloured=True, before_empty=True),
+    CellLock("key", "path", lambda f, v: f.icon == "key", coloured=True, before_empty=True),
     CellLock("ice", "taps", _is_ice),
 ]
+
+
+def icon_lab(cell_bgr: np.ndarray) -> Optional[Lab]:
+    """Median LAB of the saturated, lit pixels (the coloured body of a lock / key icon)."""
+    import cv2
+
+    hsv = cv2.cvtColor(cell_bgr, cv2.COLOR_BGR2HSV)
+    mask = (hsv[..., 1] > 110) & (hsv[..., 2] > 120)
+    if mask.sum() < 20:
+        return None
+    return tuple(float(x) for x in np.median(bgr_to_lab(cell_bgr)[mask], axis=0))  # type: ignore[return-value]
 
 
 def _object_pixels(cell_bgr: np.ndarray, lab: np.ndarray, palette: Palette,
@@ -132,6 +158,11 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
     top, body = obj.copy(), obj.copy()
     top[h // 2:] = False
     body[: h // 2] = False
+    mid = np.zeros_like(obj)   # where a tower's disc sits: the upper middle of the crop
+    mid[int(0.1 * h):int(0.45 * h), cx - rx:cx + rx] = True
+    mid &= obj
+    centre_lab = (tuple(float(x) for x in np.median(lab[mid], axis=0)) if mid.sum() >= 10
+                  else None)
     return CellFeatures(
         empty_frac=float(empty.mean()),
         white_frac=float(((S < 50) & (V > 235)).mean()),
@@ -140,6 +171,7 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
         top_lab=_bright_lab(cell_bgr, lab, top),
         body_lab=_bright_lab(cell_bgr, lab, body),
         hue_cyan_frac=float(((hsv[..., 0] >= 90) & (hsv[..., 0] <= 105) & (S > 90)).mean()),
+        centre_lab=centre_lab,  # type: ignore[arg-type]
     )
 
 
@@ -149,6 +181,13 @@ def _distinct(lab: Lab, best: str, other: str, palette: Palette, margin: float) 
     d = lambda name: min(float(np.linalg.norm(np.asarray(lab) - np.asarray(c)))  # noqa: E731
                          for c in palette.buckets[name])
     return d(other) - d(best) >= margin
+
+
+def hue_diff(a: Lab, b: Lab) -> float:
+    """Angle (degrees, 0..180) between the LAB hues of two colours."""
+    ha, hb = np.degrees(np.arctan2(a[2], a[1])), np.degrees(np.arctan2(b[2], b[1]))
+    d = abs(float(ha - hb)) % 360.0
+    return min(d, 360.0 - d)
 
 
 def empty_fraction(region_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> float:
@@ -161,19 +200,41 @@ def empty_fraction(region_bgr: np.ndarray, palette: Palette, v: VisionConfig) ->
 def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
                   v: VisionConfig) -> Cell:
     """Classify a cell that is not covered by a multi-cell lock."""
+    def lock_cell(lock: CellLock) -> Cell:
+        if lock.coloured and f.icon_color is None:
+            return Cell(row, col, Kind.UNKNOWN, reason=f"{lock.name} colour not in palette",
+                        lab=f.icon_lab)
+        return Cell(row, col, Kind.LOCK, lock=lock.name, unlock=lock.unlock,
+                    color=f.icon_color if lock.coloured else None)
+
+    for lock in CELL_LOCKS:
+        if lock.before_empty and lock.detect(f, v):
+            return lock_cell(lock)
     if f.empty_frac >= v.empty_min_frac:
         return Cell(row, col, Kind.EMPTY)
     for lock in CELL_LOCKS:
-        if lock.detect(f, v):
-            return Cell(row, col, Kind.LOCK, lock=lock.name, unlock=lock.unlock)
+        if not lock.before_empty and lock.detect(f, v):
+            return lock_cell(lock)
     if f.top_lab is None and f.body_lab is None:
         return Cell(row, col, Kind.UNKNOWN, reason="no object pixels")
     top, dt = palette.nearest(f.top_lab or f.body_lab, "buckets", v.color_max_dist)
     body, db = palette.nearest(f.body_lab or f.top_lab, "buckets", v.color_max_dist)
     if top is None and body is None:
         return Cell(row, col, Kind.UNKNOWN,
-                    reason=f"colour not in palette (dist {min(dt, db):.1f})")
+                    reason=f"colour not in palette (dist {min(dt, db):.1f})",
+                    lab=f.top_lab or f.body_lab)
     color = top or body
+    # face-down tower seen from above: a disc of the top stage's colour on the body's dome. The
+    # inside of an open bucket keeps the hue of the bucket below it (only darker), a disc has
+    # another hue. (A face-up tower with very different hues would read face-down: it then
+    # disagrees with the path rule and is not tapped - the safe side.)
+    dome_lab = f.body_lab or f.top_lab
+    if f.centre_lab is not None and dome_lab is not None:
+        disc, _ = palette.nearest(f.centre_lab, "buckets", v.color_max_dist)
+        dome, _ = palette.nearest(dome_lab, "buckets", v.color_max_dist)
+        if (disc is not None and dome is not None and disc != dome
+                and hue_diff(f.centre_lab, dome_lab) >= v.disc_min_hue_deg):
+            return Cell(row, col, Kind.BUCKET, color=disc, body=dome, face_up=False)
     tower = (body is not None and top is not None and body != top
              and _distinct(f.top_lab, top, body, palette, v.tower_min_margin))
     return Cell(row, col, Kind.BUCKET, color=color, body=body if tower else None,

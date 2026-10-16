@@ -11,7 +11,9 @@ from config import load_config
 from digits import DigitReader
 from palette import Palette
 from tools.build_palette import grid_labels, parse_label, read_shot
-from vision import find_lattice, read_gameplay, read_grid, save_unknown
+from icons import IconMatcher
+from unknown_colours import save_unknown
+from vision import find_lattice, read_gameplay, read_grid
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "dataset"
@@ -26,17 +28,18 @@ KNOWN_LIMITATIONS: dict = {}
 def ctx():
     cfg = load_config(ROOT / "config.yaml")
     return (cfg.vision, Palette.load(DATASET / "palette.json"),
-            DigitReader.load(DATASET / "digits.npz"))
+            DigitReader.load(DATASET / "digits.npz"),
+            IconMatcher.load(DATASET / "templates" / "icons"))
 
 
 def view(seq, ctx):
-    v, pal, rd = ctx
-    return read_gameplay(read_shot(DATASET, seq), pal, v, rd, log=lambda s: None)
+    v, pal, rd, icons = ctx
+    return read_gameplay(read_shot(DATASET, seq), pal, v, rd, icons=icons, log=lambda s: None)
 
 
 @pytest.mark.parametrize("seq", sorted(GRIDS))
 def test_lattice_shape_matches_annotation(seq, ctx):
-    v, pal, _ = ctx
+    v, pal, _, _ = ctx
     lat = find_lattice(read_shot(DATASET, seq), pal, v)
     rows = GRIDS[seq]
     assert (lat.rows, lat.cols) == (len(rows), len(rows[0]))
@@ -45,8 +48,8 @@ def test_lattice_shape_matches_annotation(seq, ctx):
 
 @pytest.mark.parametrize("seq", sorted(GRIDS))
 def test_grid_cells_match_annotation(seq, ctx):
-    v, pal, rd = ctx
-    _, grid, _ = read_grid(read_shot(DATASET, seq), pal, v, rd)
+    v, pal, rd, icons = ctx
+    _, grid, _ = read_grid(read_shot(DATASET, seq), pal, v, rd, icons)
     wrong = []
     for r, row in enumerate(GRIDS[seq]):
         for c, want in enumerate(row):
@@ -81,9 +84,9 @@ def test_path_rule_agrees_with_annotated_faces(seq):
 
 
 def test_disagreement_is_logged_and_not_tappable(ctx):
-    v, pal, rd = ctx
+    v, pal, rd, icons = ctx
     logs = []
-    gv = read_gameplay(read_shot(DATASET, "010"), pal, v, rd, log=logs.append)
+    gv = read_gameplay(read_shot(DATASET, "010"), pal, v, rd, icons=icons, log=logs.append)
     assert (4, 4) in gv.disagreements
     assert (4, 4) not in gv.tappable()
     assert any("r4c4" in line and "not tapping" in line for line in logs)
@@ -127,9 +130,9 @@ def test_tap_points_are_inside_the_screen(ctx):
 
 
 def test_save_unknown_writes_frame_crop_and_log(ctx, tmp_path):
-    v, pal, rd = ctx
+    v, pal, rd, icons = ctx
     img = read_shot(DATASET, "043")
-    gv = read_gameplay(img, pal, v, rd, log=lambda s: None)
+    gv = read_gameplay(img, pal, v, rd, icons=icons, log=lambda s: None)
     gv.grid[3][0] = Cell(3, 0, Kind.UNKNOWN, reason="test obstacle")
     logs = []
     saved = save_unknown(img, gv, tmp_path, log=logs.append)
@@ -137,4 +140,56 @@ def test_save_unknown_writes_frame_crop_and_log(ctx, tmp_path):
     rec = json.loads((tmp_path / "unknown.jsonl").read_text().strip())
     assert rec["row"] == 3 and rec["col"] == 0 and rec["reason"] == "test obstacle"
     assert logs and "r3c0" in logs[0]
-    assert save_unknown(img, read_gameplay(img, pal, v, rd, log=lambda s: None), tmp_path) == []
+    assert save_unknown(img, read_gameplay(img, pal, v, rd, icons=icons, log=lambda s: None), tmp_path) == []
+
+
+# Live crops of the iPhone screen can be off by a few pixels (pt/px rounding, the window's
+# anti-aliased edge, the hover-chrome frame). A 3 px dark strip used to make every grid read
+# fail ("grid panel background not found") and a 4-10 px vertical offset lost the k/5 counter.
+def _misalign(img, dx=0, dy=0, colour=(25, 26, 27)):
+    """Shift the content by dx/dy pixels (same frame size); the uncovered strip is ``colour``."""
+    import cv2
+
+    t, b, l, r = max(dy, 0), max(-dy, 0), max(dx, 0), max(-dx, 0)
+    out = cv2.copyMakeBorder(img, t, b, l, r, cv2.BORDER_CONSTANT, value=colour)
+    h, w = img.shape[:2]
+    return out[b:b + h, r:r + w]
+
+
+MISALIGNMENTS = [(3, 0), (8, 0), (-3, 0), (-8, 0), (0, 4), (0, -4), (0, 10), (0, -10), (6, -6)]
+
+
+@pytest.mark.parametrize("dx,dy", MISALIGNMENTS)
+@pytest.mark.parametrize("seq", sorted(GRIDS))
+def test_grid_survives_misaligned_crop(seq, dx, dy, ctx):
+    v, pal, rd, icons = ctx
+    _, grid, _ = read_grid(_misalign(read_shot(DATASET, seq), dx, dy), pal, v, rd, icons)
+    rows = GRIDS[seq]
+    assert (len(grid), len(grid[0])) == (len(rows), len(rows[0]))
+    got = [["x" if c is None else c.label() for c in row] for row in grid]
+    wrong = [f"r{r}c{c}: want {want}, got {got[r][c]}" for r, row in enumerate(rows)
+             for c, want in enumerate(row)
+             if got[r][c] != want and (seq, r, c) not in KNOWN_LIMITATIONS]
+    assert not wrong, wrong
+
+
+@pytest.mark.parametrize("dx,dy", MISALIGNMENTS)
+@pytest.mark.parametrize("seq", sorted(ANN["counters"]))
+def test_counter_survives_misaligned_crop(seq, dx, dy, ctx):
+    v, pal, rd, icons = ctx
+    gv = read_gameplay(_misalign(read_shot(DATASET, seq), dx, dy), pal, v, rd, icons=icons,
+                       log=lambda s: None)
+    assert gv.counter == int(ANN["counters"][seq].split("/")[0])
+
+
+def test_l183_three_curtains_locks_and_keys(ctx):
+    gv = view("053", ctx)
+    regs = sorted((sorted(r.cells), r.counter) for r in gv.regions)
+    assert regs == [([(1, 3), (1, 4), (2, 3), (2, 4)], 10),
+                    ([(5, 1), (5, 2), (6, 1), (6, 2)], 15),
+                    ([(5, 4), (5, 5), (6, 4), (6, 5)], 20)]
+    icons = {(c.row, c.col): (c.lock, c.unlock, c.color) for row in gv.grid for c in row
+             if c is not None and c.lock in ("lock", "key")}
+    assert icons == {(2, 1): ("lock", "key", "yellow"), (3, 5): ("lock", "key", "red"),
+                     (2, 6): ("key", "path", "yellow"), (4, 2): ("key", "path", "red")}
+    assert set(gv.tappable()) == {(0, 2), (0, 3), (0, 4), (0, 5)}

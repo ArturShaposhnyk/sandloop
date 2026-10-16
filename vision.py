@@ -6,18 +6,19 @@ are relative 0..1 coordinates, ready for actions.Tapper.
 """
 from __future__ import annotations
 
-import json
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from cells import Cell, Kind, cell_features, classify_cell, empty_fraction, path_playable
+from cells import (Cell, Kind, cell_features, classify_cell, empty_fraction, icon_lab,
+                   path_playable)
 from config import VisionConfig
 from digits import DigitReader, group_words, segment
+from icons import IconMatcher
 from palette import Palette, bgr_to_lab, lab_distance
+from unknown_colours import UnknownColour, unknown_sand
 
 Grid = List[List[Optional[Cell]]]   # None = no grid cell at this lattice position
 
@@ -67,12 +68,18 @@ def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig) -> Lattice:
     zx0, zy0 = int(v.grid_zone[0] * w), int(v.grid_zone[1] * h)
     zone = crop_rel(img, v.grid_zone)
     panel = lab_distance(bgr_to_lab(zone), palette.ui["panel_bg"]) < v.panel_tol
-    side = panel[:, : max(2, int(0.05 * w))].mean(axis=1) > 0.9
+    # side strips start ``edge_margin`` inside the frame: a live crop can carry a few px of
+    # window edge / chrome, which used to make every row fail the panel test
+    edge, sw = int(v.edge_margin * w), max(2, int(0.05 * w))
+    side = ((panel[:, edge:edge + sw].mean(axis=1) > 0.9)
+            | (panel[:, w - edge - sw:w - edge].mean(axis=1) > 0.9))
     if not side.any():
         raise VisionError("grid panel background not found")
     ytop = int(np.argmax(side))
     grid = ~panel
     grid[:ytop] = False
+    if edge:
+        grid[:, :edge] = grid[:, w - edge:] = False   # border strips are never the grid
     n, lab, st, _ = cv2.connectedComponentsWithStats(grid.astype(np.uint8), 4)
     cands = [k for k in range(1, n) if st[k, cv2.CC_STAT_AREA] > 0.002 * w * h]
     if not cands:
@@ -122,22 +129,21 @@ def find_curtains(img: np.ndarray, lat: Lattice, palette: Palette, v: VisionConf
     area = img[y0:y1, x0:x1]
     gold = lab_distance(bgr_to_lab(area), palette.ui["curtain_gold"]) < 18
     min_run = int(1.5 * lat.cw)
+    max_gap = max(2, int(0.15 * lat.ch))   # posts are continuous; a longer gap = next curtain
     regions: List[Region] = []
-    used = np.zeros(gold.shape[0], bool)
+    used = np.zeros(gold.shape, bool)
     for y in range(gold.shape[0]):
-        if used[y]:
-            continue
-        row = np.concatenate([[0], gold[y].astype(np.int8), [0]])
+        row = np.concatenate([[0], (gold[y] & ~used[y]).astype(np.int8), [0]])
         d = np.diff(row)
         starts, ends = np.nonzero(d == 1)[0], np.nonzero(d == -1)[0]
         runs = [(s, e) for s, e in zip(starts, ends) if e - s >= min_run]
         for s, e in runs:
             post = max(2, (e - s) // 25)
             sides = gold[y:, s:s + post].any(axis=1) | gold[y:, e - post:e].any(axis=1)
-            bottom = y + int(np.nonzero(sides)[0].max()) + 1
+            bottom = y + _run_end(sides, max_gap)
             if bottom - y < 0.8 * lat.ch:
                 continue
-            used[y:bottom] = True
+            used[y:bottom, s:e] = True
             box = (x0 + int(s), y0 + y, x0 + int(e), y0 + bottom)
             covered = [(r, c) for r in range(lat.rows) for c in range(lat.cols)
                        if lat.mask[r, c] and box[0] <= lat.x0 + (c + .5) * lat.cw <= box[2]
@@ -150,6 +156,19 @@ def find_curtains(img: np.ndarray, lat: Lattice, palette: Palette, v: VisionConf
                 counter = reader.read_int(sign, "light")
             regions.append(Region("curtain", "fills", box, covered, counter))
     return regions
+
+
+def _run_end(on: np.ndarray, max_gap: int) -> int:
+    """End (exclusive) of the run of True starting at index 0, bridging gaps <= max_gap."""
+    end, gap = 0, 0
+    for i, v in enumerate(on):
+        if v:
+            end, gap = i + 1, 0
+        else:
+            gap += 1
+            if gap > max_gap:
+                break
+    return end
 
 
 def cell_crop(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) -> np.ndarray:
@@ -193,6 +212,7 @@ class GameView:
     sand: Dict[str, float] = field(default_factory=dict)     # share of picture area per colour
     exposed: Dict[str, float] = field(default_factory=dict)  # share of the bottom band
     frame_size: Tuple[int, int] = (0, 0)       # w, h in pixels
+    unknown_colours: List[UnknownColour] = field(default_factory=list)
 
     def labels(self) -> List[str]:
         return [" ".join("x" if c is None else c.label() for c in row) for row in self.grid]
@@ -213,7 +233,8 @@ class GameView:
 
 
 def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
-              reader: Optional[DigitReader] = None) -> Tuple[Lattice, Grid, List[Region]]:
+              reader: Optional[DigitReader] = None,
+              icons: Optional[IconMatcher] = None) -> Tuple[Lattice, Grid, List[Region]]:
     lat = find_lattice(img, palette, v)
     regions = find_curtains(img, lat, palette, v, reader)
     grid: Grid = [[None] * lat.cols for _ in range(lat.rows)]
@@ -231,11 +252,36 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
             ix = v.cell_inset * lat.cw
             upper = img[int(y0 + v.cell_inset * lat.ch):int((y0 + y1) / 2), int(x0 + ix):int(x1 - ix)]
             f.empty_frac = empty_fraction(upper, palette, v)
+            if icons is not None:
+                kind, score = icons.match(crop)
+                if kind is not None and score >= v.icon_threshold:
+                    f.icon = kind
+                    f.icon_lab = icon_lab(crop)
+                    f.icon_color = (None if f.icon_lab is None else
+                                    palette.nearest(f.icon_lab, "keys", v.color_max_dist)[0])
             cell = classify_cell(r, c, f, palette, v)
             if cell.kind is Kind.LOCK and reader is not None:
                 cell.counter = reader.read_int(lock_digits_roi(img, lat, r, c, v), "light")
             grid[r][c] = cell
     return lat, grid, regions
+
+
+def read_counter(img: np.ndarray, v: VisionConfig, reader: DigitReader) -> Optional[int]:
+    """k of the "k/5" counter. The zone is tight (light pixels right below the text merge with
+    the glyphs in a taller one), so a crop a few px off used to lose it: the zone is slid up and
+    down by up to ``counter_search`` and the reading nearest the configured position wins."""
+    h, w = img.shape[:2]
+    x0, y0, x1, y1 = v.counter
+    step = max(1, int(0.003 * h))
+    reach = int(v.counter_search * h)
+    for dy in sorted(range(-reach, reach + 1, step), key=abs):
+        top, bottom = int(y0 * h) + dy, int(y1 * h) + dy
+        if top < 0 or bottom > h:
+            continue
+        s = reader.read(img[top:bottom, int(x0 * w):int(x1 * w)])
+        if len(s) == 3 and s[1] == "/" and s[0].isdigit() and s[2].isdigit():
+            return int(s[0])
+    return None
 
 
 def read_conveyor(img: np.ndarray, palette: Palette, v: VisionConfig,
@@ -246,9 +292,7 @@ def read_conveyor(img: np.ndarray, palette: Palette, v: VisionConfig,
     h, w = img.shape[:2]
     k = None
     if reader is not None:
-        s = reader.read(crop_rel(img, v.counter))
-        if len(s) == 3 and s[1] == "/" and s[0].isdigit():
-            k = int(s[0])
+        k = read_counter(img, v, reader)
     band = crop_rel(img, v.conveyor)
     lab = bgr_to_lab(band)
     # belt and rails are uniform along each row and buckets cover well under half of it, so the
@@ -344,8 +388,9 @@ def contact_layer(img: np.ndarray, palette: Palette, v: VisionConfig
 
 def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
                   reader: Optional[DigitReader] = None,
-                  log: Callable[[str], None] = print) -> GameView:
-    lat, grid, regions = read_grid(img, palette, v, reader)
+                  log: Callable[[str], None] = print,
+                  icons: Optional[IconMatcher] = None) -> GameView:
+    lat, grid, regions = read_grid(img, palette, v, reader, icons)
     playable = path_playable(grid, lat.exits())
     disagree = []
     for r, row in enumerate(grid):
@@ -357,38 +402,16 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
                     f"{'playable' if playable[r][c] else 'closed'} — not tapping it")
     k, slots = read_conveyor(img, palette, v, reader)
     sand, exposed = read_sand(img, palette, v) if palette.sand else ({}, {})
+    unknown = [UnknownColour(cell.reason.split()[0] if cell.reason.startswith(("lock", "key"))
+                             else "bucket", cell.lab, cell=(cell.row, cell.col))
+               for row in grid for cell in row
+               if cell is not None and cell.kind is Kind.UNKNOWN and cell.lab is not None]
+    unknown += unknown_sand(img, palette, v)
+    for u in unknown:
+        log(f"warning: {u.describe()} — not in the palette (dataset/unknown_colours/, "
+            f"python -m tools.add_colour)")
     return GameView(lat, grid, regions, playable, disagree, k, slots, sand, exposed,
-                    (img.shape[1], img.shape[0]))
-
-
-def save_unknown(img: np.ndarray, view: GameView, out_dir: Path,
-                 log: Callable[[str], None] = print) -> List[Path]:
-    """Save the frame + a crop of every UNKNOWN cell to out_dir and append to unknown.jsonl,
-    so the user can explain the new obstacle and it can be added as a lock type."""
-    import cv2
-
-    cells = view.unknown_cells()
-    if not cells:
-        return []
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time() * 1000) % 1000:03d}"
-    frame_path = out_dir / f"{stamp}-frame.png"
-    cv2.imwrite(str(frame_path), img)
-    saved = [frame_path]
-    with (out_dir / "unknown.jsonl").open("a", encoding="utf-8") as fh:
-        for cell in cells:
-            x0, y0, x1, y1 = (int(round(a)) for a in view.lattice.rect(cell.row, cell.col))
-            pad = int(0.4 * view.lattice.ch)
-            crop = img[max(0, y0 - pad):y1, max(0, x0):x1]
-            p = out_dir / f"{stamp}-r{cell.row}c{cell.col}.png"
-            cv2.imwrite(str(p), crop)
-            saved.append(p)
-            rec = {"time": stamp, "frame": frame_path.name, "crop": p.name, "row": cell.row,
-                   "col": cell.col, "reason": cell.reason,
-                   "center_rel": [round(x, 4) for x in view.cell_center_rel(cell.row, cell.col)]}
-            fh.write(json.dumps(rec) + "\n")
-            log(f"unknown cell r{cell.row}c{cell.col} ({cell.reason}) saved to {p}")
-    return saved
+                    (img.shape[1], img.shape[0]), unknown)
 
 
 def draw(img: np.ndarray, gv: GameView) -> np.ndarray:
@@ -432,6 +455,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     cfg = load_config(args.config)
     pal = Palette.load(cfg.paths.palette)
     reader = DigitReader.load(Path(cfg.paths.dataset) / "digits.npz")
+    icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons")
     out_dir = Path(cfg.paths.debug)
     out_dir.mkdir(parents=True, exist_ok=True)
     for path in args.images:
@@ -441,7 +465,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             continue
         print(f"== {Path(path).name}")
         try:
-            gv = read_gameplay(img, pal, cfg.vision, reader, log=lambda s: print("  " + s))
+            gv = read_gameplay(img, pal, cfg.vision, reader, log=lambda s: print("  " + s),
+                               icons=icons)
         except VisionError as e:
             print(f"  not a gameplay frame? {e}")
             continue

@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 199 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 446 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -108,10 +108,46 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
     only non-gameplay screens. The earlier failures (before logging existed, seen only in the
     console: "grid panel background not found", "conveyor counter not read") happened while
     the user was actively playing — suspect belt/sand animation or transitions, unconfirmed.
-  - NEXT (before phase 5): run `python -m tools.overlay --dry-run` while actually playing
+  - **Root cause found offline (2026-10-16), fixed, awaiting live confirmation.** Both readers
+    were fragile to a crop a few px off (pt/px rounding, window edge, hover-chrome frame):
+    a 3 px foreign strip at the left edge -> "grid panel background not found" on every frame
+    (the panel test used the outermost 5 % column strip); a 4-10 px vertical offset -> "counter
+    not read" (glyphs touching the tight zone's border were dropped). Fix: the grid finder ignores
+    `vision.edge_margin` at both edges and accepts the left or right strip; `vision.read_counter`
+    slides the tight zone by up to `vision.counter_search`. Tests `*_survives_misaligned_crop`
+    (+-3/8 px x, +-4/10 px y). Still failing by design: a dimmed frame (popup fade, V x0.7).
+  - Previously NEXT (before phase 5), now = verification: run `python -m tools.overlay --dry-run` while actually playing
     (belt moving, level end / retry, ads), then inspect `debug/vision_fail/fails.jsonl`
     (step, failure, frame diff) and the saved frames, find the cause, fix it.
 - Env note: `.venv` is Python 3.9.6 (Xcode); CLAUDE.md says 3.11+. Works (future annotations).
+
+## L183 (2026-10-16): new colours, locks / keys, curtains — done, awaiting OK
+- Live dry-run with the edge/counter fix: 1 failed read in 154 (a frame grabbed while the window
+  was being moved: stale geometry, frame cut off — failing it is correct).
+- Dataset: shot 053 (L183 start, from the overlay report) annotated in `annotations.json`
+  (new labels `lock:<colour>`, `key:<colour>`; `sand_colors` for colours hidden under curtains /
+  locks, e.g. red). Palette rebuilt: buckets + sand `green`, `darkgreen`; new group `keys`
+  (`yellow`, `red`); icon templates in `dataset/templates/icons/`.
+- Shades: green vs darkgreen buckets are the closest pair (14.8 LAB between nearest looks,
+  max_dist 22: nearest-colour still separates them on every annotated cell); sand 34 apart.
+  The sky is the existing `cyan` sand.
+- Curtains: posts now end at their first gap (the top curtain used to swallow the two below);
+  L183 reads 10 / 15 / 20; build_palette learns each curtain's own counter.
+- Towers seen from above: a disc on a dome whose hue differs >= `disc_min_hue_deg` from the dome
+  = face-down tower `<disc>/<dome>-down` (the inside of an open bucket keeps the hue).
+- Locks / keys: `vision.IconMatcher` (grey shape templates, colour-independent: other-colour
+  icons 0.82-0.85, other cells <= 0.62, threshold 0.75), colour from palette `keys`; cell types
+  in `cells.CELL_LOCKS` (`lock` unlock "key", `key` unlock "path"). `state.after_tap` releases
+  keys the tap connects (chains), empties their cells and opens the lock of their colour
+  (`LevelState.unlocked`); keys already connected give no credit. Strategy: +
+  `weight_key_unlock` per bucket under the opened lock ("opens lock yellow with 1 bucket(s)").
+- Unknown colours: `GameView.unknown_colours` (bucket / lock / key cells + `vision.unknown_sand`
+  clusters >= `unknown_sand_min`), logged, magenta in the overlay, saved once per run to
+  `dataset/unknown_colours/` (+ `unknown_colours.jsonl`); `python -m tools.add_colour <name>
+  <files>` -> `dataset/extra_colours.json` (merged by build_palette) + rebuild. The Analyzer now
+  also saves UNKNOWN cells to `dataset/unknown/` (was never called live).
+- L183 start decision: tap r0c2 darkgreen (contact layer: darkgreen 61 %, green 39 %).
+- Open: confirm the key/lock assumptions above on frames after a key flies.
 
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all
