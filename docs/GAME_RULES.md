@@ -48,3 +48,19 @@
   whose sand is buried under other colors (it will block a conveyor slot).
 - Prefer moves that unlock face-down buckets, ice blocks, and curtains.
 - Avoid deadlock: keep at least one conveyor slot usable.
+
+## Unknown / future obstacles
+Later levels introduce new obstacle / lock types beyond ice and curtains. Vision and strategy
+must be extensible:
+- Every grid cell is classified as: **playable bucket** / **face-down bucket** /
+  **known lock** (ice, curtain, …) / **UNKNOWN**.
+- UNKNOWN cells are treated as locked: never tapped.
+- When an UNKNOWN cell appears, save the full frame + a crop of that cell to `dataset/unknown/`
+  and log it, so the user can explain the new mechanic and it gets added as a new lock type.
+- Lock types are data-driven: one small class/entry per type (how to recognize it, how to read
+  its counter, when it unlocks), not hardcoded if/else chains.
+
+### Seen but not yet explained
+- **Stacked "tower" bucket** (level 181, `dataset/screens/*-030-auto.png`): a tall bucket on top
+  of several colored layers in one cell. In-game hint: "To complete the [tower] clear the top
+  bucket to unlock the next colorful stage". Until the user explains it, treat it as UNKNOWN.
