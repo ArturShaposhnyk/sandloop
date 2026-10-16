@@ -74,6 +74,8 @@ vision:                      # vision.py / screens.py; colours come from dataset
   empty_tol: 10.0            # LAB distance to the empty-cell colour
   empty_min_frac: 0.5        # share of empty-colour pixels for an empty cell
   face_up_max_ratio: 0.88    # centre V / top-stage rim V below this = face-up (up <= 0.83, down >= 0.93)
+  colour_watch: [[green, darkgreen]]  # close colour pairs: every such bucket is printed with its distance to both (debug)
+  rim_percentile: 75         # open bucket colour = top-stage pixels at least this V percentile (the rim; inside is shaded). 85+ pulls darkgreen rims toward green
   face_ref_percentile: 85    # rim brightness = this percentile of V in the top part of the object
   tower_min_margin: 8.0      # LAB margin for a real second colour (tower stage)
   ice_min_white: 0.10
@@ -82,6 +84,14 @@ vision:                      # vision.py / screens.py; colours come from dataset
   sand_max_dist: 18.0
   slot_min_cover: 0.55       # conveyor: object share of a bucket's run (end posts ~0.45)
   bottom_band: 0.06          # fallback "exposed" band (share of the picture) if no bottom edge found
+  # hint arrows over the grid bottom (hints.py, dataset/templates/hints/): masked out of the
+  # lattice, inpainted before cells are read; a cell more covered than hint_cover_max (or read
+  # UNKNOWN through the mask) is occluded: last clean reading reused, never tapped, never saved
+  # as unknown
+  hint_threshold: 0.8
+  hint_scales: [0.9, 1.0, 1.1]
+  hint_downscale: 0.5        # match on the grid zone scaled by this (speed)
+  hint_cover_max: 0.5        # 055: cells 39-42 % hidden still read right through the inpainted mask
   lower_band: 0.3            # "lower part" of the picture zone: sand there reaches the belt soon (strategy: unlock value)
   # "exposed" = the contact layer: the lowest rows of sand right above the picture's bottom edge
   contact_search: 0.02       # share of screen height searched around picture[3] for that edge

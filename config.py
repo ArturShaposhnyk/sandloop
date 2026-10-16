@@ -85,9 +85,17 @@ class VisionConfig:
     disc_min_dist: float = 20.0       # face-down tower: LAB distance disc vs the ring around it
     unknown_sand_min: float = 0.03    # share of the picture for an unknown sand colour
     icon_threshold: float = 0.75      # lock / key icon template match (other cells <= 0.62)
+    hint_threshold: float = 0.8       # hint arrow template match (hints.py)
+    hint_scales: List[float] = field(default_factory=lambda: [0.9, 1.0, 1.1])
+    hint_downscale: float = 0.5       # hint arrows are matched on the grid zone scaled by this
+    hint_cover_max: float = 0.5       # cell crop share under an arrow above which it's occluded
     empty_tol: float = 10.0           # LAB distance to the empty-cell colour
     empty_min_frac: float = 0.5       # share of empty-colour pixels for an empty cell
     face_up_max_ratio: float = 0.88   # centre V / top-stage rim V below this = face-up
+    colour_watch: List[List[str]] = field(  # close bucket colour pairs: always in colour_notes
+        default_factory=lambda: [["green", "darkgreen"]])
+    rim_percentile: float = 75.0      # open bucket colour = object pixels of the top stage this
+                                      # bright and up (the rim; the inside is shaded)
     face_ref_percentile: float = 85.0  # rim brightness = this percentile of the top part's V
     tower_min_margin: float = 8.0     # LAB margin for a real second colour (tower stage)
     ice_min_white: float = 0.10

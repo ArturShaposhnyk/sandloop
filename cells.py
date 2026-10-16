@@ -40,6 +40,9 @@ class Cell:
     region: Optional[int] = None      # id of the multi-cell lock this cell belongs to
     reason: str = ""                  # why it is UNKNOWN (for the log)
     lab: Optional[Lab] = None         # UNKNOWN because of its colour: the colour seen (LAB)
+    occluded: bool = False            # hidden by a game hint arrow (hints.py): never tapped
+    seen_lab: Optional[Lab] = None    # bucket: the LAB its top colour was read from (debug)
+    seen_from: str = ""               # ... and where: "rim" (open bucket) | "top" | "disc"
 
     @property
     def is_obstacle(self) -> bool:
@@ -72,6 +75,8 @@ class CellFeatures:
     hue_cyan_frac: float   # share of light-cyan pixels (ice body)
     centre_lab: Optional[Lab] = None  # upper middle: inside of an open bucket / a tower's disc
     ring_lab: Optional[Lab] = None    # around it: the rim of an open bucket / the dome under a disc
+    rim_lab: Optional[Lab] = None     # brightest object pixels of the top stage: an open bucket's
+                                      # rim (its inside is shaded darker: L183 055 r4c0 green)
     icon: Optional[str] = None        # icon template matched in the cell ("lock", "key"), if any
     icon_color: Optional[str] = None  # its colour from the palette's ``keys`` group
     icon_lab: Optional[Lab] = None    # the icon's colour as seen
@@ -168,6 +173,7 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
     ring &= obj
     med = lambda m: (tuple(float(x) for x in np.median(lab[m], axis=0))  # noqa: E731
                      if m.sum() >= 10 else None)
+    rim = upper & (V >= np.percentile(V[upper], v.rim_percentile)) if upper.sum() >= 20 else upper
     return CellFeatures(
         empty_frac=float(empty.mean()),
         white_frac=float(((S < 50) & (V > 235)).mean()),
@@ -178,15 +184,21 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
         hue_cyan_frac=float(((hsv[..., 0] >= 90) & (hsv[..., 0] <= 105) & (S > 90)).mean()),
         centre_lab=med(mid),  # type: ignore[arg-type]
         ring_lab=med(ring),  # type: ignore[arg-type]
+        rim_lab=med(rim),  # type: ignore[arg-type]
     )
+
+
+def colour_distances(lab: Lab, palette: Palette) -> List[Tuple[float, str]]:
+    """LAB distance to every bucket colour of the palette (nearest look), nearest first."""
+    return sorted((min(float(np.linalg.norm(np.asarray(lab) - np.asarray(c))) for c in looks),
+                   name) for name, looks in palette.buckets.items())
 
 
 def _distinct(lab: Lab, best: str, other: str, palette: Palette, margin: float) -> bool:
     """True if ``lab`` is clearly closer to ``best`` than to ``other`` (a real second colour,
     not the shaded inside of a one-colour bucket)."""
-    d = lambda name: min(float(np.linalg.norm(np.asarray(lab) - np.asarray(c)))  # noqa: E731
-                         for c in palette.buckets[name])
-    return d(other) - d(best) >= margin
+    d = dict((n, x) for x, n in colour_distances(lab, palette))
+    return d[other] - d[best] >= margin
 
 
 def empty_fraction(region_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> float:
@@ -216,12 +228,16 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
             return lock_cell(lock)
     if f.top_lab is None and f.body_lab is None:
         return Cell(row, col, Kind.UNKNOWN, reason="no object pixels")
-    top, dt = palette.nearest(f.top_lab or f.body_lab, "buckets", v.color_max_dist)
+    face_up = f.face_ratio < v.face_up_max_ratio
+    # an open bucket's inside is shaded (light green reads dark green): its colour is the rim's
+    top_lab, seen = ((f.rim_lab, "rim") if face_up and f.rim_lab is not None
+                     else (f.top_lab or f.body_lab, "top"))
+    top, dt = palette.nearest(top_lab, "buckets", v.color_max_dist)
     body, db = palette.nearest(f.body_lab or f.top_lab, "buckets", v.color_max_dist)
     if top is None and body is None:
         return Cell(row, col, Kind.UNKNOWN,
                     reason=f"colour not in palette (dist {min(dt, db):.1f})",
-                    lab=f.top_lab or f.body_lab)
+                    lab=top_lab)
     color = top or body
     # face-down tower seen from above: a disc of the top stage's colour on the body's dome, so
     # the ring around the centre is another colour. An open bucket's ring is its own rim, the
@@ -231,11 +247,12 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
         dome, _ = palette.nearest(f.ring_lab, "buckets", v.color_max_dist)
         apart = float(np.linalg.norm(np.subtract(f.centre_lab, f.ring_lab)))
         if disc is not None and dome is not None and disc != dome and apart >= v.disc_min_dist:
-            return Cell(row, col, Kind.BUCKET, color=disc, body=dome, face_up=False)
+            return Cell(row, col, Kind.BUCKET, color=disc, body=dome, face_up=False,
+                        seen_lab=f.centre_lab, seen_from="disc")
     tower = (body is not None and top is not None and body != top
-             and _distinct(f.top_lab, top, body, palette, v.tower_min_margin))
+             and _distinct(top_lab, top, body, palette, v.tower_min_margin))
     return Cell(row, col, Kind.BUCKET, color=color, body=body if tower else None,
-                face_up=f.face_ratio < v.face_up_max_ratio)
+                face_up=face_up, seen_lab=top_lab, seen_from=seen)
 
 
 def path_playable(cells: Sequence[Sequence[Optional[Cell]]],

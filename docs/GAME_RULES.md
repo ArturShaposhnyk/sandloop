@@ -40,6 +40,11 @@
     cream on red, red on orange); the fill % is the collecting stage's.
   - Seen in the grid from above: face-up = the top stage's opening; face-down = a disc of the
     top stage's colour on the dome of the stage below.
+- Colour of an **open (face-up) bucket** = its **rim**: the inside is shaded darker, so a light
+  green open bucket reads dark green from its inside (user, L183 shot 055 r4c0). The bot takes
+  the brightest top-stage pixels (`vision.rim_percentile`) and the palette has a rim look per
+  colour learned from the annotated open buckets. Close pairs (`vision.colour_watch`, e.g.
+  green / darkgreen) are printed with the distance to both in the debug output.
 
 ## Conveyor
 - Max 5 buckets on the conveyor at once (HUD shows "k/5").
@@ -115,6 +120,18 @@
   match nothing are found as compact clusters of unmatched picture pixels. Both are logged,
   shown in the overlay (magenta) and saved once per run to `dataset/unknown_colours/`; add one
   with `python -m tools.add_colour <name> <crops>` (or annotate a screenshot and rebuild).
+
+## Hint overlays (user, L183 shot 055)
+- Big yellow **down arrows** over the bottom row of the grid point at the boosters. The game
+  shows them when 4 buckets are on the belt and not full yet. They are a hint only: the bot
+  ignores them (never a cell, a bucket or an unknown mechanic).
+- Vision (`hints.py`): masked colour template `dataset/templates/hints/arrow_down.png`
+  (`python -m hints cut <frame> x0 y0 x1 y1` for a new one). The arrow pixels are kept out of
+  the grid outline and inpainted before cells and curtains are read. A cell up to
+  `vision.hint_cover_max` hidden is read through the inpainted pixels; a cell hidden more than
+  that, or one that reads UNKNOWN through them, takes its last clean reading from earlier
+  frames (same lattice), else UNKNOWN "hidden by hint arrow". Such cells are never tapped and
+  never saved to `dataset/unknown/`.
 
 ## Unknown / future obstacles
 Later levels introduce new obstacle / lock types beyond ice and curtains. Vision and strategy

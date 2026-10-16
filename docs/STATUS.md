@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 494 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 507 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -193,6 +193,47 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   saved-shot decisions unchanged. Tests `tests/test_planner.py` (greedy-wrong / path-right grid,
   deadlock and starving-step rejections, key target).
 - Not live-tested yet. Weights are first guesses.
+
+## Hint arrows (2026-10-16, live L183 shot 055) — done, awaiting OK
+- Live: "wait: no tappable bucket" with face-up creams visible. Cause: the yellow hint arrows
+  (shown at 4/5 with buckets not full) are not panel-coloured, so `find_lattice` joined the
+  grid to the booster buttons -> 8x8 lattice, every cell misplaced, a phantom orange row, every
+  face-up bucket "disagrees" with the path rule. Not the last-slot rule.
+- Fix: `hints.py` (`HintArrows` masked template match on the grid zone at half resolution,
+  ~40 ms; `occlusion_mask`, `clean` = inpaint, `CellMemory` = last clean cell readings per
+  lattice); `find_lattice(occluded=)` ignores arrow pixels; `read_grid` reads cells through
+  the inpainted mask, falls back to memory / UNKNOWN-occluded (`Cell.occluded`: never tapped,
+  not in `unknown_cells()`); `GameView.hints` drawn as grey boxes. Analyzer keeps the memory.
+- 055 now reads like 054's lattice; bottom row cyan-down / orange-down read through the mask.
+  Decision on 055: wait, all three face-up buckets fail the **last-slot rule** (4/5 -> avail
+  >= 25 %): cream r3c0 / r4c5 0 % exposed, darkgreen r4c0 24.6 %.
+- `choose` now lists face-up buckets that are not candidates with the reason (path rule
+  disagreement / hidden by a hint arrow); exposure rejections show one decimal.
+- Tests `tests/test_hints.py` (arrows only on 055, lattice = 054's, labels, memory, last-slot
+  decision) + a reason test. Shot 055 is not in `annotations.json` (build_palette's lattice
+  has no arrow mask).
+- `dataset/unknown_colours/20261016-181159-393-bucket-r3c1.png` (untracked) is a misread
+  panel-background crop from the arrow frames before the fix: junk, can be deleted.
+
+## Open-bucket colour from the rim; vision.py split (2026-10-16) — done, awaiting OK
+- User: 055 r4c0 is an open LIGHT green bucket; the bot read `darkgreen/green-up` (the shaded
+  inside -> darkgreen top, the light rim -> a fake green stage) and rejected it at the last slot
+  (24.6 % darkgreen exposed). Light green is 47 % of the contact layer.
+- Fix: `CellFeatures.rim_lab` = top-stage object pixels at V >= `vision.rim_percentile` (75;
+  85+ pulls darkgreen rims toward green); `classify_cell` reads face-up buckets from it
+  (`Cell.seen_lab` / `seen_from` = rim | top | disc). `build_palette` learns an `up-rim` look
+  per colour from annotated open buckets (palette rebuilt: only that look added). All 33
+  annotated open buckets classify right.
+- Greens on 053 / 054 / 055 re-checked: every one matches the annotation; nearest-vs-other
+  margins >= 10.9 (open darkgreen rims), 055 r4c0 green 2.4 vs darkgreen 18.0. 055 is not in
+  `annotations.json`; its expected grid lives in `tests/test_hints.py` (r4c0 = `green-up`).
+- 055 decision: **tap r4c0 green** (score 0.82; opens r5c0 darkgreen (useful)).
+- Debug: `GameView.colour_notes` (vision / strategy CLI, overlay report "colour close calls"):
+  every bucket of a `vision.colour_watch` pair (green / darkgreen) and any bucket whose
+  runner-up colour is within `color_max_dist`, with both distances, `CLOSE` under
+  `tower_min_margin`.
+- vision.py split (406 -> 433 lines with the notes): `belt.py` (counter, conveyor slots),
+  `sand.py` (sand shares, contact layer, lower part), `zones.py` (`crop_rel`).
 
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all

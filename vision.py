@@ -12,20 +12,19 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from cells import (Cell, Kind, cell_features, classify_cell, empty_fraction, icon_lab,
-                   path_playable)
+from cells import (Cell, Kind, cell_features, classify_cell, colour_distances, empty_fraction,
+                   icon_lab, path_playable)
 from config import VisionConfig
-from digits import DigitReader, group_words, segment
+from digits import DigitReader
+from hints import CellMemory, HintArrows, clean, occlusion_mask
+from belt import Slot, read_conveyor
 from icons import IconMatcher
 from palette import Palette, bgr_to_lab, lab_distance
+from sand import read_sand
 from unknown_colours import UnknownColour, unknown_sand
+from zones import crop_rel  # noqa: F401  (re-exported)
 
 Grid = List[List[Optional[Cell]]]   # None = no grid cell at this lattice position
-
-
-def crop_rel(img: np.ndarray, r: Sequence[float]) -> np.ndarray:
-    h, w = img.shape[:2]
-    return img[int(r[1] * h):int(r[3] * h), int(r[0] * w):int(r[2] * w)]
 
 
 @dataclass
@@ -57,10 +56,12 @@ class VisionError(RuntimeError):
     pass
 
 
-def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig) -> Lattice:
+def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig,
+                 occluded: Optional[np.ndarray] = None) -> Lattice:
     """Find the grid panel (the hole in the purple background below the conveyor) and its
     cell lattice. Column pitch comes from the periodic cell edges; row pitch from the fixed
-    cell aspect ratio."""
+    cell aspect ratio. ``occluded``: frame mask of hint arrows (hints.py), never grid - they
+    would join the grid to the booster buttons below it."""
     import cv2
 
     palette.require_ui("panel_bg")
@@ -78,6 +79,8 @@ def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig) -> Lattice:
     ytop = int(np.argmax(side))
     grid = ~panel
     grid[:ytop] = False
+    if occluded is not None:
+        grid[occluded[zy0:zy0 + grid.shape[0], zx0:zx0 + grid.shape[1]]] = False
     if edge:
         grid[:, :edge] = grid[:, w - edge:] = False   # border strips are never the grid
     n, lab, st, _ = cv2.connectedComponentsWithStats(grid.astype(np.uint8), 4)
@@ -100,12 +103,18 @@ def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig) -> Lattice:
     cw = (gx1 - gx0) / cols
     rows = max(1, round((gy1 - gy0) / (cw * v.cell_aspect)))
     ch = (gy1 - gy0) / rows
+    occ = (np.zeros_like(g) if occluded is None
+           else occluded[zy0:zy0 + g.shape[0], zx0:zx0 + g.shape[1]])
     mask = np.zeros((rows, cols), bool)
     for r in range(rows):
         for c in range(cols):
-            a = g[int(gy0 + (r + .25) * ch):int(gy0 + (r + .75) * ch),
-                  int(gx0 + (c + .25) * cw):int(gx0 + (c + .75) * cw)]
-            mask[r, c] = a.size > 0 and a.mean() > 0.5
+            win = (slice(int(gy0 + (r + .25) * ch), int(gy0 + (r + .75) * ch)),
+                   slice(int(gx0 + (c + .25) * cw), int(gx0 + (c + .75) * cw)))
+            a, seen = g[win], ~occ[win]
+            if a.size and seen.mean() < 0.25:   # mostly under a hint arrow: keep it (occluded)
+                mask[r, c] = True
+            else:
+                mask[r, c] = a.size > 0 and a[seen].mean() > 0.5
     return Lattice(zx0 + float(gx0), zy0 + float(gy0), float(cw), float(ch), mask)
 
 
@@ -171,13 +180,18 @@ def _run_end(on: np.ndarray, max_gap: int) -> int:
     return end
 
 
-def cell_crop(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) -> np.ndarray:
+def cell_box(lat: Lattice, r: int, c: int, v: VisionConfig) -> Tuple[int, int, int, int]:
     """The cell's rectangle shifted up by ``cell_shift_up`` (objects are drawn overhanging into
-    the row above) and inset by ``cell_inset`` on each side."""
+    the row above) and inset by ``cell_inset`` on each side: (x0, y0, x1, y1) pixels."""
     x0, y0, x1, y1 = lat.rect(r, c)
     dy = v.cell_shift_up * lat.ch
     ix, iy = v.cell_inset * lat.cw, v.cell_inset * lat.ch
-    return img[max(0, int(y0 - dy + iy)):int(y1 - dy - iy), int(x0 + ix):int(x1 - ix)]
+    return int(x0 + ix), max(0, int(y0 - dy + iy)), int(x1 - ix), int(y1 - dy - iy)
+
+
+def cell_crop(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) -> np.ndarray:
+    x0, y0, x1, y1 = cell_box(lat, r, c, v)
+    return img[y0:y1, x0:x1]
 
 
 def lock_digits_roi(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) -> np.ndarray:
@@ -185,23 +199,6 @@ def lock_digits_roi(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConf
     x0, y0, x1, y1 = lat.rect(r, c)
     dy = v.cell_shift_up * lat.ch
     return img[max(0, int(y0 - dy)):int(y1 - dy / 2), int(x0):int(x1)]
-
-
-@dataclass
-class Slot:
-    x: float                    # relative x centre on the screen
-    color: Optional[str]        # the collecting bucket (a tower's current top stage)
-    fill: Optional[int] = None  # percent, if its label was read
-    body: Optional[str] = None  # tower: colour of the next stage (seen as its base), else None
-
-    def label(self) -> str:
-        return f"{self.color}/{self.body}" if self.body else f"{self.color}"
-
-    @property
-    def uncertain(self) -> bool:
-        """At the far edge without a fill label: entering/leaving bucket or an end post.
-        The k/5 counter, not the slot list, is authoritative for how full the conveyor is."""
-        return self.fill is None and not 0.12 <= self.x <= 0.88
 
 
 @dataclass
@@ -218,6 +215,8 @@ class GameView:
     lower: Dict[str, float] = field(default_factory=dict)    # share of the picture's lower part
     frame_size: Tuple[int, int] = (0, 0)       # w, h in pixels
     unknown_colours: List[UnknownColour] = field(default_factory=list)
+    hints: List[Tuple[int, int, int, int]] = field(default_factory=list)  # hint arrow boxes
+    colour_notes: List[str] = field(default_factory=list)   # close colour calls (debug)
 
     def labels(self) -> List[str]:
         return [" ".join("x" if c is None else c.label() for c in row) for row in self.grid]
@@ -226,7 +225,7 @@ class GameView:
         """Buckets that are playable by the path rule AND look face-up (both must agree)."""
         return [(r, c) for r, row in enumerate(self.grid) for c, cell in enumerate(row)
                 if cell is not None and cell.kind is Kind.BUCKET and self.playable[r][c]
-                and cell.face_up]
+                and cell.face_up and not cell.occluded]
 
     def cell_center_rel(self, r: int, c: int) -> Tuple[float, float]:
         x0, y0, x1, y1 = self.lattice.rect(r, c)
@@ -234,13 +233,20 @@ class GameView:
         return (x0 + x1) / 2 / w, (y0 + y1) / 2 / h
 
     def unknown_cells(self) -> List[Cell]:
-        return [c for row in self.grid for c in row if c is not None and c.kind is Kind.UNKNOWN]
+        """UNKNOWN cells (not the ones hidden by a hint arrow: those are not a new mechanic)."""
+        return [c for row in self.grid for c in row
+                if c is not None and c.kind is Kind.UNKNOWN and not c.occluded]
 
 
 def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
               reader: Optional[DigitReader] = None,
-              icons: Optional[IconMatcher] = None) -> Tuple[Lattice, Grid, List[Region]]:
-    lat = find_lattice(img, palette, v)
+              icons: Optional[IconMatcher] = None, occluded: Optional[np.ndarray] = None,
+              memory: Optional[CellMemory] = None) -> Tuple[Lattice, Grid, List[Region]]:
+    """``occluded``: hint-arrow mask (``img`` already inpainted there). A cell partly under it is
+    read through the inpainted pixels; if more than ``hint_cover_max`` of its crop is hidden, or
+    it reads UNKNOWN through the mask, it is occluded: its last clean reading from ``memory`` if
+    there is one, else UNKNOWN; either way never tapped and never saved as unknown."""
+    lat = find_lattice(img, palette, v, occluded)
     regions = find_curtains(img, lat, palette, v, reader)
     grid: Grid = [[None] * lat.cols for _ in range(lat.rows)]
     for i, reg in enumerate(regions):
@@ -267,165 +273,39 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
             cell = classify_cell(r, c, f, palette, v)
             if cell.kind is Kind.LOCK and reader is not None:
                 cell.counter = reader.read_int(lock_digits_roi(img, lat, r, c, v), "light")
+            if occluded is not None:
+                bx0, by0, bx1, by1 = cell_box(lat, r, c, v)
+                hidden = occluded[by0:by1, bx0:bx1]
+                cover = float(hidden.mean()) if hidden.size else 0.0
+                if cover > v.hint_cover_max or (cover > 0.02 and cell.kind is Kind.UNKNOWN):
+                    cell = (memory.recall(lat, (r, c)) if memory is not None else None) or Cell(
+                        r, c, Kind.UNKNOWN, reason="hidden by hint arrow, no earlier reading")
+                    cell.occluded = True
             grid[r][c] = cell
     return lat, grid, regions
-
-
-def read_counter(img: np.ndarray, v: VisionConfig, reader: DigitReader) -> Optional[int]:
-    """k of the "k/5" counter. The zone is tight (light pixels right below the text merge with
-    the glyphs in a taller one), so a crop a few px off used to lose it: the zone is slid up and
-    down by up to ``counter_search`` and the reading nearest the configured position wins."""
-    h, w = img.shape[:2]
-    x0, y0, x1, y1 = v.counter
-    step = max(1, int(0.003 * h))
-    reach = int(v.counter_search * h)
-    for dy in sorted(range(-reach, reach + 1, step), key=abs):
-        top, bottom = int(y0 * h) + dy, int(y1 * h) + dy
-        if top < 0 or bottom > h:
-            continue
-        s = reader.read(img[top:bottom, int(x0 * w):int(x1 * w)])
-        if len(s) == 3 and s[1] == "/" and s[0].isdigit() and s[2].isdigit():
-            return int(s[0])
-    return None
-
-
-def read_conveyor(img: np.ndarray, palette: Palette, v: VisionConfig,
-                  reader: Optional[DigitReader] = None) -> Tuple[Optional[int], List[Slot]]:
-    """k of the "k/5" counter, and the buckets visible on the belt with their fill labels."""
-    import cv2
-
-    h, w = img.shape[:2]
-    k = None
-    if reader is not None:
-        k = read_counter(img, v, reader)
-    band = crop_rel(img, v.conveyor)
-    lab = bgr_to_lab(band)
-    # belt and rails are uniform along each row and buckets cover well under half of it, so the
-    # row median is the background; buckets are what differs from it
-    background = np.median(lab, axis=1, keepdims=True)
-    obj = np.linalg.norm(lab - background, axis=2) > 18
-    cols = obj.mean(axis=0) > 0.15
-    padded = np.concatenate([[0], cols.astype(np.int8), [0]])
-    d = np.diff(padded)
-    runs: List[List[int]] = []
-    for s, e in zip(np.nonzero(d == 1)[0], np.nonzero(d == -1)[0]):
-        if runs and s - runs[-1][1] < 0.03 * w:   # a bucket full of light sand looks hollow
-            runs[-1][1] = e
-        else:
-            runs.append([s, e])
-    bx0 = int(v.conveyor[0] * w)
-    slots: List[Slot] = []
-    for s, e in runs:
-        m = obj[:, s:e]
-        if e - s < 0.05 * w or m.mean() < v.slot_min_cover:   # too narrow, or an end post
-            continue
-        color = None
-        if m.sum() >= 20:
-            sel = lab[:, s:e][m]
-            color, _ = palette.nearest(tuple(np.median(sel, axis=0)), "buckets",
-                                       1.5 * v.color_max_dist)
-        slots.append(Slot((bx0 + (s + e) / 2) / w, color,
-                          body=_belt_base(band[:, s:e], lab[:, s:e], m, color, palette, v)))
-    if reader is not None and slots:
-        text = crop_rel(img, v.fill_text)
-        for word in group_words(segment(text)):
-            s = reader.read_glyphs(word)
-            if not (s.endswith("%") and s[:-1].isdigit()):
-                continue
-            xc = (word[0].x0 + word[-1].x1) / 2 / w
-            slot = min(slots, key=lambda sl: abs(sl.x - xc))
-            if abs(slot.x - xc) < 0.06:
-                slot.fill = int(s[:-1])
-    return k, slots
-
-
-def _belt_base(bgr: np.ndarray, lab: np.ndarray, m: np.ndarray, color: Optional[str],
-               palette: Palette, v: VisionConfig) -> Optional[str]:
-    """A tower on the belt: the next stage shows as a base of another colour under the
-    collecting bucket (L181: cream on red, red on orange). Base = the brighter half of the
-    bucket pixels in the lowest 30 % of the belt zone (middle of the run). None for a one-colour bucket. A bucket
-    still dropping onto the belt has its base below the zone (shot 031): read as one colour."""
-    if color is None:
-        return None
-    base = m.copy()
-    base[: int(0.7 * m.shape[0])] = False
-    cut = int(0.2 * m.shape[1])           # middle 60 % of the run: no rails / neighbours
-    base[:, :cut] = base[:, m.shape[1] - cut:] = False
-    if base.sum() < 20:
-        return None
-    vals = bgr.max(axis=2)[base]
-    sel = lab[base][vals >= np.percentile(vals, 50)]
-    name, _ = palette.nearest(tuple(np.median(sel, axis=0)), "buckets", v.color_max_dist)
-    return name if name is not None and name != color else None
-
-
-def read_sand(img: np.ndarray, palette: Palette, v: VisionConfig
-              ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
-    """Share of the picture covered by each sand colour, the share of each colour in the
-    contact layer (sand the belt can collect right now, see ``contact_layer``) and in the lower
-    ``lower_band`` of the picture zone (sand that will reach the belt soon)."""
-    pic = crop_rel(img, v.picture)
-    lab = bgr_to_lab(pic)
-    idx, names = palette.classify_pixels(lab, "sand", v.sand_max_dist)
-    if "picture_empty" in palette.ui:
-        idx[lab_distance(lab, palette.ui["picture_empty"]) < 10] = -1
-    total = idx.size
-    sand = {n: float((idx == i).sum()) / total for i, n in enumerate(names)}
-    exposed = contact_layer(img, palette, v)
-    if exposed is None:   # bottom edge not found: fall back to the zone's bottom band
-        band = idx[int((1 - v.bottom_band) * idx.shape[0]):]
-        exposed = {n: float((band == i).sum()) / max(1, band.size) for i, n in enumerate(names)}
-    low = idx[int((1 - v.lower_band) * idx.shape[0]):]
-    lower = {n: float((low == i).sum()) / max(1, low.size) for i, n in enumerate(names)}
-    return ({n: f for n, f in sand.items() if f > 0.002},
-            {n: f for n, f in exposed.items() if f > 0.01},
-            {n: f for n, f in lower.items() if f > 0.01})
-
-
-def contact_layer(img: np.ndarray, palette: Palette, v: VisionConfig
-                  ) -> Optional[Dict[str, float]]:
-    """Colour shares of the lowest ``contact_layer`` rows of the picture, the layer that touches
-    the conveyor (not the pile's slopes). The picture's real bottom edge is found by walking
-    from the zone's bottom while rows are still sand / empty picture (within ``contact_search``).
-    Returns None if no edge is found."""
-    h, w = img.shape[:2]
-    x0, x1 = int(v.picture[0] * w), int(v.picture[2] * w)
-    yb = int(v.picture[3] * h)
-    reach = max(1, int(v.contact_search * h))
-    ya, yz = max(0, yb - reach), min(h, yb + reach)
-    lab = bgr_to_lab(img[ya:yz, x0:x1])
-    idx, names = palette.classify_pixels(lab, "sand", v.sand_max_dist)
-    pictured = idx >= 0
-    if "picture_empty" in palette.ui:
-        empty = lab_distance(lab, palette.ui["picture_empty"]) < 10
-        idx[empty] = -1
-        pictured |= empty
-    inside = pictured.mean(axis=1) >= 0.5
-    y = yb - ya
-    if not inside[min(y, len(inside) - 1)]:
-        while y > 0 and not inside[y - 1]:   # zone reaches below the picture: walk up
-            y -= 1
-        if y == 0:
-            return None
-    else:
-        while y < len(inside) and inside[y]:   # picture goes on below the zone: walk down
-            y += 1
-        if y == len(inside):
-            return None
-    layer = idx[max(0, y - max(1, int(v.contact_layer * h))):y]
-    return {n: float((layer == i).sum()) / layer.size for i, n in enumerate(names)}
 
 
 def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
                   reader: Optional[DigitReader] = None,
                   log: Callable[[str], None] = print,
-                  icons: Optional[IconMatcher] = None) -> GameView:
-    lat, grid, regions = read_grid(img, palette, v, reader, icons)
+                  icons: Optional[IconMatcher] = None, hints: Optional[HintArrows] = None,
+                  memory: Optional[CellMemory] = None) -> GameView:
+    """``hints``: game hint arrows to ignore (hints.py); ``memory``: last clean cell readings,
+    used for cells the arrows hide and updated with this frame's clean cells."""
+    arrows = hints.find(img, v) if hints is not None else []
+    occ = occlusion_mask(img.shape, arrows) if arrows else None
+    if arrows:
+        log(f"hint arrows: {len(arrows)} masked out")
+    lat, grid, regions = read_grid(img if occ is None else clean(img, occ), palette, v, reader,
+                                   icons, occ, memory)
+    if memory is not None:
+        memory.store(lat, grid)
     playable = path_playable(grid, lat.exits())
     disagree = []
     for r, row in enumerate(grid):
         for c, cell in enumerate(row):
-            if cell is not None and cell.kind is Kind.BUCKET and cell.face_up != playable[r][c]:
+            if (cell is not None and cell.kind is Kind.BUCKET and not cell.occluded
+                    and cell.face_up != playable[r][c]):
                 disagree.append((r, c))
                 log(f"warning: cell r{r}c{c} ({cell.label()}) looks "
                     f"{'face-up' if cell.face_up else 'face-down'} but the path rule says "
@@ -435,13 +315,38 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
     unknown = [UnknownColour(cell.reason.split()[0] if cell.reason.startswith(("lock", "key"))
                              else "bucket", cell.lab, cell=(cell.row, cell.col))
                for row in grid for cell in row
-               if cell is not None and cell.kind is Kind.UNKNOWN and cell.lab is not None]
+               if cell is not None and cell.kind is Kind.UNKNOWN and cell.lab is not None
+               and not cell.occluded]
     unknown += unknown_sand(img, palette, v)
     for u in unknown:
         log(f"warning: {u.describe()} — not in the palette (dataset/unknown_colours/, "
             f"python -m tools.add_colour)")
     return GameView(lat, grid, regions, playable, disagree, k, slots, sand, exposed, lower,
-                    (img.shape[1], img.shape[0]), unknown)
+                    (img.shape[1], img.shape[0]), unknown, [b for b, _ in arrows],
+                    colour_notes(grid, palette, v))
+
+
+def colour_notes(grid: Grid, palette: Palette, v: VisionConfig) -> List[str]:
+    """Bucket cells whose runner-up colour is also within ``color_max_dist``, and every bucket
+    of a ``colour_watch`` pair (e.g. green / darkgreen) with its distance to both:
+    "r4c0 green-up (rim): green 2.4, darkgreen 21.1"; "CLOSE" when the two are less than
+    ``tower_min_margin`` apart."""
+    out = []
+    for row in grid:
+        for cell in row:
+            if cell is None or cell.kind is not Kind.BUCKET or cell.seen_lab is None:
+                continue
+            dist = colour_distances(cell.seen_lab, palette)
+            (d1, n1), (d2, n2) = dist[:2]
+            pair = next((p for p in v.colour_watch if cell.color in p), None)
+            if pair is not None:   # always both colours of a watched close pair
+                d = {n: x for x, n in dist}
+                (d1, n1), (d2, n2) = sorted((d.get(n, float("inf")), n) for n in pair)
+            if pair is not None or d2 <= v.color_max_dist:
+                out.append(f"r{cell.row}c{cell.col} {cell.label()} ({cell.seen_from}): "
+                           f"{n1} {d1:.1f}, {n2} {d2:.1f}"
+                           + (" CLOSE" if d2 - d1 < v.tower_min_margin else ""))
+    return out
 
 
 def draw(img: np.ndarray, gv: GameView) -> np.ndarray:
@@ -467,6 +372,8 @@ def draw(img: np.ndarray, gv: GameView) -> np.ndarray:
                         (255, 255, 255), 1, cv2.LINE_AA)
     for reg in gv.regions:
         cv2.rectangle(out, reg.box[:2], reg.box[2:], (255, 0, 255), 2)
+    for x0, y0, x1, y1 in gv.hints:   # hint arrows (ignored): dashed-looking grey box
+        cv2.rectangle(out, (x0, y0), (x1, y1), (128, 128, 128), 1)
     return out
 
 
@@ -486,6 +393,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pal = Palette.load(cfg.paths.palette)
     reader = DigitReader.load(Path(cfg.paths.dataset) / "digits.npz")
     icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons")
+    hints = HintArrows.load(Path(cfg.paths.dataset) / "templates" / "hints")
     out_dir = Path(cfg.paths.debug)
     out_dir.mkdir(parents=True, exist_ok=True)
     for path in args.images:
@@ -496,7 +404,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"== {Path(path).name}")
         try:
             gv = read_gameplay(img, pal, cfg.vision, reader, log=lambda s: print("  " + s),
-                               icons=icons)
+                               icons=icons, hints=hints)
         except VisionError as e:
             print(f"  not a gameplay frame? {e}")
             continue
@@ -511,6 +419,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                          sorted(gv.exposed.items(), key=lambda kv: -kv[1])))
         print("  lower   : " + ", ".join(f"{k} {v:.0%}" for k, v in
                                          sorted(gv.lower.items(), key=lambda kv: -kv[1])))
+        for note in gv.colour_notes:
+            print("  colour  : " + note)
         p = out_dir / f"vision-{Path(path).stem}.png"
         cv2.imwrite(str(p), draw(img, gv))
         print(f"  saved   : {p}")

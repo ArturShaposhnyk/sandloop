@@ -106,7 +106,10 @@ def build_buckets(dataset: Path, ann: dict, pal: Palette, v: VisionConfig) -> No
                     continue
                 f = cell_features(cell_crop(img, lat, r, c, v), pal, v)
                 face = "up" if face_up else "down"
-                for part, val in (("top", f.top_lab), ("body", f.body_lab)):
+                parts = [("top", f.top_lab), ("body", f.body_lab)]
+                if face_up:   # open buckets are classified by their rim (cells.classify_cell)
+                    parts.append(("rim", f.rim_lab))
+                for part, val in parts:
                     if val is not None:
                         samples.setdefault((color, f"{face}-{part}"), []).append(val)
     for (color, _), labs in sorted(samples.items()):

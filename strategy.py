@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
+from cells import Kind
 from config import StrategyConfig
 from planner import Opened, Plan, opened_value, plan
 from state import BeltTracker, LevelState, Pos
@@ -124,7 +125,7 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig) -> Candidate:
     elif cand.stalled is not None:
         cand.rejected = f"{cand.color} on the belt is not filling - sand not reachable now"
     elif cand.avail < min_exp:
-        cand.rejected = (f"not enough exposed sand (avail {cand.avail:.0%} < {min_exp:.0%}"
+        cand.rejected = (f"not enough exposed sand (avail {cand.avail:.1%} < {min_exp:.0%}"
                          f"{', last slot' if free == 1 else ''})")
     elif have < need:
         cand.rejected = f"not enough sand ({have:.1%} < {need:.1%})"
@@ -151,6 +152,28 @@ def path_check(sc: StrategyConfig):
     return check
 
 
+def _not_tappable(state: LevelState) -> List[Candidate]:
+    """Buckets that look face-up but are not candidates, with the reason (shown, never played):
+    visual state and path rule disagree, or hidden by a hint arrow."""
+    out = []
+    for row in state.grid:
+        for cell in row:
+            if cell is None or cell.kind is not Kind.BUCKET:
+                continue
+            pos = (cell.row, cell.col)
+            if pos in state.tappable:
+                continue
+            if cell.occluded:
+                why = "hidden by a hint arrow (last clean reading) - not tapped"
+            elif pos in state.disagreements:
+                why = (f"looks {'face-up' if cell.face_up else 'face-down'} but the path rule "
+                       f"says {'closed' if cell.face_up else 'playable'} - not tapped")
+            else:
+                continue
+            out.append(Candidate(pos, cell.color or "?", rejected=why))
+    return out
+
+
 def choose(state: LevelState, sc: StrategyConfig) -> Decision:
     free = state.free_slots
     if free is None:
@@ -171,6 +194,8 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
                       + sc.weight_key_unlock * cand.unlocked_buckets
                       - sc.weight_tower_short_stage * len(cand.short_stages)
                       + (0.0 if cand.on_belt else sc.weight_new_colour))
+    tappable = len(cands)
+    cands += _not_tappable(state)
     allowed = [c for c in cands if c.rejected is None]
     plans = plan(state, path_check(sc), sc) if allowed else []
     best_plan = plans[0] if plans and plans[0].rejected is None else None
@@ -183,7 +208,7 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
     if not allowed:
         if free == 0:
             why = "conveyor full"
-        elif not cands:
+        elif not tappable:
             why = "no tappable bucket"
         else:
             why = "no bucket passes the rules"
@@ -288,12 +313,15 @@ class Analyzer:
         from digits import DigitReader
         from palette import Palette
         from screens import ScreenClassifier, load_templates
+        from hints import CellMemory, HintArrows
         from icons import IconMatcher
 
         self.cfg = cfg
         self.palette = Palette.load(cfg.paths.palette)
         self.reader = DigitReader.load(Path(cfg.paths.dataset) / "digits.npz")
         self.icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons")
+        self.hints = HintArrows.load(Path(cfg.paths.dataset) / "templates" / "hints")
+        self.memory = CellMemory()   # last clean cell readings, for cells under hint arrows
         self.classifier = ScreenClassifier(load_templates(Path(cfg.paths.dataset) / "templates"),
                                            cfg.vision)
         self.belt = BeltTracker()
@@ -317,7 +345,7 @@ class Analyzer:
         self.reads += 1
         try:
             gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log,
-                               icons=self.icons)
+                               icons=self.icons, hints=self.hints, memory=self.memory)
         except VisionError as e:
             res = Analysis(screen, error=str(e), failure=f"grid: {e}")
         else:
@@ -428,6 +456,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             continue
         for line in res.state.summary():
             print("  " + line)
+        for note in res.view.colour_notes:
+            print("  colour: " + note)
         for cand in res.decision.candidates:
             print("    " + cand.describe())
         for p in res.decision.plans:

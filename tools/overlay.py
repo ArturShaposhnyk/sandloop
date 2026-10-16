@@ -204,6 +204,7 @@ def save_report(out_dir: Path, raw: np.ndarray, dry: Optional[DryRun] = None,
                       + (f" at rel ({tap[0]:.3f}, {tap[1]:.3f})" if tap else "")]
             lines += ["grid:"] + ["  " + row for row in res.view.labels()]
             lines += res.state.summary()
+            lines += ["colour close calls:"] + ["  " + n for n in res.view.colour_notes]
             lines += ["candidates:"] + ["  " + c.describe() for c in res.decision.candidates]
             lines += ["paths:"] + ["  " + p.describe() for p in res.decision.plans]
             lines += [f"sand: {res.state.sand}", f"exposed: {res.state.exposed}",

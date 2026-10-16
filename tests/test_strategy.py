@@ -83,6 +83,7 @@ def test_only_tappable_cells_are_candidates():
     ("008", (4, 0)),     # blue is the most exposed colour
     ("053", (0, 2)),     # L183 start: darkgreen (most of the grass at the bottom), user-confirmed
     ("054", (2, 5)),     # live regression: face-up darkgreen/cyan tower next to the yellow key
+    ("055", (4, 0)),     # live: hint arrows; open LIGHT green read darkgreen from its inside (user)
 ])
 def test_decision_on_shot(seq, want, analyzer):  # noqa: F811
     res = analyzer.analyze(shot(seq), log=lambda s: None)
@@ -344,3 +345,14 @@ def test_dry_run_status_shows_confirmation_and_fail_rate(analyzer, tmp_path):  #
     assert dry.confirmed is None and "read failed (counter" in dry.status()
     assert "read fails 1/4 (25%)" in dry.status()
     dry.close()
+
+
+def test_buckets_that_are_not_candidates_show_why():
+    st = make_state(["red", "blue_"], k=0, sand={"red": .5, "blue": .5},
+                    exposed={"red": .5, "blue": .5})
+    st.tappable, st.disagreements = [], [(0, 0)]   # red looks face-up, path rule disagrees
+    st.grid[1][0].occluded = True                   # blue hidden by a hint arrow
+    d = choose(st, SC)
+    assert d.move is None and d.reason == "wait: no tappable bucket"
+    assert "path rule says" in by_pos(d)[(0, 0)].rejected
+    assert "hint arrow" in by_pos(d)[(1, 0)].rejected
