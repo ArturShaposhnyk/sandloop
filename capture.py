@@ -106,6 +106,41 @@ def content_from_alpha(alpha: np.ndarray, threshold: int = 250) -> Optional[Rect
                 float(rows[-1] - rows[0] + 1))
 
 
+def content_inside_chrome(img: np.ndarray, alpha: Optional[np.ndarray] = None,
+                          max_trim: float = 0.15, tolerance: int = 12,
+                          min_frac: float = 0.7) -> Optional[Rect]:
+    """Screen area (pixels) inside chrome drawn around it, or None if there is no such chrome.
+
+    While the cursor hovers iPhone Mirroring, it draws a title bar (traffic lights, toolbar icons)
+    and a dark frame in what are otherwise transparent margins, so the alpha bbox is the whole
+    window. A row/column counts as chrome if at least ``min_frac`` of its pixels are transparent or
+    within ``tolerance`` of the frame colour (sampled at the middle of the left edge); icons in the
+    title bar stay below that share. Never trims more than ``max_trim`` per side.
+    """
+    h, w = img.shape[:2]
+    px = img[..., :3].astype(np.int16)
+    chrome = px[h // 2, :2].mean(axis=0)
+    near = np.abs(px - chrome).max(axis=2) <= tolerance
+    if alpha is not None:
+        near |= alpha < 250
+
+    def trim(frac: np.ndarray, limit: int) -> int:
+        n = 0
+        while n < limit and frac[n] >= min_frac:
+            n += 1
+        return n
+
+    rows, cols = near.mean(axis=1), near.mean(axis=0)
+    lim_h, lim_w = int(h * max_trim), int(w * max_trim)
+    top, bottom = trim(rows, lim_h), trim(rows[::-1], lim_h)
+    left, right = trim(cols, lim_w), trim(cols[::-1], lim_w)
+    if not (top or bottom or left or right):
+        return None
+    if lim_h in (top, bottom) or lim_w in (left, right):
+        return None  # ran into the cap: the "frame colour" is screen content, not chrome
+    return Rect(float(left), float(top), float(w - left - right), float(h - top - bottom))
+
+
 def detect_content_rect(img: np.ndarray, max_trim: float = 0.15, tolerance: float = 6.0) -> Rect:
     """Find the iPhone screen area inside a window capture (pixels).
 
@@ -305,6 +340,9 @@ def resolve_geometry(cfg: Config, grabber: Grabber,
     scale = img.shape[1] / win.bounds.w
     if isinstance(cfg.screen.content, str):
         px = content_from_alpha(alpha) if alpha is not None else None
+        if px is not None and px.w >= img.shape[1] - 2 and px.h >= img.shape[0] - 2:
+            # no transparent margins: chrome is drawn around the screen (cursor over the window)
+            px = content_inside_chrome(img, alpha, cfg.screen.auto_max_trim) or px
         if px is None:
             px = detect_content_rect(img, cfg.screen.auto_max_trim, cfg.screen.uniform_tolerance)
         content = content_from_window_pixels(win.bounds, px, scale)

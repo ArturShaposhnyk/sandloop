@@ -25,3 +25,5 @@ Full project brief: see `PROMPT.md`. These are the standing rules for every sess
 - Work phase by phase (see `PROMPT.md`). After each phase: stop, show what was done and how to
   verify it on the Mac, and wait for the user's OK.
 - Don't invent game mechanics — ask the user.
+- `docs/GAME_RULES.md` is the source of truth for game mechanics (vision, state, strategy).
+  Code must follow it; anything it doesn't cover is an open question for the user.

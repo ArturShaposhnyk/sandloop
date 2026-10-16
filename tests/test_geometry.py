@@ -115,3 +115,46 @@ def test_crop_points_retina():
     out = crop_points(img, Rect(100, 100, 10, 20), Rect(102, 105, 5, 10), 2.0)
     assert out.shape == (20, 10)
     assert out[0, 0] == img[10, 4]
+
+
+def _mirroring_window(chrome: bool):
+    """634x1394 px window like iPhone Mirroring: screen at (16, 76) 602x1302 px."""
+    h, w = 1394, 634
+    img = np.zeros((h, w, 3), np.uint8)
+    alpha = np.zeros((h, w), np.uint8)
+    img[76:1378, 16:618] = (40, 160, 220)  # game screen
+    img[76:90, 300:340] = 0                # dynamic island (black, inside the screen)
+    alpha[76:1378, 16:618] = 255
+    if chrome:
+        alpha[:] = 255
+        frame = np.ones((h, w), bool)
+        frame[76:1378, 16:618] = False
+        img[frame] = (45, 45, 46)
+        for cx in (32, 78, 124):           # traffic lights in the title bar
+            img[26:50, cx - 12:cx + 12] = (90, 90, 255)
+        img[26:52, 540:600] = (200, 200, 200)  # toolbar icons
+        alpha[:20, :20] = alpha[:20, -20:] = alpha[-20:, :20] = alpha[-20:, -20:] = 0  # corners
+    return img, alpha
+
+
+def test_content_inside_chrome_finds_screen_under_title_bar():
+    from capture import content_inside_chrome
+
+    img, alpha = _mirroring_window(chrome=True)
+    assert content_from_alpha(alpha) == Rect(0, 0, 634, 1394)  # alpha alone sees the whole window
+    assert content_inside_chrome(img, alpha) == Rect(16, 76, 602, 1302)
+
+
+def test_chrome_and_clean_states_give_the_same_screen_rect():
+    from capture import content_inside_chrome
+
+    clean_img, clean_alpha = _mirroring_window(chrome=False)
+    img, alpha = _mirroring_window(chrome=True)
+    assert content_from_alpha(clean_alpha) == content_inside_chrome(img, alpha)
+
+
+def test_content_inside_chrome_none_without_chrome():
+    from capture import content_inside_chrome
+
+    img = np.full((200, 100, 3), (40, 160, 220), np.uint8)
+    assert content_inside_chrome(img, np.full((200, 100), 255, np.uint8)) is None
