@@ -146,8 +146,10 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   `dataset/unknown_colours/` (+ `unknown_colours.jsonl`); `python -m tools.add_colour <name>
   <files>` -> `dataset/extra_colours.json` (merged by build_palette) + rebuild. The Analyzer now
   also saves UNKNOWN cells to `dataset/unknown/` (was never called live).
-- L183 start decision: tap r0c2 darkgreen (contact layer: darkgreen 61 %, green 39 %).
-- Open: confirm the key/lock assumptions above on frames after a key flies.
+- L183 start decision: tap r0c2 darkgreen (contact layer: darkgreen 61 %, green 39 %) —
+  confirmed right by the user.
+- User answers: a flown key's cell is empty (as modelled). Several same-colour locks: not seen
+  yet (bot credits no unlock then). Open: multi-cell locks, next live check of L183.
 
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all

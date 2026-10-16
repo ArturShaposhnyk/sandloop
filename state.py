@@ -196,7 +196,7 @@ class LevelState:
 
     def _release_keys(self) -> List[Tuple[str, Tuple[Pos, ...]]]:
         """Keys the path rule connects to the exit fly to the lock of their colour: the key's
-        cell empties (assumed, see GAME_RULES.md) and the lock's cells open (buckets of unknown
+        cell empties (confirmed, GAME_RULES.md) and the lock's cells open (buckets of unknown
         colour until seen: UNKNOWN here). Repeats while a released key connects another key.
         A key whose colour has no lock, or several separate locks, opens nothing here."""
         opened: List[Tuple[str, Tuple[Pos, ...]]] = []

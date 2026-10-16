@@ -25,9 +25,11 @@
     released), the key flies by itself to the **lock of the same colour** and opens it.
   - Under a lock there are **buckets** (not tappable while the lock is there). After it opens
     they become regular buckets under the path rule (colours unknown until seen).
-  - To confirm on frames: after the key flies its cell is empty (assumed so); every lock in L183
-    covers one cell (adjacent lock cells of one colour are treated as one lock); one lock per
-    colour (with several same-colour locks the bot credits no unlock).
+  - After the key flies, its cell is **empty** (confirmed).
+  - Several locks of the same colour: not seen yet (open question). Until then the bot credits
+    no unlock when a key's colour has several separate locks.
+  - Every lock in L183 covers one cell; adjacent lock cells of one colour are treated as one lock
+    (not confirmed).
 - Tower bucket = stacked buckets in one cell. Only the top stage is tappable; the next stage
   unlocks only when the top bucket is **filled to 100%** ("clear the top bucket to unlock the
   next colorful stage", shot 030).
