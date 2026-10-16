@@ -249,6 +249,27 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   r4c1 darkgreen) and 031 (L181, empty belt: tap r1c2 red tower). Shot 056 added
   (LABELS.md), tests for every rule.
 
+## Live dry-run after all of the above (2026-10-16 ~19:06, L183) — open issues, NEXT
+- Good: ~20 confirmed moves, no pointless waits; path moves live (`tap r3c1 orange, path to
+  key red: step 1/2`, `tap r4c1 darkgreen, path to r5c0 darkgreen: step 1/2`); open light
+  green read right (`tap r4c0 green`); "hint arrows: 4 masked out" in 6 analyses. The waits
+  ("no bucket passes the rules" x3, "conveyor full") were with a nearly full belt.
+- **Hint arrows sometimes NOT detected** (2x "wait: no tappable bucket"): no "masked out" log in
+  those analyses and the old misread pattern came back (lattice with a row r7, `r7c2
+  orange-up`, face-up creams "path rule says closed"). Suspect the arrows animate (bob / pulse /
+  fade in) and the template score drops below `vision.hint_threshold` 0.8 (non-arrow max on
+  the dataset 0.56). No frame saved (no report taken) -> not tuned blind.
+  NEXT (waiting for the user's choice): either the user presses ctrl+alt+s when it happens, or
+  the overlay auto-saves the frame when the lattice shape changes between analyses
+  (e.g. 7x7 -> 8x8). Then: multi-frame arrow templates / lower threshold / a lattice
+  sanity check against the last stable lattice.
+- Unknown sand colour LAB 84/-6/-13 (pale blue-white, ~5 % of the picture) saved at the start
+  of that run: `dataset/unknown_colours/20261016-190600-107-sand-84_-6_-13.png` (untracked,
+  not committed). Logged next to a non-gameplay screen: a new picture or a transition frame?
+  Ask the user; add with `python -m tools.add_colour` or delete.
+- Many single-frame "looks face-down but the path rule says playable" warnings right after
+  moves: flip animation in progress, expected (never tapped; 2-frame confirmation).
+
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all
   safety checks), log every move (frame + decision) to `debug/`.
