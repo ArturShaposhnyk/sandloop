@@ -158,3 +158,36 @@ def test_content_inside_chrome_none_without_chrome():
 
     img = np.full((200, 100, 3), (40, 160, 220), np.uint8)
     assert content_inside_chrome(img, np.full((200, 100), 255, np.uint8)) is None
+
+
+class _FakeGrabber:
+    def __init__(self, img, alpha):
+        self.img, self.alpha = img, alpha
+
+    def grab_window(self, win):
+        return self.img, self.alpha
+
+
+def _with_soft_edge(img, alpha, px: int = 2):
+    """Window's anti-aliased outer edge: semi-transparent, near-black (seen in real captures)."""
+    img, alpha = img.copy(), alpha.copy()
+    for a in (img, alpha):
+        a[:px] = a[-px:] = 0
+        a[:, :px] = a[:, -px:] = 0
+    alpha[:px] = alpha[-px:] = 120
+    alpha[:, :px] = alpha[:, -px:] = 120
+    return img, alpha
+
+
+@pytest.mark.parametrize("chrome", [False, True])
+@pytest.mark.parametrize("soft_edge", [False, True])
+def test_resolve_geometry_same_screen_rect_in_all_window_states(chrome, soft_edge):
+    from capture import resolve_geometry
+    from config import Config
+
+    img, alpha = _mirroring_window(chrome)
+    if soft_edge:
+        img, alpha = _with_soft_edge(img, alpha)
+    win = WindowInfo(1, "iPhone Mirroring", "iPhone Mirroring", 42, 0, Rect(251, 252, 317, 697))
+    _, g = resolve_geometry(Config(), _FakeGrabber(img, alpha), windows=[win])
+    assert g.content == Rect(259, 290, 301, 651)  # (8, 38) pt inside the window

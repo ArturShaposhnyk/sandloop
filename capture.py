@@ -106,6 +106,11 @@ def content_from_alpha(alpha: np.ndarray, threshold: int = 250) -> Optional[Rect
                 float(rows[-1] - rows[0] + 1))
 
 
+# Max width (points) of the semi-transparent anti-aliased window edge. The real transparent
+# margins around the iPhone screen are much wider (>= 8 pt).
+CHROME_MAX_EDGE_PT = 3.0
+
+
 def content_inside_chrome(img: np.ndarray, alpha: Optional[np.ndarray] = None,
                           max_trim: float = 0.15, tolerance: int = 12,
                           min_frac: float = 0.7) -> Optional[Rect]:
@@ -119,7 +124,11 @@ def content_inside_chrome(img: np.ndarray, alpha: Optional[np.ndarray] = None,
     """
     h, w = img.shape[:2]
     px = img[..., :3].astype(np.int16)
-    chrome = px[h // 2, :2].mean(axis=0)
+    x0 = 0  # skip the window's anti-aliased (semi-transparent) outer edge when sampling
+    if alpha is not None:
+        opaque = np.flatnonzero(alpha[h // 2] >= 250)
+        x0 = int(opaque[0]) if opaque.size else 0
+    chrome = px[h // 2, x0:x0 + 2].mean(axis=0)
     near = np.abs(px - chrome).max(axis=2) <= tolerance
     if alpha is not None:
         near |= alpha < 250
@@ -340,8 +349,10 @@ def resolve_geometry(cfg: Config, grabber: Grabber,
     scale = img.shape[1] / win.bounds.w
     if isinstance(cfg.screen.content, str):
         px = content_from_alpha(alpha) if alpha is not None else None
-        if px is not None and px.w >= img.shape[1] - 2 and px.h >= img.shape[0] - 2:
-            # no transparent margins: chrome is drawn around the screen (cursor over the window)
+        edge = CHROME_MAX_EDGE_PT * scale
+        if px is not None and px.w >= img.shape[1] - 2 * edge and px.h >= img.shape[0] - 2 * edge:
+            # no real transparent margins (only the anti-aliased window edge): chrome is drawn
+            # around the screen (cursor over the window)
             px = content_inside_chrome(img, alpha, cfg.screen.auto_max_trim) or px
         if px is None:
             px = detect_content_rect(img, cfg.screen.auto_max_trim, cfg.screen.uniform_tolerance)
