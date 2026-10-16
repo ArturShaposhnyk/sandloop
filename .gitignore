@@ -1,0 +1,15 @@
+.claude-flow/
+.swarm/
+ruvector.db
+verification-history.jsonl
+verification.md.json
+witness-fixes.json
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+debug/
+.claude/settings.local.json
+.claude/worktrees/
+.DS_Store
+agentdb.rvf*

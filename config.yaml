@@ -1,0 +1,49 @@
+# Sand Loop bot configuration. All game coordinates are relative (0..1) to the iPhone screen area.
+
+window:
+  # CGWindowList owner name of the mirroring app. It may be localized — run `python -m capture list`.
+  owner_name: "iPhone Mirroring"
+  # Optional substring the window title must contain (null = any title).
+  title_contains: null
+  # Used to activate the app via osascript before tapping.
+  app_bundle_id: "com.apple.ScreenContinuity"
+  # How often (seconds) to re-resolve the window bounds, in case it was moved.
+  refresh_interval_s: 2.0
+
+screen:
+  # "window" = capture the mirroring window alone via Quartz (Retina, ignores windows on top).
+  # "mss"    = screen-region capture (fallback; nominal resolution, sees overlapping windows).
+  capture: window
+  # "auto" = detect the iPhone screen area inside the window,
+  # or [x, y, w, h] relative to the window bounds (0..1) as a manual override.
+  content: auto
+  # With capture=window the screen is the opaque area of the window. The settings below are for
+  # the mss fallback (trim uniform borders). Auto-detection never trims more than this fraction of the window from any side.
+  auto_max_trim: 0.15
+  # Max per-row/column grey-level std (0..255) for a border strip to count as uniform chrome.
+  uniform_tolerance: 6.0
+
+clicks:
+  backend: quartz            # quartz | pyautogui
+  press_duration_s: 0.05     # pause between mouseDown and mouseUp
+  move_settle_s: 0.03        # pause after moving the cursor, before pressing
+  max_taps_per_second: 4.0
+  activate_before_tap: true  # bring the mirroring window to front if it lost focus
+
+safety:
+  failsafe_corner_pt: 5      # cursor within this many points of any display corner = stop
+  hotkey_pause: "ctrl+alt+p"
+  hotkey_quit: "ctrl+alt+q"
+
+stability:
+  threshold: 0.01            # mean abs frame diff (0..1) below which the frame counts as stable
+  timeout_s: 3.0
+  interval_s: 0.1
+
+overlay:
+  max_height: 900            # overlay window height in pixels
+
+paths:
+  dataset: dataset
+  debug: debug
+  palette: dataset/palette.json

@@ -1,0 +1,7 @@
+numpy>=1.24
+opencv-python>=4.8
+mss>=9.0
+pyyaml>=6.0
+pytest>=7.0
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+pyautogui>=0.9.54; sys_platform == "darwin"
