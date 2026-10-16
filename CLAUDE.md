@@ -2,6 +2,8 @@
 
 Full project brief: see `PROMPT.md`. These are the standing rules for every session.
 
+Read docs/STATUS.md first.
+
 ## Hard constraints
 - The bot interacts with the game **only** via screenshots of the iPhone Mirroring window and mouse
   clicks into it. No game modification, network interception, or memory access.
