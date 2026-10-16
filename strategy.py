@@ -185,6 +185,9 @@ class Analysis:
     state: Optional[LevelState] = None
     decision: Optional[Decision] = None
     error: Optional[str] = None
+    failure: Optional[str] = None      # failed read of a gameplay frame: "<step>: <reason>"
+    reads: int = 0                     # gameplay frames read so far by this Analyzer
+    fails: int = 0                     # ... and how many of them failed
 
     def tap_rel(self) -> Optional[Tuple[float, float]]:
         """Relative screen point of the chosen move (what a tap would hit), or None."""
@@ -208,24 +211,89 @@ class Analyzer:
         self.classifier = ScreenClassifier(load_templates(Path(cfg.paths.dataset) / "templates"),
                                            cfg.vision)
         self.belt = BeltTracker()
+        self.fail_dir = Path(cfg.paths.debug) / "vision_fail"
+        self.reads = self.fails = self.fails_saved = 0
 
-    def analyze(self, img: "np.ndarray", log=print, now: Optional[float] = None) -> Analysis:
-        """``now``: frame time in seconds (default: monotonic clock) for the belt stall clock."""
+    def analyze(self, img: "np.ndarray", log=print, now: Optional[float] = None,
+                diff: Optional[float] = None) -> Analysis:
+        """``now``: frame time in seconds (default: monotonic clock) for the belt stall clock.
+        ``diff``: frame-to-frame change at capture, logged with failed reads."""
         import time
         from vision import VisionError, read_gameplay
 
         screen = self.classifier.classify(img).screen
         if screen != "gameplay":
-            return Analysis(screen)
+            return Analysis(screen, reads=self.reads, fails=self.fails)
+        self.reads += 1
         try:
             gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log)
         except VisionError as e:
-            return Analysis(screen, error=str(e))
-        st = self.cfg.strategy
-        state = LevelState.from_view(gv, st.conveyor_slots, st.unknown_fill_need)
-        state.belt_stalled = self.belt.update(state.conveyor,
-                                              time.monotonic() if now is None else now)
-        return Analysis(screen, gv, state, choose(state, st))
+            res = Analysis(screen, error=str(e), failure=f"grid: {e}")
+        else:
+            st = self.cfg.strategy
+            state = LevelState.from_view(gv, st.conveyor_slots, st.unknown_fill_need)
+            state.belt_stalled = self.belt.update(state.conveyor,
+                                                  time.monotonic() if now is None else now)
+            res = Analysis(screen, gv, state, choose(state, st))
+            if gv.counter is None:
+                res.failure = "counter: k/5 not read"
+        if res.failure:
+            self.fails += 1
+            self._save_failure(img, res.failure, diff, log)
+        res.reads, res.fails = self.reads, self.fails
+        return res
+
+    def _save_failure(self, img: "np.ndarray", failure: str, diff: Optional[float],
+                      log) -> None:
+        """Frame + step to debug/vision_fail/ (and fails.jsonl), to find the pattern behind
+        misreads. Capped at strategy.vision_fail_max_saves per run (disk)."""
+        import json
+        import time
+
+        import cv2
+
+        if self.fails_saved >= self.cfg.strategy.vision_fail_max_saves:
+            return
+        self.fail_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time() * 1000) % 1000:03d}"
+        step = failure.split(":")[0]
+        path = self.fail_dir / f"{stamp}-{step}.png"
+        if not cv2.imwrite(str(path), img):
+            log(f"vision_fail: cannot write {path}")
+            return
+        self.fails_saved += 1
+        rec = {"time": stamp, "frame": path.name, "step": step, "failure": failure,
+               "diff": None if diff is None else round(diff, 5),
+               "reads": self.reads, "fails": self.fails}
+        with (self.fail_dir / "fails.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+        if self.fails_saved == self.cfg.strategy.vision_fail_max_saves:
+            log(f"vision_fail: saved {self.fails_saved} frames, not saving more this run")
+
+
+class DecisionGate:
+    """A move is confirmed only after ``frames`` consecutive analyses chose the same bucket
+    (cell and colour) with no failed read in between; anything else restarts the count. The
+    bot taps only confirmed moves; call ``reset()`` after a tap."""
+
+    def __init__(self, frames: int = 2) -> None:
+        self.frames = frames
+        self._key: Optional[Tuple[Pos, str]] = None
+        self.count = 0
+
+    def feed(self, res: Analysis) -> Optional[Candidate]:
+        move = (res.decision.move if res.failure is None and res.decision is not None
+                else None)
+        if move is None:
+            self.reset()
+            return None
+        key = (move.pos, move.color)
+        self.count = self.count + 1 if key == self._key else 1
+        self._key = key
+        return move if self.count >= self.frames else None
+
+    def reset(self) -> None:
+        self._key, self.count = None, 0
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

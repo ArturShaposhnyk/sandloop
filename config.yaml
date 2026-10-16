@@ -97,6 +97,8 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   belt_demand_exposure: 0.25
   stall_s: 4.0               # a belt colour whose fill hasn't grown this long = sand not reachable
   analyze_interval_s: 0.5    # overlay --dry-run: min seconds between analyses
+  confirm_frames: 2          # tap only after this many consecutive analyses chose the same move
+  vision_fail_max_saves: 300 # failed reads (frame + step) saved to debug/vision_fail/ per run
 
 paths:
   dataset: dataset

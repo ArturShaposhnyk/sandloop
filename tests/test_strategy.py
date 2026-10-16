@@ -196,7 +196,7 @@ def test_dry_run_analyses_only_stable_frames_and_annotates():
 
     calls = []
 
-    def fake_analyze(frame, log=print):
+    def fake_analyze(frame, log=print, diff=None):
         calls.append(frame.shape)
         return Analysis("menu")
 
@@ -209,7 +209,7 @@ def test_dry_run_analyses_only_stable_frames_and_annotates():
     dry._future.result()
     t[0] = 0.1
     dry.feed(frame, diff=0.0)                 # collects the result; too soon for another run
-    assert calls == [(40, 20, 3)] and dry.status() == "dry-run: menu"
+    assert calls == [(40, 20, 3)] and "screen: menu" in dry.status() and "read fails -" in dry.status()
     assert dry.annotate(frame) is frame       # nothing to draw outside gameplay
     dry.close()
 
@@ -218,3 +218,97 @@ def test_dry_run_tools_never_import_actions():
     code = ("import sys; import tools.overlay, strategy, state; "
             "assert 'actions' not in sys.modules, 'actions imported'")
     subprocess.run([sys.executable, "-c", code], cwd=ROOT, check=True)
+
+
+# --- failed reads and the decision gate ----------------------------------------------------
+
+def _fresh_analyzer(analyzer, tmp_path, max_saves=300):  # noqa: F811
+    import dataclasses
+
+    from strategy import Analyzer
+
+    cfg = dataclasses.replace(analyzer.cfg, paths=dataclasses.replace(analyzer.cfg.paths,
+                                                                       debug=str(tmp_path)),
+                              strategy=dataclasses.replace(analyzer.cfg.strategy,
+                                                           vision_fail_max_saves=max_saves))
+    return Analyzer(cfg)
+
+
+def _broken(kind):
+    img = shot("052").copy()
+    h, w = img.shape[:2]
+    if kind == "grid":       # grid area painted with the panel colour
+        img[int(.55 * h):int(.85 * h)] = img[int(.6 * h), 5]
+    else:                    # the k digit of "k/5" painted over
+        img[int(.51 * h):int(.545 * h), int(.42 * w):int(.49 * w)] = img[int(.53 * h), int(.43 * w)]
+    return img
+
+
+def test_failed_reads_are_saved_with_step_and_counted(analyzer, tmp_path):  # noqa: F811
+    import json
+
+    an = _fresh_analyzer(analyzer, tmp_path)
+    ok = an.analyze(shot("052"), log=lambda s: None)
+    assert ok.failure is None and (ok.reads, ok.fails) == (1, 0)
+    g = an.analyze(_broken("grid"), log=lambda s: None, diff=0.002)
+    assert g.screen == "gameplay" and g.failure.startswith("grid: ") and g.decision is None
+    c = an.analyze(_broken("counter"), log=lambda s: None)
+    assert c.failure == "counter: k/5 not read" and c.decision.move is None
+    assert (c.reads, c.fails) == (3, 2)
+    recs = [json.loads(l) for l in (tmp_path / "vision_fail" / "fails.jsonl").read_text().splitlines()]
+    assert [r["step"] for r in recs] == ["grid", "counter"] and recs[0]["diff"] == 0.002
+    assert all((tmp_path / "vision_fail" / r["frame"]).exists() for r in recs)
+    assert an.analyze(shot("039"), log=lambda s: None).reads == 3   # not gameplay: not counted
+
+
+def test_failed_read_saves_are_capped(analyzer, tmp_path):  # noqa: F811
+    an = _fresh_analyzer(analyzer, tmp_path, max_saves=1)
+    logs = []
+    for _ in range(3):
+        an.analyze(_broken("counter"), log=logs.append)
+    assert len(list((tmp_path / "vision_fail").glob("*.png"))) == 1 and an.fails == 3
+    assert any("not saving more" in l for l in logs)
+
+
+def test_decision_gate_needs_consecutive_agreeing_reads():
+    from strategy import Analysis, Candidate, Decision, DecisionGate
+
+    def res(pos=None, color="red", failure=None):
+        move = None if pos is None else Candidate(pos, color)
+        return Analysis("gameplay", decision=Decision(move, "x"), failure=failure)
+
+    gate = DecisionGate(2)
+    assert gate.feed(res((0, 1))) is None                       # 1/2
+    assert gate.feed(res((0, 1))).pos == (0, 1)                 # 2/2: confirmed
+    assert gate.feed(res((0, 1))).pos == (0, 1)                 # still agreeing
+    assert gate.feed(res((0, 2))) is None and gate.count == 1   # changed its mind: restart
+    assert gate.feed(res((0, 2), failure="counter: k/5 not read")) is None and gate.count == 0
+    assert gate.feed(res((0, 2))) is None                       # failure broke the streak
+    assert gate.feed(res((0, 2), color="blue")) is None         # same cell, other colour
+    assert gate.feed(res(None)) is None and gate.count == 0     # wait resets
+    gate.feed(res((1, 1)))
+    gate.reset()                                                # after a tap
+    assert gate.feed(res((1, 1))) is None
+
+
+def test_dry_run_status_shows_confirmation_and_fail_rate(analyzer, tmp_path):  # noqa: F811
+    from tools.overlay import DryRun
+
+    an = _fresh_analyzer(analyzer, tmp_path)
+    dry = DryRun(an.analyze, interval_s=0, stable_below=1.0, confirm_frames=2)
+
+    def step(img):
+        dry.feed(img, diff=0.0)
+        dry._future.result()
+        dry.feed(img, diff=1.0)       # collect, no new analysis
+
+    step(shot("052"))
+    assert "pending 1/2" in dry.status() and dry.confirmed is None
+    step(shot("052"))
+    assert "CONFIRMED 2/2" in dry.status() and dry.confirmed.pos == (2, 3)
+    step(shot("052"))                 # still agreeing: same text, so it is printed only once
+    assert "CONFIRMED 2/2" in dry.status() and dry.gate.count == 3
+    step(_broken("counter"))
+    assert dry.confirmed is None and "read failed (counter" in dry.status()
+    assert "read fails 1/4 (25%)" in dry.status()
+    dry.close()

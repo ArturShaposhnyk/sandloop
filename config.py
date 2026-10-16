@@ -113,6 +113,8 @@ class StrategyConfig:
     belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
     stall_s: float = 4.0                  # belt colour without fill growth this long = stalled
     analyze_interval_s: float = 0.5       # overlay --dry-run: min seconds between analyses
+    confirm_frames: int = 2               # consecutive agreeing analyses before a tap
+    vision_fail_max_saves: int = 300      # failed reads saved to debug/vision_fail per run
 
 
 @dataclass
@@ -199,8 +201,10 @@ def validate(cfg: Config) -> Config:
                                         for s in v.template_scales):
         raise ConfigError("vision.template_scales must be a non-empty list of numbers > 0")
     st = cfg.strategy
-    if st.conveyor_slots < 1:
-        raise ConfigError("strategy.conveyor_slots must be >= 1")
+    if st.conveyor_slots < 1 or st.confirm_frames < 1:
+        raise ConfigError("strategy.conveyor_slots and confirm_frames must be >= 1")
+    if st.vision_fail_max_saves < 0:
+        raise ConfigError("strategy.vision_fail_max_saves must be >= 0")
     for name in ("min_exposed", "last_slot_min_exposed", "unknown_fill_need"):
         if not 0 <= getattr(st, name) <= 1:
             raise ConfigError(f"strategy.{name} must be in [0, 1]")

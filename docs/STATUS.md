@@ -10,9 +10,9 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 1 | capture (window + screen rect, hover chrome handled), taps, overlay | `3b5b8f7`, `ba16f6d`, `9cf1d40` |
 | 2 | `tools/collect.py`, 32 labeled screenshots in `dataset/screens/` (`LABELS.md`) | `385c523`, `015ab26` |
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
-| 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | this commit |
+| 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 195 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 199 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -95,7 +95,23 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   `debug/report-<time>.png` (now), `-analysed.png` (frame the decision is about), `-annotated.png`,
   `.txt` (decision + every candidate). Plain `s` over iPhone Mirroring goes to the phone.
 - Live: some frames fail vision intermittently ("grid panel background not found", "counter
-  not read") -> the bot waits that frame; the same position re-analysed is fine. Watch in phase 5.
+  not read"); the same position re-analysed is fine. Must be fixed before phase 5:
+  - every failed gameplay read (step `grid` or `counter`) -> `debug/vision_fail/<time>-<step>.png`
+    + `fails.jsonl` (failure, frame diff, running counts), capped by `vision_fail_max_saves`;
+  - `strategy.DecisionGate`: a move counts only after `confirm_frames` (2) consecutive analyses
+    chose the same cell + colour with no failed read in between; phase 5 taps only confirmed
+    moves and calls `reset()` after each tap;
+  - overlay status line: `pending 1/2` / `CONFIRMED 2/2` and `read fails f/n (p%)`.
+  - **Collected so far (2026-10-16): nothing.** `debug/vision_fail/` is empty — 0 failed
+    reads, so 0 grid / 0 counter, no pattern yet. The logging overlay ran ~2 h, but the game sat
+    on one idle L181 position (every analysis confirmed `tap r3c0 orange`, no failure), then
+    only non-gameplay screens. The earlier failures (before logging existed, seen only in the
+    console: "grid panel background not found", "conveyor counter not read") happened while
+    the user was actively playing — suspect belt/sand animation or transitions, unconfirmed.
+  - NEXT (before phase 5): run `python -m tools.overlay --dry-run` while actually playing
+    (belt moving, level end / retry, ads), then inspect `debug/vision_fail/fails.jsonl`
+    (step, failure, frame diff) and the saved frames, find the cause, fix it.
+- Env note: `.venv` is Python 3.9.6 (Xcode); CLAUDE.md says 3.11+. Works (future annotations).
 
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all

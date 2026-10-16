@@ -76,11 +76,17 @@ def waiting_frame(msg: str, size: Tuple[int, int] = (480, 220)) -> np.ndarray:
 
 class DryRun:
     """Runs ``analyze(frame)`` (strategy.Analyzer.analyze) on a worker thread for stable frames,
-    at most every ``interval_s``, and draws the latest result onto later frames. Never taps."""
+    at most every ``interval_s``, and draws the latest result onto later frames. Every result
+    goes through a DecisionGate: a move counts as confirmed after ``confirm_frames`` agreeing
+    analyses (what the bot will require before a real tap). Never taps."""
 
     def __init__(self, analyze, interval_s: float, stable_below: float,
-                 clock=time.monotonic) -> None:
+                 clock=time.monotonic, confirm_frames: int = 2) -> None:
+        from strategy import DecisionGate
+
         self._analyze = analyze
+        self.gate = DecisionGate(confirm_frames)
+        self.confirmed: Any = None       # strategy.Candidate confirmed by the gate, or None
         self.interval_s = interval_s
         self.stable_below = stable_below
         self._clock = clock
@@ -99,8 +105,11 @@ class DryRun:
                 res, frame = self._future.result()
                 self.result, self.result_shape, self.result_time = res, frame.shape, self._clock()
                 self.result_frame = frame
+                self.confirmed = self.gate.feed(res)
             except Exception as e:  # keep the live view running; show the error instead
                 self.result, self.result_shape, self.result_frame = None, None, None
+                self.gate.reset()
+                self.confirmed = None
                 print(f"dry-run: analysis failed: {e!r}")
             self._future = None
             self._report()
@@ -109,26 +118,45 @@ class DryRun:
             self._last = now
             frame = content.copy()
             self._future = self._pool.submit(
-                lambda: (self._analyze(frame, log=lambda s: print("dry-run: " + s)), frame))
+                lambda: (self._analyze(frame, log=lambda s: print("dry-run: " + s), diff=diff),
+                         frame))
+
+    def _reason(self) -> Optional[str]:
+        res = self.result
+        if res is None:
+            return None
+        if res.failure:
+            return f"read failed ({res.failure}) - wait"
+        if res.decision is None:
+            return f"screen: {res.screen}"
+        if res.decision.move is None:
+            return res.decision.reason
+        if self.confirmed is not None:
+            return f"{res.decision.reason} CONFIRMED {self.gate.frames}/{self.gate.frames}"
+        return f"{res.decision.reason} pending {self.gate.count}/{self.gate.frames}"
 
     def _report(self) -> None:
-        res = self.result
-        reason = None if res is None else (
-            res.decision.reason if res.decision is not None else f"screen: {res.screen}")
+        reason = self._reason()
+        if reason is not None and "pending" in reason:
+            return   # print decisions once confirmed (or waits / failures), not every attempt
         if reason != self.last_reason:
-            tap = res.tap_rel() if res is not None else None
+            tap = self.result.tap_rel() if self.confirmed is not None else None
             print(f"dry-run: {reason}" + (f" at rel ({tap[0]:.3f}, {tap[1]:.3f}) — not clicked"
                                           if tap else ""))
             self.last_reason = reason
+
+    def fail_rate(self) -> str:
+        res = self.result
+        if res is None or not res.reads:
+            return "read fails -"
+        return f"read fails {res.fails}/{res.reads} ({res.fails / res.reads:.0%})"
 
     def status(self) -> str:
         res = self.result
         if res is None:
             return "dry-run: analysing..." if self._future is not None else "dry-run: waiting for a stable frame"
         age = self._clock() - (self.result_time or self._clock())
-        if res.decision is None:
-            return f"dry-run: {res.screen}{f' ({res.error})' if res.error else ''}"
-        return f"dry-run ({age:.1f}s ago): {res.decision.reason}"
+        return f"dry-run ({age:.1f}s ago): {self._reason()} | {self.fail_rate()}"
 
     def annotate(self, content: np.ndarray) -> np.ndarray:
         """Draw the latest gameplay decision onto ``content`` (same-size frames only)."""
@@ -206,7 +234,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from strategy import Analyzer
 
         dry = DryRun(Analyzer(cfg).analyze, cfg.strategy.analyze_interval_s,
-                     cfg.stability.threshold)
+                     cfg.stability.threshold, confirm_frames=cfg.strategy.confirm_frames)
 
     grabber = Grabber(cfg.screen.capture)
     tracker = WindowTracker(cfg, grabber)
@@ -276,9 +304,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             _text(view, f"screen {geo.content.w:.0f}x{geo.content.h:.0f}pt @ "
                         f"({geo.content.x:.0f},{geo.content.y:.0f})", (10, 50))
             if dry is not None:
-                _text(view, dry.status()[:70], (10, 75))
+                st = dry.status()
+                _text(view, st[:75], (10, 75))
+                if len(st) > 75:
+                    _text(view, st[75:150], (10, 100))
             if hotkeys.paused.is_set():
-                _text(view, "PAUSED", (10, 100))
+                _text(view, "PAUSED", (10, 125))
             clear_bar(view)
             if mouse["pos"] is not None:
                 mx, my = mouse["pos"]
