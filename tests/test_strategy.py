@@ -88,6 +88,17 @@ def test_decision_on_shot(seq, want, analyzer):  # noqa: F811
     assert 0 < x < 1 and 0.5 < y < 0.9
 
 
+@pytest.mark.parametrize("seq", ["030", "041"])   # L181 start (first try and retry)
+def test_tall_tower_top_is_face_up_and_chosen(seq, analyzer):  # noqa: F811
+    """Live dry-run regression: the open cream top of the tall tower read face-down (its rim is
+    drawn above the cell crop) and the bot waited with "no tappable bucket"."""
+    res = analyzer.analyze(shot(seq), log=lambda s: None)
+    cell = res.view.grid[0][2]
+    assert (cell.color, cell.face_up) == ("cream", True)
+    assert (0, 2) in res.view.tappable() and res.view.disagreements == []
+    assert res.decision.move is not None and res.decision.move.pos == (0, 2)
+
+
 @pytest.mark.parametrize("seq", ["006", "011", "033", "045"])   # k = 5/5
 def test_waits_on_full_conveyor(seq, analyzer):  # noqa: F811
     assert analyzer.analyze(shot(seq), log=lambda s: None).decision.reason == "wait: conveyor full"

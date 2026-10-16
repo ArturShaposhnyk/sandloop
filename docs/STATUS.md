@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | this commit |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 182 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 184 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -58,7 +58,9 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   ad anchor.
 - **Shot 010, cell r4c4 (0-based)**: blue bucket looks face-down although the path rule says
   playable. Asked the user whether flips are delayed or the rule has a nuance. Bot doesn't tap it.
-- **Face-up tower** (shot 031 r1c2) reads face-down (one sample); more tower shots needed.
+- **Tower stage lock**: a revealed tower stage looks face-up but stays locked until the stage
+  above reaches 100% on the conveyor (031 r1c2 red right after the cream top was tapped). One
+  frame can't tell; the bot must remember tapped towers across frames (phase 5).
 - Popup ✕ template threshold is tight (real 0.96–1.00 vs false up to 0.93).
 - **Shot 035**: darkred r2c3, darkred r4c1, cream r4c3 look face-up although BFS says closed
   (they were face-up in 033), and an orange bucket sits in r2c2 that was empty in 033. Do
@@ -78,6 +80,9 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   or >= `last_slot_min_exposed` for the last free slot; enough sand left), then score =
   exposed share + buckets/lock cells opened. Weights/thresholds in `config.yaml` `strategy:`.
 - `strategy.Analyzer`: frame -> screen type -> GameView -> LevelState -> Decision (+ tap point).
+- Fix after the live dry-run: face up/down is judged on the top stage only (centre vs the rim =
+  85th percentile of V in the top part). A tall tower's opening is drawn above the cell, so the
+  old median reference read it face-down and L181 start (030/041) had no tappable bucket.
 
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all

@@ -79,7 +79,8 @@ class VisionConfig:
     panel_tol: float = 12.0           # LAB distance to the panel background colour
     empty_tol: float = 10.0           # LAB distance to the empty-cell colour
     empty_min_frac: float = 0.5       # share of empty-colour pixels for an empty cell
-    face_up_max_ratio: float = 0.94   # centre V / top-part median V below this = face-up
+    face_up_max_ratio: float = 0.88   # centre V / top-stage rim V below this = face-up
+    face_ref_percentile: float = 85.0  # rim brightness = this percentile of the top part's V
     tower_min_margin: float = 8.0     # LAB margin for a real second colour (tower stage)
     ice_min_white: float = 0.10
     ice_min_dark: float = 0.05

@@ -63,7 +63,7 @@ class CellFeatures:
     empty_frac: float      # share of pixels with the empty-cell colour
     white_frac: float      # bright, unsaturated pixels (digits, highlights)
     dark_frac: float       # very dark pixels (digit / object outlines)
-    face_ratio: float      # median V of the centre / median V of the object's top part
+    face_ratio: float      # median V of the centre / rim brightness of the top stage
     top_lab: Optional[Lab]     # colour of the upper part of the object (top stage / rim)
     body_lab: Optional[Lab]    # colour of the lower part of the object
     hue_cyan_frac: float   # share of light-cyan pixels (ice body)
@@ -124,8 +124,11 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
     centre = float(np.median(V[cy - ry:cy + ry, cx - rx:cx + rx]))
     obj = _object_pixels(cell_bgr, lab, palette, v)
     upper = obj.copy()
-    upper[int(0.6 * h):] = False   # top stage only (a tower's lower stage is brighter)
-    ref = float(np.median(V[upper])) if upper.sum() >= 20 else float(np.percentile(V, 90))
+    upper[int(0.6 * h):] = False   # top stage only: lower tower stages and their rims are ignored
+    # reference = the rim (bright percentile), not the median: a tall tower's top stage is drawn
+    # higher, so its rim is mostly above the crop and the median would be the shaded inside
+    ref = (float(np.percentile(V[upper], v.face_ref_percentile)) if upper.sum() >= 20
+           else float(np.percentile(V, 90)))
     top, body = obj.copy(), obj.copy()
     top[h // 2:] = False
     body[: h // 2] = False

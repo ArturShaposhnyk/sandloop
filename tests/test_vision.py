@@ -19,9 +19,7 @@ ANN = json.loads((DATASET / "annotations.json").read_text())
 GRIDS = grid_labels(ANN)
 
 # Cells the current vision gets wrong, with the reason (kept visible, not hidden).
-KNOWN_LIMITATIONS = {
-    ("031", 1, 2): "face-up tower (tall, two stages) reads face-down; only one sample so far",
-}
+KNOWN_LIMITATIONS: dict = {}
 
 
 @pytest.fixture(scope="module")
