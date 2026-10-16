@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from config import StrategyConfig
+from cells import Kind
 from state import ConveyorBucket
 from strategy import choose
 from tests.test_state import analyzer, make_state, shot  # noqa: F401  (fixture)
@@ -80,6 +81,8 @@ def test_only_tappable_cells_are_candidates():
     ("001", (0, 1)),     # L180 start: blue (only exposed colour), opens the pink behind it
     ("052", (2, 3)),     # live regression: red 49% on the belt starves, bottom is darkred
     ("008", (4, 0)),     # blue is the most exposed colour
+    ("053", (0, 2)),     # L183 start: darkgreen (most of the grass at the bottom), user-confirmed
+    ("054", (2, 5)),     # live regression: face-up darkgreen/cyan tower next to the yellow key
 ])
 def test_decision_on_shot(seq, want, analyzer):  # noqa: F811
     res = analyzer.analyze(shot(seq), log=lambda s: None)
@@ -130,6 +133,35 @@ def test_live_regression_052_prefers_darkred_over_starving_red(analyzer):  # noq
     assert red.rejected and red.avail < 0
     text = red.describe()
     assert "exp 0%" in text and "belt 13%" in text
+
+
+def test_live_regression_054_face_up_tower_on_another_colour(analyzer):  # noqa: F811
+    """L183 dry-run: an open darkgreen bucket on a cyan stage read face-down (its dark inside
+    taken for a disc on the cyan dome) and the bot waited with "no tappable bucket". Tapping
+    it sends the whole tower to the belt: r2c5 empties, the yellow key flies and opens the
+    yellow lock (key-unlock credit)."""
+    res = analyzer.analyze(shot("054"), log=lambda s: None)
+    cell = res.view.grid[2][5]
+    assert (cell.color, cell.body, cell.face_up) == ("darkgreen", "cyan", True)
+    assert res.view.tappable() == [(2, 5)] and not res.view.disagreements
+    move = res.decision.move
+    assert move.pos == (2, 5) and move.color == "darkgreen"
+    assert move.unlocks == [("yellow", ((2, 1),))]
+    assert move.stages == ["cyan"] and move.short_stages == []   # plenty of cyan sand
+    assert "opens lock yellow with 1 bucket(s)" in move.describe()
+    nxt = res.state.after_tap((2, 5))
+    assert nxt.cell((2, 5)).kind is Kind.EMPTY and nxt.cell((2, 6)).kind is Kind.EMPTY
+    assert nxt.conveyor[-1].stages == ("cyan",)
+
+
+def test_tower_with_a_starving_later_stage_is_penalised():
+    st = make_state(["red/blue red"], sand={"red": 0.4, "blue": 0.001},
+                    exposed={"red": 0.3})
+    d = choose(st, SC)
+    tower, plain = by_pos(d)[(0, 0)], by_pos(d)[(0, 1)]
+    assert tower.short_stages == ["blue"] and "blue (sand short)" in tower.describe()
+    assert tower.score == pytest.approx(plain.score - SC.weight_tower_short_stage)
+    assert d.move.pos == (0, 1)
 
 
 def test_demand_aware_exposure_blocks_a_second_bucket():

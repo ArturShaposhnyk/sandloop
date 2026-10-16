@@ -190,8 +190,12 @@ def lock_digits_roi(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConf
 @dataclass
 class Slot:
     x: float                    # relative x centre on the screen
-    color: Optional[str]
+    color: Optional[str]        # the collecting bucket (a tower's current top stage)
     fill: Optional[int] = None  # percent, if its label was read
+    body: Optional[str] = None  # tower: colour of the next stage (seen as its base), else None
+
+    def label(self) -> str:
+        return f"{self.color}/{self.body}" if self.body else f"{self.color}"
 
     @property
     def uncertain(self) -> bool:
@@ -319,7 +323,8 @@ def read_conveyor(img: np.ndarray, palette: Palette, v: VisionConfig,
             sel = lab[:, s:e][m]
             color, _ = palette.nearest(tuple(np.median(sel, axis=0)), "buckets",
                                        1.5 * v.color_max_dist)
-        slots.append(Slot((bx0 + (s + e) / 2) / w, color))
+        slots.append(Slot((bx0 + (s + e) / 2) / w, color,
+                          body=_belt_base(band[:, s:e], lab[:, s:e], m, color, palette, v)))
     if reader is not None and slots:
         text = crop_rel(img, v.fill_text)
         for word in group_words(segment(text)):
@@ -331,6 +336,26 @@ def read_conveyor(img: np.ndarray, palette: Palette, v: VisionConfig,
             if abs(slot.x - xc) < 0.06:
                 slot.fill = int(s[:-1])
     return k, slots
+
+
+def _belt_base(bgr: np.ndarray, lab: np.ndarray, m: np.ndarray, color: Optional[str],
+               palette: Palette, v: VisionConfig) -> Optional[str]:
+    """A tower on the belt: the next stage shows as a base of another colour under the
+    collecting bucket (L181: cream on red, red on orange). Base = the brighter half of the
+    bucket pixels in the lowest 30 % of the belt zone (middle of the run). None for a one-colour bucket. A bucket
+    still dropping onto the belt has its base below the zone (shot 031): read as one colour."""
+    if color is None:
+        return None
+    base = m.copy()
+    base[: int(0.7 * m.shape[0])] = False
+    cut = int(0.2 * m.shape[1])           # middle 60 % of the run: no rails / neighbours
+    base[:, :cut] = base[:, m.shape[1] - cut:] = False
+    if base.sum() < 20:
+        return None
+    vals = bgr.max(axis=2)[base]
+    sel = lab[base][vals >= np.percentile(vals, 50)]
+    name, _ = palette.nearest(tuple(np.median(sel, axis=0)), "buckets", v.color_max_dist)
+    return name if name is not None and name != color else None
 
 
 def read_sand(img: np.ndarray, palette: Palette, v: VisionConfig

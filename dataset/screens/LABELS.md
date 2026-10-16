@@ -41,3 +41,4 @@ Not covered yet: **level_complete** (after winning L180 the game went straight t
 | 20261016-102620-667-051-auto.png | menu | popup: Sandy Race event, START, close (x) |
 | 20261016-113331-000-052-live.png | gameplay | L181, 1/5, red 49% stalled on the belt, contact layer darkred/orange: regression for demand-aware exposure (expect darkred) |
 | 20261016-165727-433-053-live.png | gameplay | L183 start, 0/5: new colours green + darkgreen (grass), curtains 10/15/20, yellow + red locks and keys, green/darkgreen tower tops |
+| 20261016-173352-327-054-live.png | gameplay | L183, 2/5 (cyan 79%, cream 33%): face-up darkgreen/cyan tower r2c5 next to the yellow key was read face-down (regression: expect tap r2c5 darkgreen) |

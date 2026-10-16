@@ -22,6 +22,10 @@ screen:
   auto_max_trim: 0.15
   # Max per-row/column grey-level std (0..255) for a border strip to count as uniform chrome.
   uniform_tolerance: 6.0
+  # Sanity check: the detected screen must have the iPhone's width / height (relative tolerance).
+  # A window partly off-screen or being dragged gives a cut-off screen: those frames are rejected.
+  aspect: 0.4624             # 602 x 1302 px
+  aspect_tolerance: 0.02
 
 clicks:
   backend: quartz            # quartz | pyautogui
@@ -64,7 +68,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
   # live crops can be a few px off (pt/px rounding, window edge, hover-chrome frame):
   edge_margin: 0.03          # share of width ignored at the left/right frame edge (grid finder)
   counter_search: 0.02       # share of height the "k/5" search extends the counter zone up/down
-  disc_min_hue_deg: 30.0     # face-down tower = centre disc whose LAB hue differs this much from the rim
+  disc_min_dist: 20.0        # face-down tower = centre disc this far (LAB) from the ring around it (open bucket: <= 5, disc: >= 76)
   unknown_sand_min: 0.03     # unknown sand colour = a compact cluster of unmatched pixels >= this share of the picture
   icon_threshold: 0.75       # lock / key icon match (grey shape; L183: icons >= 0.82, other cells <= 0.62)
   empty_tol: 10.0            # LAB distance to the empty-cell colour
@@ -98,6 +102,9 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   weight_open_bucket: 0.15   # score per bucket the tap connects to the exit (lookahead)
   weight_open_lock: 0.05     # score per lock cell (ice, curtain) the tap connects to the exit
   weight_key_unlock: 0.15    # score per bucket under a lock that the tap opens (its key gets connected and flies)
+  # a tower takes one belt slot until all its stages are full: penalty per later stage whose
+  # colour has not enough sand left (same sufficiency test as the top colour)
+  weight_tower_short_stage: 0.5
   weight_new_colour: 0.05    # bonus for a colour that is not on the belt yet (also the tie-break)
   # demand-aware exposure: avail = contact-layer share of the colour - this x (1 - fill) for
   # every same-colour bucket already on the belt

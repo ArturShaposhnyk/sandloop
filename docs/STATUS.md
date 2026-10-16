@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 446 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 485 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -41,7 +41,8 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
 - Every cell: empty / bucket / known lock / UNKNOWN. UNKNOWN is never tapped; frame + crop go to
   `dataset/unknown/` (`vision.save_unknown`). Lock types are data-driven (`cells.CELL_LOCKS`,
   region detectors such as `vision.find_curtains`).
-- **Towers**: only the top stage is tappable; the next stage unlocks when the top bucket is 100%.
+- **Towers**: tapping sends the whole tower to the belt (cell empty at once, one belt slot); its
+  stages collect in order on the belt (next stage starts when the current one is 100%).
 - **Curtains**: size varies, detected from the gold frame; buckets underneath (colours unknown
   until it opens), then regular buckets under the path rule. Opens after N buckets reach 100%.
 - **Ice N**: opens after N more buckets are tapped.
@@ -58,9 +59,6 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   ad anchor.
 - **Shot 010, cell r4c4 (0-based)**: blue bucket looks face-down although the path rule says
   playable. Asked the user whether flips are delayed or the rule has a nuance. Bot doesn't tap it.
-- **Tower stage lock**: a revealed tower stage looks face-up but stays locked until the stage
-  above reaches 100% on the conveyor (031 r1c2 red right after the cream top was tapped). One
-  frame can't tell; the bot must remember tapped towers across frames (phase 5).
 - Popup ✕ template threshold is tight (real 0.96–1.00 vs false up to 0.93).
 - **Shot 035**: darkred r2c3, darkred r4c1, cream r4c3 look face-up although BFS says closed
   (they were face-up in 033), and an orange bucket sits in r2c2 that was empty in 033. Do
@@ -75,7 +73,7 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   counters), conveyor (k/5 authoritative; uncertain edge slots dropped, empty at k=0), sand and
   exposed shares, pending buckets (grid + one hidden per curtain cell + conveyor need) and a
   capacity estimate = remaining sand / pending buckets. `after_tap()` / `opened_by()`: one-tap
-  lookahead (cell empties, a tower keeps its next stage locked, ice counters count down).
+  lookahead (cell empties, ice counters count down; towers: see "L183 towers" below).
 - `strategy.choose()`: hard rules (tappable only; free slot; colour exposed >= `min_exposed`,
   or >= `last_slot_min_exposed` for the last free slot; enough sand left), then score =
   exposed share + buckets/lock cells opened. Weights/thresholds in `config.yaml` `strategy:`.
@@ -133,8 +131,8 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   The sky is the existing `cyan` sand.
 - Curtains: posts now end at their first gap (the top curtain used to swallow the two below);
   L183 reads 10 / 15 / 20; build_palette learns each curtain's own counter.
-- Towers seen from above: a disc on a dome whose hue differs >= `disc_min_hue_deg` from the dome
-  = face-down tower `<disc>/<dome>-down` (the inside of an open bucket keeps the hue).
+- Towers seen from above: a disc on a dome = face-down tower `<disc>/<dome>-down` (rule refined
+  in the next section).
 - Locks / keys: `vision.IconMatcher` (grey shape templates, colour-independent: other-colour
   icons 0.82-0.85, other cells <= 0.62, threshold 0.75), colour from palette `keys`; cell types
   in `cells.CELL_LOCKS` (`lock` unlock "key", `key` unlock "path"). `state.after_tap` releases
@@ -150,6 +148,37 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   confirmed right by the user.
 - User answers: a flown key's cell is empty (as modelled). Several same-colour locks: not seen
   yet (bot credits no unlock then). Open: multi-cell locks, next live check of L183.
+
+## L183 live fixes (2026-10-16) — done, awaiting OK
+- Regression 054 (live): a face-up darkgreen bucket on a cyan tower stage (r2c5, next to the
+  yellow key) read face-down -> "no tappable bucket". Cause: the disc rule (added for L183) took
+  the open bucket's dark inside for a disc because its hue differs from the stage below. Now a
+  disc = centre and the **ring around it** are different palette colours >= `disc_min_dist`
+  apart (open bucket: ring = its own rim, <= 5 apart; disc on a dome: >= 76). Expected move
+  r2c5 darkgreen: tested, with key-unlock credit for the yellow key (see "L183 towers").
+- capture: `check_aspect` rejects a detected screen whose width/height is not the iPhone's
+  (`screen.aspect` 0.4624 +- `aspect_tolerance` 2 %); `grab_content` raises
+  `FrameSizeMismatch` for a crop of the wrong size (window moved / partly off-screen; live:
+  502 px wide frames), `WindowTracker.grab` re-resolves once and retries. Not covered: a
+  full-size frame with the content shifted mid-animation (the reader rejects it; 2-frame
+  confirmation guards taps).
+
+## L183 towers: the whole tower goes to the belt (user correction) — done, awaiting OK
+- The old rule ("next stage stays in the cell, locked until the top is 100%") was wrong: the
+  whole tower leaves, its cell empties at once, one belt slot; the stages fill in order ON the
+  belt. L181 shots agree (030 -> 031: r0c2 empty, cream/red tower on the belt).
+- `state.after_tap`: tower -> EMPTY cell + `ConveyorBucket(top, 0, stages=(body,))`;
+  `ConveyorBucket.need_for` / `conveyor_need` count later stages as demand of their colour,
+  `pending_buckets` too. Regression 054: tap r2c5 now gets "opens lock yellow with 1 bucket(s)".
+- Strategy: a tower scores by its top colour; minus `weight_tower_short_stage` (0.5) per later
+  stage whose colour fails the sufficiency test (it would block the belt slot); shown as
+  "tower then cyan (sand short)".
+- Belt reader: `Slot.body` = next stage, read as the base colour under the collecting bucket
+  (brighter half of the lowest 30 % of the belt zone, middle of the run); `annotations.json`
+  `belts` (8 shots incl. cream/red 34 % in 033, red/orange 7 % in 032), tested. Known miss: a
+  tower still dropping onto the belt (031) has its base below the zone and reads one-colour
+  for that frame. Only the next stage is visible (deeper stages unknown).
+- Open (phase 5): remember the stages of towers the bot tapped itself, to cover the belt view.
 
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all

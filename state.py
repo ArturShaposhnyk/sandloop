@@ -40,13 +40,21 @@ class Lock:
 
 @dataclass(frozen=True)
 class ConveyorBucket:
-    color: Optional[str]
+    """One belt slot: a bucket, or a whole tower (one slot for all its stages; the top stage
+    collects first, at 100 % the next stage starts collecting)."""
+    color: Optional[str]          # the collecting bucket (a tower's current stage)
     fill: Optional[int]           # percent, None if no label was read
     uncertain: bool = False       # at the belt's edge without a label (vision.Slot.uncertain)
+    stages: Tuple[str, ...] = ()  # tower: colours of the stages still to come, in order
 
     def need(self, unknown: float) -> float:
         """Share of a bucket's capacity still to fill (``unknown`` if the fill was not read)."""
         return unknown if self.fill is None else max(0.0, 1.0 - self.fill / 100.0)
+
+    def need_for(self, color: str, unknown: float) -> float:
+        """Capacities of ``color`` this slot still has to fill (current stage + later ones)."""
+        return ((self.need(unknown) if self.color == color else 0.0)
+                + sum(1.0 for s in self.stages if s == color))
 
 
 @dataclass
@@ -84,8 +92,9 @@ class LevelState:
         locks = _merge_lock_icons(locks)
         # the k/5 counter is authoritative: edge slots without a label may be end posts or
         # buckets entering/leaving, and at k=0 anything seen on the belt is decoration
-        conveyor = [] if gv.counter == 0 else [ConveyorBucket(s.color, s.fill, s.uncertain)
-                                               for s in gv.slots if not s.uncertain]
+        conveyor = [] if gv.counter == 0 else [
+            ConveyorBucket(s.color, s.fill, s.uncertain, (s.body,) if s.body else ())
+            for s in gv.slots if not s.uncertain]
         return cls(grid, gv.lattice.exits(), list(gv.tappable()), list(gv.disagreements), locks,
                    gv.counter, conveyor_slots, conveyor, dict(gv.sand), dict(gv.exposed),
                    unknown_fill_need, dict(belt_stalled or {}))
@@ -129,8 +138,8 @@ class LevelState:
         return any(b.color == color for b in self.conveyor)
 
     def conveyor_need(self, color: str) -> float:
-        """Bucket capacities of ``color`` the conveyor still has to fill."""
-        return sum(b.need(self.unknown_fill_need) for b in self.conveyor if b.color == color)
+        """Bucket capacities of ``color`` the conveyor still has to fill (tower stages too)."""
+        return sum(b.need_for(color, self.unknown_fill_need) for b in self.conveyor)
 
     # -- sand vs. buckets -----------------------------------------------------------------
 
@@ -153,7 +162,7 @@ class LevelState:
     def pending_buckets(self) -> float:
         """Bucket capacities still to fill: grid + hidden + what the conveyor still needs.
         Ice blocks are not counted (what is under the ice is not known yet)."""
-        conv = sum(b.need(self.unknown_fill_need) for b in self.conveyor)
+        conv = sum(b.need(self.unknown_fill_need) + len(b.stages) for b in self.conveyor)
         return sum(self.grid_buckets().values()) + self.hidden_buckets + conv
 
     def capacity_estimate(self) -> Optional[float]:
@@ -166,19 +175,16 @@ class LevelState:
 
     def after_tap(self, pos: Pos) -> "LevelState":
         """The state right after tapping the bucket at ``pos`` (no sand movement): the bucket
-        goes to the conveyor, its cell empties (a tower keeps its next stage, locked until the
-        top bucket is 100%), and every lock that opens by taps counts down by one."""
+        goes to the conveyor and its cell empties - a tower goes WHOLE, one belt slot for all
+        its stages (GAME_RULES.md) - every lock that opens by taps counts down by one, and keys
+        the emptied cell connects to the exit fly to their locks."""
         cell = self.cell(pos)
         if cell is None or cell.kind is not Kind.BUCKET:
             raise ValueError(f"no bucket at {pos}")
         nxt = copy.deepcopy(self)
         nxt._release_keys()   # keys already connected are flying anyway: not this tap's credit
         r, c = pos
-        if cell.body:
-            nxt.grid[r][c] = Cell(r, c, Kind.LOCK, color=cell.body, lock="tower",
-                                  unlock="fills", counter=1)
-        else:
-            nxt.grid[r][c] = Cell(r, c, Kind.EMPTY)
+        nxt.grid[r][c] = Cell(r, c, Kind.EMPTY)
         nxt.locks = [Lock(l.kind, l.unlock, max(0, l.counter - 1), l.cells)
                      if l.unlock == "taps" and l.counter is not None else l for l in self.locks]
         for lock in nxt.locks:
@@ -187,7 +193,8 @@ class LevelState:
                 if lcell is not None and lcell.kind is Kind.LOCK:
                     lcell.counter = lock.counter
         nxt.unlocked = nxt._release_keys()
-        nxt.conveyor = self.conveyor + [ConveyorBucket(cell.color, 0)]
+        nxt.conveyor = self.conveyor + [
+            ConveyorBucket(cell.color, 0, stages=(cell.body,) if cell.body else ())]
         nxt.conveyor_k = None if self.conveyor_k is None else self.conveyor_k + 1
         # predicted: a newly connected bucket flips face-up; cells that disagreed stay excluded
         nxt.disagreements = [p for p in self.disagreements if p != pos]

@@ -13,7 +13,9 @@ Hard rules, a candidate is rejected if any fails:
     keep a slot usable, avoid deadlock);
   * enough of its colour remains to fill it: sand >= margin x (conveyor need + 1) x capacity.
 Score of the rest: avail + buckets / lock cells the tap connects to the exit (one-tap
-lookahead) + buckets under a lock that a released key opens + a bonus for a colour not on the belt yet. Ties: colour not on the belt, then the
+lookahead) + buckets under a lock that a released key opens - a penalty per later tower stage
+whose colour has not enough sand left (a tower takes one belt slot until ALL its stages are
+full, so a starving stage blocks that slot) + a bonus for a colour not on the belt yet. Ties: colour not on the belt, then the
 front row, then the left.
 
     python -m strategy dataset/screens/*.png   # decisions on saved shots -> debug/strategy-*.png
@@ -47,6 +49,8 @@ class Candidate:
     opens_locks: List[Pos] = field(default_factory=list)
     unlocks: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)  # keys released:
     #   (colour, cells of the lock they open)
+    stages: List[str] = field(default_factory=list)        # tower: later stage colours
+    short_stages: List[str] = field(default_factory=list)  # ... without enough sand left
 
     @property
     def unlocked_buckets(self) -> int:
@@ -70,6 +74,9 @@ class Candidate:
         extra += f", {len(self.opens_locks)} lock cell(s)" if self.opens_locks else ""
         extra += "".join(f", opens lock {col} with {len(cells)} bucket(s)"
                          for col, cells in self.unlocks)
+        if self.stages:
+            extra += ", tower then " + "/".join(
+                f"{s}{' (sand short)' if s in self.short_stages else ''}" for s in self.stages)
         return f"r{r}c{c} {self.color}: score {self.score:.2f}{extra} [{self.numbers()}]"
 
 
@@ -111,9 +118,17 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
             continue
         cand.opens, cand.opens_locks = state.opened_by(pos)
         cand.unlocks = state.after_tap(pos).unlocked
+        cand.stages = [cell.body] if cell.body else []
+        if cap:   # tower: the later stages need their sand too (after the top's, in order)
+            for s in cand.stages:
+                stage_need = ((state.conveyor_need(s) + 1 + (s == cand.color))
+                              * cap * sc.sufficiency_margin)
+                if state.sand.get(s, 0.0) < stage_need:
+                    cand.short_stages.append(s)
         cand.score = (sc.weight_exposed * cand.avail + sc.weight_open_bucket * len(cand.opens)
                       + sc.weight_open_lock * len(cand.opens_locks)
                       + sc.weight_key_unlock * cand.unlocked_buckets
+                      - sc.weight_tower_short_stage * len(cand.short_stages)
                       + (0.0 if cand.on_belt else sc.weight_new_colour))
     allowed = [c for c in cands if c.rejected is None]
     if not allowed:

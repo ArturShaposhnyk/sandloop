@@ -276,6 +276,10 @@ class CaptureError(RuntimeError):
     pass
 
 
+class FrameSizeMismatch(CaptureError):
+    """The content crop is not the size the geometry expects (window moved / off-screen)."""
+
+
 def crop_points(img: np.ndarray, origin: Rect, r: Rect, scale: float) -> np.ndarray:
     """Crop rect ``r`` (global points) out of an image of ``origin`` (global points)."""
     x0, y0 = int(round((r.x - origin.x) * scale)), int(round((r.y - origin.y) * scale))
@@ -333,8 +337,15 @@ class Grabber:
         """Only the iPhone screen area."""
         if self.backend == "window":
             img, _ = self._grab_window_quartz(win)
-            return np.ascontiguousarray(crop_points(img, geo.window, geo.content, geo.scale))
-        return self._grab_points_mss(geo.content)
+            frame = np.ascontiguousarray(crop_points(img, geo.window, geo.content, geo.scale))
+        else:
+            frame = self._grab_points_mss(geo.content)
+        w, h = geo.frame_size
+        if abs(frame.shape[1] - w) > 2 or abs(frame.shape[0] - h) > 2:
+            # the window changed since the geometry was resolved (moved, resized, off-screen)
+            raise FrameSizeMismatch(f"captured {frame.shape[1]}x{frame.shape[0]} px, expected {w}x{h} "
+                               "— window moved or partly off-screen?")
+        return frame
 
     def close(self) -> None:
         if self._sct is not None:
@@ -359,7 +370,18 @@ def resolve_geometry(cfg: Config, grabber: Grabber,
         content = content_from_window_pixels(win.bounds, px, scale)
     else:
         content = content_from_relative(win.bounds, cfg.screen.content)
+    check_aspect(content, cfg.screen.aspect, cfg.screen.aspect_tolerance)
     return win, ScreenGeometry(win.bounds, content, scale)
+
+
+def check_aspect(content: Rect, aspect: float, tolerance: float) -> None:
+    """Reject a screen rect whose width / height is not the iPhone's: the window is partly
+    off-screen, being moved or resized, so relative coordinates (and taps) would be off."""
+    ratio = content.w / content.h if content.h > 0 else 0.0
+    if abs(ratio / aspect - 1.0) > tolerance:
+        raise CaptureError(
+            f"screen area {content.w:.0f}x{content.h:.0f} pt has width/height {ratio:.3f}, "
+            f"expected {aspect:.3f} — is the window partly off-screen or being moved?")
 
 
 class WindowTracker:
@@ -384,9 +406,13 @@ class WindowTracker:
         return self.geometry
 
     def grab(self) -> np.ndarray:
-        """Grab the iPhone screen area (BGR, physical pixels)."""
+        """Grab the iPhone screen area (BGR, physical pixels). If the window changed since the
+        cached geometry (crop of the wrong size), re-resolve it once and grab again."""
         geo = self.get()
-        return self._grabber.grab_content(self.window, geo)
+        try:
+            return self._grabber.grab_content(self.window, geo)
+        except FrameSizeMismatch:
+            return self._grabber.grab_content(self.window, self.get(force=True))
 
 
 # ---------------------------------------------------------------------------------------------

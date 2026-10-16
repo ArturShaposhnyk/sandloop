@@ -30,9 +30,16 @@
     no unlock when a key's colour has several separate locks.
   - Every lock in L183 covers one cell; adjacent lock cells of one colour are treated as one lock
     (not confirmed).
-- Tower bucket = stacked buckets in one cell. Only the top stage is tappable; the next stage
-  unlocks only when the top bucket is **filled to 100%** ("clear the top bucket to unlock the
-  next colorful stage", shot 030).
+- Tower bucket = stacked buckets in one cell (confirmed by the user, L183):
+  - Tapping a tower sends the **whole tower** to the conveyor; its cell is **empty at once**
+    (so the path rule, key release etc. apply immediately).
+  - On the conveyor the tower takes **one slot** for all its stages. The top bucket collects
+    first; when it is **100%** the next stage starts collecting (its colour), and so on
+    ("clear the top bucket to unlock the next colorful stage", shot 030, happens on the belt).
+  - On the belt a tower shows the collecting stage on top of the next stage's colour (L181:
+    cream on red, red on orange); the fill % is the collecting stage's.
+  - Seen in the grid from above: face-up = the top stage's opening; face-down = a disc of the
+    top stage's colour on the dome of the stage below.
 
 ## Conveyor
 - Max 5 buckets on the conveyor at once (HUD shows "k/5").

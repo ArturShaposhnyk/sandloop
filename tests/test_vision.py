@@ -193,3 +193,11 @@ def test_l183_three_curtains_locks_and_keys(ctx):
     assert icons == {(2, 1): ("lock", "key", "yellow"), (3, 5): ("lock", "key", "red"),
                      (2, 6): ("key", "path", "yellow"), (4, 2): ("key", "path", "red")}
     assert set(gv.tappable()) == {(0, 2), (0, 3), (0, 4), (0, 5)}
+
+
+@pytest.mark.parametrize("seq", sorted(ANN["belts"]))
+def test_belt_buckets_and_towers(seq, ctx):
+    """Settled belt buckets left to right; a tower shows the collecting stage on top of the
+    next stage ('cream/red', 'red/orange')."""
+    gv = view(seq, ctx)
+    assert [s.label() for s in gv.slots if not s.uncertain] == ANN["belts"][seq]

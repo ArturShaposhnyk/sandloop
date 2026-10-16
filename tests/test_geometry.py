@@ -191,3 +191,58 @@ def test_resolve_geometry_same_screen_rect_in_all_window_states(chrome, soft_edg
     win = WindowInfo(1, "iPhone Mirroring", "iPhone Mirroring", 42, 0, Rect(251, 252, 317, 697))
     _, g = resolve_geometry(Config(), _FakeGrabber(img, alpha), windows=[win])
     assert g.content == Rect(259, 290, 301, 651)  # (8, 38) pt inside the window
+
+
+# -- sanity check: a cut-off screen (window partly off-screen / moving) is rejected ------------
+
+def test_resolve_geometry_rejects_a_cut_off_screen():
+    from capture import CaptureError, resolve_geometry
+    from config import Config
+
+    img, alpha = _mirroring_window(chrome=False)
+    alpha[:, :116] = 0        # left 100 px of the screen missing (live: 502 px wide frames)
+    win = WindowInfo(1, "iPhone Mirroring", "iPhone Mirroring", 42, 0, Rect(251, 252, 317, 697))
+    with pytest.raises(CaptureError, match="width/height"):
+        resolve_geometry(Config(), _FakeGrabber(img, alpha), windows=[win])
+
+
+def test_check_aspect_accepts_the_iphone_screen():
+    from capture import check_aspect
+
+    check_aspect(Rect(259, 290, 301, 651), 0.4624, 0.02)       # real layout, no error
+
+
+class _ContentGrabber(_FakeGrabber):
+    """grab_content returns frames of a given size, like a window that moved."""
+
+    def __init__(self, sizes):
+        super().__init__(None, None)
+        self.sizes = list(sizes)
+
+    def grab_content(self, win, geo):
+        from capture import FrameSizeMismatch
+
+        w, h = self.sizes.pop(0)
+        ew, eh = geo.frame_size
+        if (w, h) != (ew, eh):
+            raise FrameSizeMismatch(f"{w}x{h} != {ew}x{eh}")
+        return np.zeros((h, w, 3), np.uint8)
+
+
+def test_tracker_reresolves_once_when_the_crop_size_is_wrong():
+    from capture import CaptureError, ScreenGeometry, WindowTracker
+    from config import Config
+
+    geo = ScreenGeometry(Rect(0, 0, 317, 697), Rect(8, 38, 301, 651), 2.0)
+    calls = []
+
+    def resolver():
+        calls.append(1)
+        return None, geo
+
+    t = WindowTracker(Config(), _ContentGrabber([(502, 1302), (602, 1302)]), resolver=resolver)
+    assert t.grab().shape == (1302, 602, 3)
+    assert len(calls) == 2                                      # cached + forced re-resolve
+    t2 = WindowTracker(Config(), _ContentGrabber([(502, 1302), (502, 1302)]), resolver=resolver)
+    with pytest.raises(CaptureError):
+        t2.grab()                                               # still wrong: reject the frame

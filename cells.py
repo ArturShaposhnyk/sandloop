@@ -71,6 +71,7 @@ class CellFeatures:
     body_lab: Optional[Lab]    # colour of the lower part of the object
     hue_cyan_frac: float   # share of light-cyan pixels (ice body)
     centre_lab: Optional[Lab] = None  # upper middle: inside of an open bucket / a tower's disc
+    ring_lab: Optional[Lab] = None    # around it: the rim of an open bucket / the dome under a disc
     icon: Optional[str] = None        # icon template matched in the cell ("lock", "key"), if any
     icon_color: Optional[str] = None  # its colour from the palette's ``keys`` group
     icon_lab: Optional[Lab] = None    # the icon's colour as seen
@@ -161,8 +162,12 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
     mid = np.zeros_like(obj)   # where a tower's disc sits: the upper middle of the crop
     mid[int(0.1 * h):int(0.45 * h), cx - rx:cx + rx] = True
     mid &= obj
-    centre_lab = (tuple(float(x) for x in np.median(lab[mid], axis=0)) if mid.sum() >= 10
-                  else None)
+    ring = np.zeros_like(obj)  # around it, clear of a large disc: rim / dome
+    ring[: int(0.55 * h), int(0.1 * w):int(0.9 * w)] = True
+    ring[int(0.05 * h):int(0.5 * h), cx - int(1.6 * rx):cx + int(1.6 * rx)] = False
+    ring &= obj
+    med = lambda m: (tuple(float(x) for x in np.median(lab[m], axis=0))  # noqa: E731
+                     if m.sum() >= 10 else None)
     return CellFeatures(
         empty_frac=float(empty.mean()),
         white_frac=float(((S < 50) & (V > 235)).mean()),
@@ -171,7 +176,8 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
         top_lab=_bright_lab(cell_bgr, lab, top),
         body_lab=_bright_lab(cell_bgr, lab, body),
         hue_cyan_frac=float(((hsv[..., 0] >= 90) & (hsv[..., 0] <= 105) & (S > 90)).mean()),
-        centre_lab=centre_lab,  # type: ignore[arg-type]
+        centre_lab=med(mid),  # type: ignore[arg-type]
+        ring_lab=med(ring),  # type: ignore[arg-type]
     )
 
 
@@ -181,13 +187,6 @@ def _distinct(lab: Lab, best: str, other: str, palette: Palette, margin: float) 
     d = lambda name: min(float(np.linalg.norm(np.asarray(lab) - np.asarray(c)))  # noqa: E731
                          for c in palette.buckets[name])
     return d(other) - d(best) >= margin
-
-
-def hue_diff(a: Lab, b: Lab) -> float:
-    """Angle (degrees, 0..180) between the LAB hues of two colours."""
-    ha, hb = np.degrees(np.arctan2(a[2], a[1])), np.degrees(np.arctan2(b[2], b[1]))
-    d = abs(float(ha - hb)) % 360.0
-    return min(d, 360.0 - d)
 
 
 def empty_fraction(region_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> float:
@@ -224,16 +223,14 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
                     reason=f"colour not in palette (dist {min(dt, db):.1f})",
                     lab=f.top_lab or f.body_lab)
     color = top or body
-    # face-down tower seen from above: a disc of the top stage's colour on the body's dome. The
-    # inside of an open bucket keeps the hue of the bucket below it (only darker), a disc has
-    # another hue. (A face-up tower with very different hues would read face-down: it then
-    # disagrees with the path rule and is not tapped - the safe side.)
-    dome_lab = f.body_lab or f.top_lab
-    if f.centre_lab is not None and dome_lab is not None:
+    # face-down tower seen from above: a disc of the top stage's colour on the body's dome, so
+    # the ring around the centre is another colour. An open bucket's ring is its own rim, the
+    # same colour as its inside (also for a face-up tower: L183 shot 054 r2c5).
+    if f.centre_lab is not None and f.ring_lab is not None:
         disc, _ = palette.nearest(f.centre_lab, "buckets", v.color_max_dist)
-        dome, _ = palette.nearest(dome_lab, "buckets", v.color_max_dist)
-        if (disc is not None and dome is not None and disc != dome
-                and hue_diff(f.centre_lab, dome_lab) >= v.disc_min_hue_deg):
+        dome, _ = palette.nearest(f.ring_lab, "buckets", v.color_max_dist)
+        apart = float(np.linalg.norm(np.subtract(f.centre_lab, f.ring_lab)))
+        if disc is not None and dome is not None and disc != dome and apart >= v.disc_min_dist:
             return Cell(row, col, Kind.BUCKET, color=disc, body=dome, face_up=False)
     tower = (body is not None and top is not None and body != top
              and _distinct(f.top_lab, top, body, palette, v.tower_min_margin))

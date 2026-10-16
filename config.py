@@ -27,6 +27,8 @@ class ScreenConfig:
     content: Union[str, List[float]] = "auto"
     auto_max_trim: float = 0.15
     uniform_tolerance: float = 6.0
+    aspect: float = 0.4624             # iPhone screen width / height (602 x 1302 px)
+    aspect_tolerance: float = 0.02     # relative; outside = window partly off-screen / moving
 
 
 @dataclass
@@ -80,7 +82,7 @@ class VisionConfig:
     panel_tol: float = 12.0           # LAB distance to the panel background colour
     edge_margin: float = 0.03         # share of width ignored at the frame's left/right edge
     counter_search: float = 0.02      # share of height the k/5 search extends the counter zone
-    disc_min_hue_deg: float = 30.0    # face-down tower: centre disc hue vs the rim's hue
+    disc_min_dist: float = 20.0       # face-down tower: LAB distance disc vs the ring around it
     unknown_sand_min: float = 0.03    # share of the picture for an unknown sand colour
     icon_threshold: float = 0.75      # lock / key icon template match (other cells <= 0.62)
     empty_tol: float = 10.0           # LAB distance to the empty-cell colour
@@ -115,6 +117,7 @@ class StrategyConfig:
     weight_open_bucket: float = 0.15      # score per bucket the tap connects to the exit
     weight_open_lock: float = 0.05        # score per lock cell the tap connects to the exit
     weight_key_unlock: float = 0.15       # score per bucket under a lock a released key opens
+    weight_tower_short_stage: float = 0.5  # penalty per later tower stage short of sand
     weight_new_colour: float = 0.05       # bonus for a colour not on the belt yet
     belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
     stall_s: float = 4.0                  # belt colour without fill growth this long = stalled
@@ -186,6 +189,8 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("clicks.backend must be 'quartz' or 'pyautogui'")
     if cfg.clicks.max_taps_per_second <= 0:
         raise ConfigError("clicks.max_taps_per_second must be > 0")
+    if cfg.screen.aspect <= 0 or cfg.screen.aspect_tolerance <= 0:
+        raise ConfigError("screen.aspect and screen.aspect_tolerance must be > 0")
     if not 0 <= cfg.screen.auto_max_trim < 0.5:
         raise ConfigError("screen.auto_max_trim must be in [0, 0.5)")
     if cfg.window.refresh_interval_s <= 0:

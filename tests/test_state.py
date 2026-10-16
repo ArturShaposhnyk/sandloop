@@ -65,14 +65,27 @@ def test_after_tap_empties_cell_counts_down_ice_and_fills_a_slot():
     assert st.locks[0].counter == 2
 
 
-def test_tower_tap_keeps_the_next_stage_as_an_obstacle():
+def test_tower_tap_sends_the_whole_tower_to_the_belt():
+    """GAME_RULES: the whole tower leaves the grid (cell empty at once) and takes ONE belt slot;
+    its stages collect one after another on the belt."""
     st = make_state(["red/blue",
-                     "pink_"])
+                     "pink_"], k=1, conveyor=[ConveyorBucket("cyan", 40)])
     nxt = st.after_tap((0, 0))
-    cell = nxt.cell((0, 0))
-    assert cell.kind is Kind.LOCK and cell.lock == "tower" and cell.color == "blue"
-    assert nxt.tappable == []
-    assert st.opened_by((0, 0)) == ([], [])
+    assert nxt.cell((0, 0)).kind is Kind.EMPTY
+    assert nxt.conveyor_k == 2                                   # one slot for both stages
+    assert nxt.conveyor[-1] == ConveyorBucket("red", 0, stages=("blue",))
+    assert nxt.tappable == [(1, 0)]                              # pink is connected now
+    assert st.opened_by((0, 0)) == ([(1, 0)], [])
+    assert nxt.conveyor_need("red") == 1.0 and nxt.conveyor_need("blue") == 1.0
+
+
+def test_belt_tower_stages_count_as_demand_for_their_colour():
+    b = ConveyorBucket("cream", 34, stages=("red",))
+    assert b.need_for("cream", 0.5) == pytest.approx(0.66)
+    assert b.need_for("red", 0.5) == 1.0 and b.need_for("blue", 0.5) == 0.0
+    st = make_state(["red"], k=2, conveyor=[b, ConveyorBucket("red", 50)])
+    assert st.conveyor_need("red") == pytest.approx(1.5)
+    assert st.pending_buckets() == pytest.approx(1 + 0.66 + 1 + 0.5)
 
 
 def test_opened_by_reports_buckets_and_lock_cells():
