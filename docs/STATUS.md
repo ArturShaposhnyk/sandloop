@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 507 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 515 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -234,6 +234,20 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   `tower_min_margin`.
 - vision.py split (406 -> 433 lines with the notes): `belt.py` (counter, conveyor slots),
   `sand.py` (sand shares, contact layer, lower part), `zones.py` (`crop_rel`).
+
+## Reach band + waiting must have a reason (2026-10-16, live L183 shot 056) — done, awaiting OK
+- Live: 1/5, only r1c1 cyan tappable (opens a path), bot waited "avail 2.6% < 3%".
+- Reach: `sand.contact_layer` = per picture column the lowest `vision.contact_layer` (0.022,
+  ~28 px) of SAND above the bottom edge, searched within `contact_reach` (0.07); was a 10 px
+  band. 056 cyan 2.6 % -> 15.5 %; 052 darkred still on top (41 %), red 12 % but claimed by
+  the red belt bucket (avail -0.7 %, rejected).
+- Waiting: `strategy.belt_idle` / `min_exposure` (GAME_RULES "When to wait"): idle belt ->
+  never wait; 3+ free slots -> no exposure needed; openers (useful opened bucket / path step,
+  2+ free) -> 0; last slot strict. Path planning now runs even when no candidate passes, and
+  the first step of the best path is re-evaluated with the opener minimum.
+- Saved-shot decisions: only two changed from wait to a tap - 056 (tap r1c1 cyan, path to
+  r4c1 darkgreen) and 031 (L181, empty belt: tap r1c2 red tower). Shot 056 added
+  (LABELS.md), tests for every rule.
 
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all

@@ -29,7 +29,8 @@ def test_waits_when_counter_unread_or_conveyor_full():
 
 
 def test_rejects_colour_whose_sand_is_not_exposed():
-    st = make_state(["red blue"], k=0, sand={"red": .3, "blue": .3}, exposed={"blue": .5})
+    # 2 free slots: the plain minimum applies (with 3+ free, or an idle belt, it is relaxed)
+    st = make_state(["red blue"], k=3, sand={"red": .3, "blue": .3}, exposed={"blue": .5})
     d = choose(st, SC)
     assert d.move.pos == (0, 1)
     assert "not enough exposed sand" in by_pos(d)[(0, 0)].rejected
@@ -84,6 +85,7 @@ def test_only_tappable_cells_are_candidates():
     ("053", (0, 2)),     # L183 start: darkgreen (most of the grass at the bottom), user-confirmed
     ("054", (2, 5)),     # live regression: face-up darkgreen/cyan tower next to the yellow key
     ("055", (4, 0)),     # live: hint arrows; open LIGHT green read darkgreen from its inside (user)
+    ("056", (1, 1)),     # live: 1/5, cyan sky just above the bottom; only move, opens a path (user)
 ])
 def test_decision_on_shot(seq, want, analyzer):  # noqa: F811
     res = analyzer.analyze(shot(seq), log=lambda s: None)
@@ -129,11 +131,13 @@ def test_live_regression_052_prefers_darkred_over_starving_red(analyzer):  # noq
     res = analyzer.analyze(shot("052"), log=lambda s: None)
     d = res.decision
     assert d.move.color == "darkred" and d.move.pos in [(2, 3), (4, 1)]
-    assert res.state.exposed["darkred"] > 0.5 and res.state.exposed.get("red", 0) < 0.03
+    exp = res.state.exposed   # the reach band (lowest ~28 px of sand per column)
+    assert max(exp, key=exp.get) == "darkred" and exp.get("red", 0) < 0.15
     red = by_pos(d)[(3, 2)]
+    # the reach band sees some red a little higher up (12 %), but the red bucket on the belt
+    # still claims more than that (13 %): a second red is rejected even with 4 free slots
     assert red.rejected and red.avail < 0
-    text = red.describe()
-    assert "exp 0%" in text and "belt 13%" in text
+    assert "belt 13%" in red.describe()
 
 
 def test_live_regression_054_face_up_tower_on_another_colour(analyzer):  # noqa: F811
@@ -356,3 +360,58 @@ def test_buckets_that_are_not_candidates_show_why():
     assert d.move is None and d.reason == "wait: no tappable bucket"
     assert "path rule says" in by_pos(d)[(0, 0)].rejected
     assert "hint arrow" in by_pos(d)[(1, 0)].rejected
+
+
+def test_live_regression_056_cyan_reach_and_no_pointless_wait(analyzer):  # noqa: F811
+    """L183, 1/5: the only tappable bucket is r1c1 cyan and it opens the way to more buckets.
+    The 10 px contact layer read cyan 2.6 % (< 3 %) and the bot waited; a bucket also takes the
+    grains a little higher up, where the sky is (reach band: ~15 %), and with 4 free slots
+    there is no reason to wait anyway."""
+    res = analyzer.analyze(shot("056"), log=lambda s: None)
+    assert res.state.exposed["cyan"] > 0.1
+    d = res.decision
+    assert (d.move.pos, d.move.color) == ((1, 1), "cyan") and d.move.opens
+
+
+# --- waiting must have a reason (GAME_RULES "When to wait") -----------------------------------
+
+def low_exposure_state(k, conveyor=(), stalled=None):
+    st = make_state(["red"], k=k, conveyor=list(conveyor), sand={"red": .5, "blue": .5},
+                    exposed={"red": .02, "blue": .9})
+    st.belt_stalled = dict(stalled or {})
+    return st
+
+
+def test_exposure_minimum_scales_with_free_slots():
+    filling = [ConveyorBucket("blue", 40)] * 3
+    assert "2 free slots" in choose(low_exposure_state(3, filling), SC).candidates[0].rejected
+    for k in (0, 1, 2):     # 3+ free slots: no exposure needed, enough sand left is enough
+        assert choose(low_exposure_state(k, filling[:k]), SC).move.pos == (0, 0)
+    d = choose(low_exposure_state(4, filling + [ConveyorBucket("blue", 10)]), SC)
+    assert d.move is None and "last slot" in d.candidates[0].rejected
+
+
+def test_never_wait_when_no_belt_bucket_collects():
+    """2 free slots, but the 3 blue buckets on the belt haven't filled for 10 s: waiting changes
+    nothing, so the low-exposure red goes."""
+    belt = [ConveyorBucket("blue", 40)] * 3
+    assert choose(low_exposure_state(3, belt), SC).move is None
+    d = choose(low_exposure_state(3, belt, stalled={"blue": 10.0}), SC)
+    assert d.move is not None and d.move.pos == (0, 0)
+
+
+def test_unseen_belt_bucket_counts_as_collecting():
+    # k says 3 but only 2 buckets were read: the third may be collecting -> not idle
+    belt = [ConveyorBucket("blue", 40)] * 2
+    assert choose(low_exposure_state(3, belt, stalled={"blue": 10.0}), SC).move is None
+
+
+def test_tap_that_opens_a_useful_bucket_may_go_with_low_exposure():
+    st = make_state(["red", "darkred_"], k=3, conveyor=[ConveyorBucket("blue", 40)] * 3,
+                    sand={"red": .3, "darkred": .3, "blue": .3},
+                    exposed={"red": .01, "darkred": .5, "blue": .4})
+    d = choose(st, SC)
+    assert d.move is not None and d.move.pos == (0, 0)
+    assert "r1c0 darkred (useful)" in d.move.describe()
+    st.exposed["darkred"] = 0.0   # nothing useful behind it: the plain minimum applies
+    assert choose(st, SC).move is None

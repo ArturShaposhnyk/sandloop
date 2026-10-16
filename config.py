@@ -106,7 +106,9 @@ class VisionConfig:
     bottom_band: float = 0.06         # fallback "exposed" band if the contact layer isn't found
     lower_band: float = 0.3           # "lower part" of the picture zone (sand reaching soon)
     contact_search: float = 0.02      # share of screen height searched for the picture's bottom edge
-    contact_layer: float = 0.008      # contact layer thickness (share of screen height)
+    contact_layer: float = 0.022      # sand a bucket reaches: lowest px of sand per column (share
+                                      # of screen height, ~28 px at 1302)
+    contact_reach: float = 0.07       # ... searched this far above the bottom edge
     canonical_width: int = 301        # frames are resized to this width for template matching
     template_threshold: float = 0.75
     template_thresholds: Dict[str, float] = field(  # per-anchor overrides
@@ -138,6 +140,10 @@ class StrategyConfig:
     path_step_cost: float = 0.02          # plan rank = target value - this x path cost
     weight_path_bonus: float = 1.0        # bonus for the first step = this x plan rank
     belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
+    relaxed_free_slots: int = 3           # this many free slots and up: min exposure relaxed
+    relaxed_min_exposed: float = 0.0      # ... to this (also when no belt bucket collects)
+    opener_free_slots: int = 2            # a tap that opens a useful bucket / a path step,
+    opener_min_exposed: float = 0.0       # ... with this many free slots: this minimum
     stall_s: float = 4.0                  # belt colour without fill growth this long = stalled
     analyze_interval_s: float = 0.5       # overlay --dry-run: min seconds between analyses
     confirm_frames: int = 2               # consecutive agreeing analyses before a tap

@@ -95,7 +95,11 @@ vision:                      # vision.py / screens.py; colours come from dataset
   lower_band: 0.3            # "lower part" of the picture zone: sand there reaches the belt soon (strategy: unlock value)
   # "exposed" = the contact layer: the lowest rows of sand right above the picture's bottom edge
   contact_search: 0.02       # share of screen height searched around picture[3] for that edge
-  contact_layer: 0.008       # layer thickness, share of screen height (~10 px at 1302) sand
+  # a bucket takes the bottom grains plus a few above (GAME_RULES): per picture column the lowest
+  # contact_layer of SAND (empty picture skipped), share of screen height (~28 px at 1302; was a
+  # 10 px band: L183 056 read cyan 2.6 % although the sky sat right above it -> 15 %)
+  contact_layer: 0.022
+  contact_reach: 0.07        # how far above the bottom edge that sand is looked for
   canonical_width: 301       # frames are resized to this width for template matching
   template_threshold: 0.75
   template_thresholds: {close_red: 0.95, ad_mute: 0.85}
@@ -120,6 +124,15 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   # demand-aware exposure: avail = contact-layer share of the colour - this x (1 - fill) for
   # every same-colour bucket already on the belt
   belt_demand_exposure: 0.25
+  # waiting must have a reason: sand only moves while belt buckets collect (GAME_RULES "When to
+  # wait"). min avail: last slot last_slot_min_exposed (min_exposed if the belt is idle);
+  # >= relaxed_free_slots free or an idle belt: relaxed_min_exposed; a tap that opens a useful
+  # bucket or is a planned path step with >= opener_free_slots free: opener_min_exposed;
+  # otherwise min_exposed
+  relaxed_free_slots: 3
+  relaxed_min_exposed: 0.0   # 0 = no exposure needed (avail must not be negative), only enough sand left
+  opener_free_slots: 2
+  opener_min_exposed: 0.0
   stall_s: 4.0               # a belt colour whose fill hasn't grown this long = sand not reachable
   analyze_interval_s: 0.5    # overlay --dry-run: min seconds between analyses
   confirm_frames: 2          # tap only after this many consecutive analyses chose the same move

@@ -57,6 +57,7 @@ class Candidate:
     short_stages: List[str] = field(default_factory=list)  # ... without enough sand left
     opened: List[Opened] = field(default_factory=list)     # opens, with colour usefulness
     plan: Optional[Plan] = None                # first step of the best path plan
+    low_exposure: bool = False                 # rejected only for its exposure
     path_bonus: float = 0.0
 
     @property
@@ -103,9 +104,38 @@ class Decision:
     plans: List[Plan] = field(default_factory=list)   # best first, rejected ones last
 
 
-def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig) -> Candidate:
+def belt_idle(state: LevelState, sc: StrategyConfig) -> bool:
+    """No belt bucket is collecting: none is unfinished, or every unfinished one has not filled
+    for ``stall_s`` (BeltTracker). Sand only moves while belt buckets collect, so waiting then
+    changes nothing. Buckets the slot list could not see (k > seen) count as collecting."""
+    if state.conveyor_k is None or state.conveyor_k > len(state.conveyor):
+        return False
+    return all(state.belt_stalled.get(b.color or "", 0.0) >= sc.stall_s
+               for b in state.conveyor if b.fill is None or b.fill < 100)
+
+
+def min_exposure(free: int, idle: bool, opener: bool, sc: StrategyConfig) -> Tuple[float, str]:
+    """Minimum avail to release a bucket, and why that minimum. Waiting only helps while the
+    belt collects and slots are scarce: the strict threshold is for the last slot; with many
+    free slots, an idle belt or a tap that opens a path, ~0 (the colour just has to exist and
+    enough of it remain: the sufficiency rule)."""
+    if free == 1:
+        return ((sc.min_exposed, "last slot, belt idle") if idle
+                else (sc.last_slot_min_exposed, "last slot"))
+    if idle:
+        return sc.relaxed_min_exposed, "belt idle"
+    if free >= sc.relaxed_free_slots:
+        return sc.relaxed_min_exposed, f"{free} free slots"
+    if opener and free >= sc.opener_free_slots:
+        return sc.opener_min_exposed, "opens a path"
+    return sc.min_exposed, f"{free} free slots"
+
+
+def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig, opener: bool = False
+             ) -> Candidate:
     """The hard rules for releasing the bucket at ``pos`` now (``rejected`` = the first that
-    fails; tappability is not checked here) and its tower stages short of sand."""
+    fails; tappability is not checked here) and its tower stages short of sand. ``opener``:
+    the tap opens a useful bucket or is a step of a planned path (lower exposure minimum)."""
     cell = state.cell(pos)
     cand = Candidate(pos, cell.color or "?")
     free = state.free_slots
@@ -115,7 +145,7 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig) -> Candidate:
     cand.on_belt = state.on_belt(cand.color)
     stalled = state.belt_stalled.get(cand.color)
     cand.stalled = stalled if stalled is not None and stalled >= sc.stall_s else None
-    min_exp = sc.last_slot_min_exposed if free == 1 else sc.min_exposed
+    min_exp, why = min_exposure(free or 0, belt_idle(state, sc), opener, sc)
     need = (state.conveyor_need(cand.color) + 1) * cap * sc.sufficiency_margin if cap else 0.0
     have = state.sand.get(cand.color, 0.0)
     if free is None:
@@ -125,8 +155,8 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig) -> Candidate:
     elif cand.stalled is not None:
         cand.rejected = f"{cand.color} on the belt is not filling - sand not reachable now"
     elif cand.avail < min_exp:
-        cand.rejected = (f"not enough exposed sand (avail {cand.avail:.1%} < {min_exp:.0%}"
-                         f"{', last slot' if free == 1 else ''})")
+        cand.low_exposure = True
+        cand.rejected = f"not enough exposed sand (avail {cand.avail:.1%} < {min_exp:.0%}, {why})"
     elif have < need:
         cand.rejected = f"not enough sand ({have:.1%} < {need:.1%})"
     cand.stages = [cell.body] if cell.body else []
@@ -143,13 +173,26 @@ def path_check(sc: StrategyConfig):
     """planner.Check: a bucket on a planned path must pass the hard rules AND have no tower
     stage short of sand (it would block its belt slot)."""
     def check(state: LevelState, pos: Pos) -> Optional[str]:
-        cand = evaluate(state, pos, sc)
+        cand = evaluate(state, pos, sc, opener=True)
         if cand.rejected:
             return cand.rejected
         if cand.short_stages:
             return f"tower stage {'/'.join(cand.short_stages)} short of sand"
         return None
     return check
+
+
+def _score(state: LevelState, cand: Candidate, sc: StrategyConfig) -> None:
+    after = state.after_tap(cand.pos)
+    cand.opens, cand.opens_locks = state.opened_by(cand.pos)
+    cand.opened = opened_value(after, cand.opens, sc)
+    cand.unlocks = after.unlocked
+    cand.score = (sc.weight_exposed * cand.avail + sc.weight_open_bucket * len(cand.opens)
+                  + sc.weight_unlock_value * cand.unlock_value
+                  + sc.weight_open_lock * len(cand.opens_locks)
+                  + sc.weight_key_unlock * cand.unlocked_buckets
+                  - sc.weight_tower_short_stage * len(cand.short_stages)
+                  + (0.0 if cand.on_belt else sc.weight_new_colour))
 
 
 def _not_tappable(state: LevelState) -> List[Candidate]:
@@ -181,30 +224,27 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
     cands: List[Candidate] = []
     for pos in state.tappable:
         cand = evaluate(state, pos, sc)
+        if cand.low_exposure:   # a tap that opens a useful bucket may go with less exposure
+            opened = opened_value(state.after_tap(pos), state.opened_by(pos)[0], sc)
+            if any(o.useful for o in opened):
+                cand = evaluate(state, pos, sc, opener=True)
         cands.append(cand)
-        if cand.rejected:
-            continue
-        after = state.after_tap(pos)
-        cand.opens, cand.opens_locks = state.opened_by(pos)
-        cand.opened = opened_value(after, cand.opens, sc)
-        cand.unlocks = after.unlocked
-        cand.score = (sc.weight_exposed * cand.avail + sc.weight_open_bucket * len(cand.opens)
-                      + sc.weight_unlock_value * cand.unlock_value
-                      + sc.weight_open_lock * len(cand.opens_locks)
-                      + sc.weight_key_unlock * cand.unlocked_buckets
-                      - sc.weight_tower_short_stage * len(cand.short_stages)
-                      + (0.0 if cand.on_belt else sc.weight_new_colour))
+        if not cand.rejected:
+            _score(state, cand, sc)
     tappable = len(cands)
-    cands += _not_tappable(state)
-    allowed = [c for c in cands if c.rejected is None]
-    plans = plan(state, path_check(sc), sc) if allowed else []
+    plans = plan(state, path_check(sc), sc) if free > 0 else []
     best_plan = plans[0] if plans and plans[0].rejected is None else None
-    if best_plan is not None:
-        for cand in allowed:
+    if best_plan is not None:   # replay() checked its first step with the path (opener) rules
+        for i, cand in enumerate(cands):
             if cand.pos == best_plan.steps[0]:
+                if cand.rejected:
+                    cand = cands[i] = evaluate(state, cand.pos, sc, opener=True)
+                    _score(state, cand, sc)
                 cand.plan = best_plan
                 cand.path_bonus = sc.weight_path_bonus * best_plan.rank
                 cand.score += cand.path_bonus
+    cands += _not_tappable(state)
+    allowed = [c for c in cands if c.rejected is None]
     if not allowed:
         if free == 0:
             why = "conveyor full"

@@ -113,8 +113,7 @@ def test_055_taps_the_light_green_bucket(ctx):
     reasons = {c.pos: c.rejected for c in d.candidates}
     assert set(reasons) == {(3, 0), (4, 0), (4, 5)}
     assert reasons[(4, 0)] is None
-    assert "avail 0.0% < 25%, last slot" in reasons[(3, 0)]
-    assert "avail 0.0% < 25%, last slot" in reasons[(4, 5)]
+    assert "< 25%, last slot" in reasons[(3, 0)] and "< 25%, last slot" in reasons[(4, 5)]
 
 
 @pytest.mark.parametrize("seq", ["053", "054", "055"])

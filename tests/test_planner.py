@@ -20,7 +20,7 @@ def path_level(k=0, cream_exposed=.35, cream_sand=.3):
     return make_state(["orange cream",
                        "orange_ cream_",
                        "green_ darkred_"], k=k,
-                      sand={"orange": .3, "cream": cream_sand, "darkred": .3, "green": .1},
+                      sand={"orange": .3, "cream": cream_sand, "darkred": .3, "green": .01},
                       exposed={"orange": .45, "cream": cream_exposed, "darkred": .05},
                       lower={"darkred": .6, "orange": .3})
 
@@ -59,7 +59,7 @@ def test_greedy_best_is_wrong_and_the_path_move_is_right():
 def test_path_avoids_buckets_that_are_unsafe_to_release():
     st = path_level()
     costs = release_costs(st, path_check(SC), SC)
-    assert (2, 0) not in costs           # green: no exposed sand -> impassable
+    assert (2, 0) not in costs           # green: not enough sand left -> impassable
     cost, steps = shortest_path(st, (2, 1), costs)
     assert steps == [(0, 1), (1, 1)] and cost == 2.0
 

@@ -77,8 +77,12 @@
 - A new bucket goes to the end of the queue / the next free slot on the conveyor.
 
 ## Strategy implications
-- Never release a bucket unless matching sand is currently reachable at the bottom
-  AND enough of that color remains to fill it to 100%.
+- Never release a bucket unless enough of that color remains to fill it to 100%. How much of it
+  must be reachable at the bottom right now depends on the belt (see "When to wait").
+- **Reachable sand** ("exposed") = what a bucket can collect: per picture column the lowest
+  ~28 px of sand (`vision.contact_layer`, empty picture skipped), not just the bottom row of
+  grains - a bucket takes a few grains higher too (user, L183 shot 056: cyan sky right above
+  the bottom read 2.6 % with a 10 px layer, ~15 % with the reach band).
 - Playable buckets = buckets connected to the exit by the path rule (BFS), not locked.
 - Tapping a bucket empties its cell, which can open a path to other buckets → lookahead must
   account for what gets opened.
@@ -86,6 +90,20 @@
   whose sand is buried under other colors (it will block a conveyor slot).
 - Prefer moves that unlock face-down buckets, ice blocks, and curtains.
 - Avoid deadlock: keep at least one conveyor slot usable.
+
+## When to wait (user, 2026-10-16, L183 shot 056; thresholds in `config.yaml` `strategy:`)
+- Waiting must have a reason: sand only moves while belt buckets are collecting.
+- **Belt idle** (no unfinished bucket on the belt, or none of them has filled for `stall_s`):
+  waiting changes nothing, so never wait - take the best legal move even with low exposure, as
+  long as its colour has enough sand left overall. (Buckets the belt reader could not see,
+  k > buckets read, count as collecting.)
+- The exposure minimum scales with free slots: last free slot `last_slot_min_exposed` (25 %;
+  `min_exposed` if the belt is idle); `relaxed_free_slots` (3) or more free:
+  `relaxed_min_exposed` (0 = the colour need not be exposed, avail just not negative, i.e.
+  not already claimed by same-colour belt buckets); otherwise `min_exposed` (3 %).
+- A tap that opens a useful bucket, or is a step of a planned path, uses `opener_min_exposed`
+  (0) once `opener_free_slots` (2) are free.
+- A colour stalled on the belt is still never released again; the sufficiency rule always holds.
 
 ## Unlock value and paths (user, 2026-10-16; `planner.py`, weights in `config.yaml` `strategy:`)
 - Face-down buckets show their colour, so what a move opens is plannable. The bot stays
