@@ -3,7 +3,8 @@
 Auto-player for *Sand Loop* (Voodoo), played through **iPhone Mirroring** on macOS. The bot sees the
 game only through screenshots of the mirroring window and acts only by clicking into it.
 
-Status: phases 0–1 done (setup, capture, taps); phase 2 (dataset collection) in progress. See `PROMPT.md` for the full plan.
+Status: phases 0–2 done (setup, capture, taps, dataset); phase 3 (vision) in review.
+Game mechanics: `docs/GAME_RULES.md` (source of truth). See `PROMPT.md` for the full plan.
 
 ## Setup
 
@@ -33,6 +34,9 @@ After you toggle a permission, fully quit the terminal app and reopen it.
 | `python -m tools.overlay [--window]` | Live view with FPS, frame diff, and the relative coord under the cursor |
 | `python -m actions tap 0.5 0.8 [--dry-run] [--backend pyautogui] [--count N]` | Tap a relative point |
 | `python -m tools.collect [--manual] [--label win] [--max 40]` | Save dataset screenshots to `dataset/screens/` (auto on each new settled screen; `ctrl+alt+s` = snap now) |
+| `python -m tools.build_palette` | Rebuild `dataset/palette.json`, `digits.npz`, `templates/` from `dataset/annotations.json` |
+| `python -m screens <png…>` | Classify screenshots (gameplay / revive / fail / ad / menu / other) |
+| `python -m vision <png…>` | Read a gameplay frame: grid, tappable cells, k/5, conveyor, sand; saves `debug/vision-*.png` |
 | `pytest` | Unit tests (no macOS or live game needed) |
 
 ## Coordinates

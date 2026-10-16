@@ -49,6 +49,32 @@ collect:                     # python -m tools.collect (dataset screenshots)
   min_interval_s: 1.0        # auto mode: min seconds between saved shots
   poll_s: 0.2                # how often to grab a frame
 
+vision:                      # vision.py / screens.py; colours come from dataset/palette.json
+  # zones, relative [x0, y0, x1, y1] of the iPhone screen
+  picture: [0.18, 0.125, 0.82, 0.425]
+  conveyor: [0.06, 0.448, 0.94, 0.49]
+  fill_text: [0.0, 0.485, 1.0, 0.512]
+  counter: [0.42, 0.505, 0.58, 0.548]
+  grid_zone: [0.0, 0.52, 1.0, 0.88]
+  cell_aspect: 0.885         # cell height / width (fixed camera perspective)
+  cell_shift_up: 0.1         # objects are drawn overhanging into the row above
+  cell_inset: 0.125          # crop inset per side, share of the cell size
+  panel_tol: 12.0            # LAB distance to the panel background colour
+  empty_tol: 10.0            # LAB distance to the empty-cell colour
+  empty_min_frac: 0.5        # share of empty-colour pixels for an empty cell
+  face_up_max_ratio: 0.94    # centre V / top-part median V below this = face-up
+  tower_min_margin: 8.0      # LAB margin for a real second colour (tower stage)
+  ice_min_white: 0.10
+  ice_min_dark: 0.05
+  color_max_dist: 22.0       # LAB distance to the nearest palette bucket colour
+  sand_max_dist: 18.0
+  slot_min_cover: 0.55       # conveyor: object share of a bucket's run (end posts ~0.45)
+  bottom_band: 0.06          # bottom share of the picture counted as "exposed" sand
+  canonical_width: 301       # frames are resized to this width for template matching
+  template_threshold: 0.75
+  template_thresholds: {close_red: 0.95, ad_mute: 0.85}
+  template_scales: [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.15, 1.3]
+
 paths:
   dataset: dataset
   debug: debug

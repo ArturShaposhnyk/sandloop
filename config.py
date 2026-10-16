@@ -4,7 +4,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 DEFAULT_PATH = Path(__file__).resolve().parent / "config.yaml"
 
@@ -66,6 +66,36 @@ class CollectConfig:
 
 
 @dataclass
+class VisionConfig:
+    # zones, relative [x0, y0, x1, y1] of the iPhone screen
+    picture: List[float] = field(default_factory=lambda: [0.18, 0.125, 0.82, 0.425])
+    conveyor: List[float] = field(default_factory=lambda: [0.06, 0.448, 0.94, 0.49])
+    fill_text: List[float] = field(default_factory=lambda: [0.0, 0.485, 1.0, 0.512])
+    counter: List[float] = field(default_factory=lambda: [0.42, 0.505, 0.58, 0.548])
+    grid_zone: List[float] = field(default_factory=lambda: [0.0, 0.52, 1.0, 0.88])
+    cell_aspect: float = 0.885        # cell height / width (fixed camera perspective)
+    cell_shift_up: float = 0.1        # objects are drawn overhanging into the row above
+    cell_inset: float = 0.125         # crop inset per side, share of the cell size
+    panel_tol: float = 12.0           # LAB distance to the panel background colour
+    empty_tol: float = 10.0           # LAB distance to the empty-cell colour
+    empty_min_frac: float = 0.5       # share of empty-colour pixels for an empty cell
+    face_up_max_ratio: float = 0.94   # centre V / top-part median V below this = face-up
+    tower_min_margin: float = 8.0     # LAB margin for a real second colour (tower stage)
+    ice_min_white: float = 0.10
+    ice_min_dark: float = 0.05
+    color_max_dist: float = 22.0      # LAB distance to the nearest palette colour
+    sand_max_dist: float = 18.0
+    slot_min_cover: float = 0.55      # conveyor: object share of a bucket's run (posts ~0.45)
+    bottom_band: float = 0.06         # bottom share of the picture counted as "exposed"
+    canonical_width: int = 301        # frames are resized to this width for template matching
+    template_threshold: float = 0.75
+    template_thresholds: Dict[str, float] = field(  # per-anchor overrides
+        default_factory=lambda: {"close_red": 0.95, "ad_mute": 0.85})
+    template_scales: List[float] = field(
+        default_factory=lambda: [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.15, 1.3])
+
+
+@dataclass
 class PathsConfig:
     dataset: str = "dataset"
     debug: str = "debug"
@@ -81,6 +111,7 @@ class Config:
     stability: StabilityConfig = field(default_factory=StabilityConfig)
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
     collect: CollectConfig = field(default_factory=CollectConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -136,6 +167,16 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("collect.change_threshold must be in (0, 1]")
     if cfg.collect.min_interval_s < 0 or cfg.collect.poll_s <= 0:
         raise ConfigError("collect.min_interval_s must be >= 0 and collect.poll_s > 0")
+    v = cfg.vision
+    for name in ("picture", "conveyor", "fill_text", "counter", "grid_zone"):
+        r = getattr(v, name)
+        if (not isinstance(r, (list, tuple)) or len(r) != 4
+                or not all(isinstance(x, (int, float)) for x in r)
+                or not (0 <= r[0] < r[2] <= 1 and 0 <= r[1] < r[3] <= 1)):
+            raise ConfigError(f"vision.{name} must be [x0, y0, x1, y1] with 0 <= x0 < x1 <= 1")
+    if not v.template_scales or not all(isinstance(s, (int, float)) and s > 0
+                                        for s in v.template_scales):
+        raise ConfigError("vision.template_scales must be a non-empty list of numbers > 0")
     return cfg
 
 

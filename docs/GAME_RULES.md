@@ -3,9 +3,24 @@
 ## Buckets in the grid
 - Face-up bucket (opening facing up) = playable, can be tapped.
 - Face-down bucket (bottom facing up) = NOT tappable; its color is visible.
+- **Path rule (playability):** a bucket is face-up / playable iff there is a path of EMPTY
+  cells (4-neighbour) from it to the grid exit at the conveyor side. Front-row cells adjacent
+  to the exit count as connected. Buckets, ice blocks, curtains (and UNKNOWN cells) are
+  obstacles for the path. "Nothing directly in front" is NOT the rule — e.g. in shot 043 the
+  red bucket at row 3 col 5 is open via the empty cell to its left, while the orange bucket at
+  row 2 col 1 is closed because all its neighbours are occupied.
+- The bot computes playability by BFS over the grid and also reads the visual face-up/down
+  state; if they disagree it logs a warning (and does not tap).
 - Ice block with a number N = locked; unlocks after N more buckets are tapped
   (placed on the conveyor or used in any way).
 - Curtain with a number N = locked; unlocks after N more buckets are filled to 100%.
+  Its size varies between levels (2x2 in L180 is just one example): always detect its extent
+  from the gold frame on screen and map it to the covered grid cells.
+  Under the curtain there are **buckets**, colours unknown until it opens. When it opens they
+  become regular buckets and follow the path rule.
+- Tower bucket = stacked buckets in one cell. Only the top stage is tappable; the next stage
+  unlocks only when the top bucket is **filled to 100%** ("clear the top bucket to unlock the
+  next colorful stage", shot 030).
 
 ## Conveyor
 - Max 5 buckets on the conveyor at once (HUD shows "k/5").
@@ -26,9 +41,8 @@
 - 4 boosters at the bottom (bucket+, magnet, shuffle, +1 slot). The bot must NOT use them.
 
 ## Confirmed details
-- Face-down bucket flips face-up when the bucket in front of it (closer to the conveyor)
-  has been used, or when there is nothing in front of it. So in each column only the
-  front-most bucket is playable; the rest unlock in order.
+- A face-down bucket flips face-up as soon as the path rule connects it to the exit
+  (see "Buckets in the grid").
 - Bucket capacity is the same for all buckets within a level, but differs between levels
   (levels with more sand → buckets fill faster per pass).
   Working hypothesis: each level is balanced so that
@@ -41,9 +55,9 @@
 ## Strategy implications
 - Never release a bucket unless matching sand is currently reachable at the bottom
   AND enough of that color remains to fill it to 100%.
-- Playable buckets = front bucket of each column, if face-up and not locked by ice/curtain.
-- Tapping a bucket also reveals the next bucket in that column → lookahead must account
-  for what gets revealed.
+- Playable buckets = buckets connected to the exit by the path rule (BFS), not locked.
+- Tapping a bucket empties its cell, which can open a path to other buckets → lookahead must
+  account for what gets opened.
 - Prefer releasing colors whose sand is exposed at the bottom right now; avoid colors
   whose sand is buried under other colors (it will block a conveyor slot).
 - Prefer moves that unlock face-down buckets, ice blocks, and curtains.
@@ -60,7 +74,16 @@ must be extensible:
 - Lock types are data-driven: one small class/entry per type (how to recognize it, how to read
   its counter, when it unlocks), not hardcoded if/else chains.
 
-### Seen but not yet explained
-- **Stacked "tower" bucket** (level 181, `dataset/screens/*-030-auto.png`): a tall bucket on top
-  of several colored layers in one cell. In-game hint: "To complete the [tower] clear the top
-  bucket to unlock the next colorful stage". Until the user explains it, treat it as UNKNOWN.
+## Bot behaviour outside gameplay
+- Revive ("OUT OF SLOT" / "Keep Playing"): always press **Quit** (never spend coins), then
+  **Try Again** on LEVEL FAILED.
+- Ads / popups: only tap ✕, and wait for it to appear. Never tap "Get App", purchases or
+  "Activate". If an App Store sheet opens, close it.
+- Stop the bot when lives reach 0.
+
+## Open questions
+- Win screen (level_complete): not captured yet.
+- Path rule vs. picture: in shot 010 the blue bucket at r4c4 (0-based) looks face-down although
+  the empty cell to its left connects it to the exit. Every other annotated bucket (7 grids)
+  agrees with the path rule. Is there a delay before a bucket flips, or a nuance in the rule?
+  (The bot logs it and does not tap such a bucket.)
