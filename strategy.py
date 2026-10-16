@@ -1,13 +1,20 @@
 """Greedy move choice (docs/GAME_RULES.md, "Strategy implications").
 
+Exposure is demand-aware: avail = share of the colour in the contact layer (the lowest sand
+the belt touches) - what the same-colour buckets already on the belt still need
+(belt_demand_exposure x (1 - fill) each).
+
 Hard rules, a candidate is rejected if any fails:
   * it is tappable: path rule AND visual face-up agree (never UNKNOWN, locked or disagreeing);
   * the conveyor has a free slot ("k/5" counter read and k < 5);
-  * its colour's sand is exposed at the bottom of the picture right now (a stricter threshold
-    when the tap would take the last free slot: keep a slot usable, avoid deadlock);
+  * its colour is not stalled: a same-colour bucket on the belt whose fill hasn't grown for
+    stall_s seconds means that sand is not reachable now;
+  * avail >= min_exposed (a stricter threshold when the tap would take the last free slot:
+    keep a slot usable, avoid deadlock);
   * enough of its colour remains to fill it: sand >= margin x (conveyor need + 1) x capacity.
-Score of the rest: exposed share of the colour + buckets / lock cells the tap connects to the
-exit (one-tap lookahead). Ties go to the front row, then the left.
+Score of the rest: avail + buckets / lock cells the tap connects to the exit (one-tap
+lookahead) + a bonus for a colour not on the belt yet. Ties: colour not on the belt, then the
+front row, then the left.
 
     python -m strategy dataset/screens/*.png   # decisions on saved shots -> debug/strategy-*.png
 """
@@ -18,7 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from config import StrategyConfig
-from state import LevelState, Pos
+from state import BeltTracker, LevelState, Pos
 
 if TYPE_CHECKING:
     import numpy as np
@@ -32,16 +39,30 @@ class Candidate:
     color: str
     score: float = 0.0
     rejected: Optional[str] = None             # why it can't be played now (None = allowed)
+    exposed: float = 0.0                       # share of the colour in the contact layer
+    belt_demand: float = 0.0                   # claimed by same-colour buckets on the belt
+    stalled: Optional[float] = None            # s the same colour on the belt hasn't filled
+    on_belt: bool = False
     opens: List[Pos] = field(default_factory=list)       # buckets connected by this tap
     opens_locks: List[Pos] = field(default_factory=list)
+
+    @property
+    def avail(self) -> float:
+        return self.exposed - self.belt_demand
+
+    def numbers(self) -> str:
+        s = f"exp {self.exposed:.0%} belt {self.belt_demand:.0%} avail {self.avail:.0%}"
+        if self.stalled is not None:
+            s += f" stalled {self.stalled:.0f}s"
+        return s + ("" if self.on_belt else " new")
 
     def describe(self) -> str:
         r, c = self.pos
         if self.rejected:
-            return f"r{r}c{c} {self.color}: no - {self.rejected}"
+            return f"r{r}c{c} {self.color}: no - {self.rejected} [{self.numbers()}]"
         extra = f", opens {len(self.opens)} bucket(s)" if self.opens else ""
         extra += f", {len(self.opens_locks)} lock cell(s)" if self.opens_locks else ""
-        return f"r{r}c{c} {self.color}: score {self.score:.2f}{extra}"
+        return f"r{r}c{c} {self.color}: score {self.score:.2f}{extra} [{self.numbers()}]"
 
 
 @dataclass
@@ -61,22 +82,29 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
         cell = state.cell(pos)
         cand = Candidate(pos, cell.color or "?")
         cands.append(cand)
-        exposed = state.exposed.get(cand.color, 0.0)
+        cand.exposed = state.exposed.get(cand.color, 0.0)
+        cand.belt_demand = state.conveyor_need(cand.color) * sc.belt_demand_exposure
+        cand.on_belt = state.on_belt(cand.color)
+        stalled = state.belt_stalled.get(cand.color)
+        cand.stalled = stalled if stalled is not None and stalled >= sc.stall_s else None
         min_exp = sc.last_slot_min_exposed if free == 1 else sc.min_exposed
         need = (state.conveyor_need(cand.color) + 1) * cap * sc.sufficiency_margin if cap else 0.0
         have = state.sand.get(cand.color, 0.0)
         if free == 0:
             cand.rejected = "conveyor full"
-        elif exposed < min_exp:
-            cand.rejected = (f"sand not exposed ({exposed:.0%} < {min_exp:.0%}"
+        elif cand.stalled is not None:
+            cand.rejected = f"{cand.color} on the belt is not filling - sand not reachable now"
+        elif cand.avail < min_exp:
+            cand.rejected = (f"not enough exposed sand (avail {cand.avail:.0%} < {min_exp:.0%}"
                              f"{', last slot' if free == 1 else ''})")
         elif have < need:
             cand.rejected = f"not enough sand ({have:.1%} < {need:.1%})"
         if cand.rejected:
             continue
         cand.opens, cand.opens_locks = state.opened_by(pos)
-        cand.score = (sc.weight_exposed * exposed + sc.weight_open_bucket * len(cand.opens)
-                      + sc.weight_open_lock * len(cand.opens_locks))
+        cand.score = (sc.weight_exposed * cand.avail + sc.weight_open_bucket * len(cand.opens)
+                      + sc.weight_open_lock * len(cand.opens_locks)
+                      + (0.0 if cand.on_belt else sc.weight_new_colour))
     allowed = [c for c in cands if c.rejected is None]
     if not allowed:
         if free == 0:
@@ -86,7 +114,7 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
         else:
             why = "no bucket passes the rules"
         return Decision(None, f"wait: {why}", cands)
-    best = max(allowed, key=lambda c: (round(c.score, 6), -c.pos[0], -c.pos[1]))
+    best = max(allowed, key=lambda c: (round(c.score, 6), not c.on_belt, -c.pos[0], -c.pos[1]))
     r, c = best.pos
     return Decision(best, f"tap r{r}c{c} {best.color} (score {best.score:.2f})", cands)
 
@@ -129,7 +157,11 @@ def draw_decision(img: "np.ndarray", gv: "GameView", decision: Decision) -> "np.
         y = y0 + 18 + 20 * i
         if y > h - 4:
             break
-        cv2.putText(out, line, (6, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+        scale = 0.45
+        tw = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0][0]
+        if tw > w - 12:   # shrink long reason lines to fit instead of cutting them off
+            scale *= (w - 12) / tw
+        cv2.putText(out, line, (6, y), cv2.FONT_HERSHEY_SIMPLEX, scale,
                     (255, 255, 0) if i == 0 else (255, 255, 255), 1, cv2.LINE_AA)
     return out
 
@@ -175,8 +207,11 @@ class Analyzer:
         self.reader = DigitReader.load(Path(cfg.paths.dataset) / "digits.npz")
         self.classifier = ScreenClassifier(load_templates(Path(cfg.paths.dataset) / "templates"),
                                            cfg.vision)
+        self.belt = BeltTracker()
 
-    def analyze(self, img: "np.ndarray", log=print) -> Analysis:
+    def analyze(self, img: "np.ndarray", log=print, now: Optional[float] = None) -> Analysis:
+        """``now``: frame time in seconds (default: monotonic clock) for the belt stall clock."""
+        import time
         from vision import VisionError, read_gameplay
 
         screen = self.classifier.classify(img).screen
@@ -188,6 +223,8 @@ class Analyzer:
             return Analysis(screen, error=str(e))
         st = self.cfg.strategy
         state = LevelState.from_view(gv, st.conveyor_slots, st.unknown_fill_need)
+        state.belt_stalled = self.belt.update(state.conveyor,
+                                              time.monotonic() if now is None else now)
         return Analysis(screen, gv, state, choose(state, st))
 
 

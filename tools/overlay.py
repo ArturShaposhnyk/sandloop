@@ -7,8 +7,10 @@
 --dry-run never clicks (this tool does not import actions): it shows the grid detections and the
 greedy strategy's next move (cyan ring "TAP"; rejected candidates crossed out in orange).
 
-Keys (overlay window focused): q / Esc quit, s save frame to debug/.
-Global hotkeys from config.yaml (pause / quit) also work.
+Keys (overlay window focused): q / Esc quit, s save a report to debug/.
+Global hotkeys from config.yaml work from any app (e.g. while playing in iPhone Mirroring):
+pause / quit, and save (default ctrl+alt+s). A report is the raw iPhone screen, and with
+--dry-run also the annotated frame and the decision as text (debug/report-<time>*).
 If the mirroring window is missing (or disappears), a placeholder is shown until it comes back.
 With screen.capture=mss keep the overlay away from the mirroring window (it would capture itself).
 """
@@ -16,11 +18,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 import textwrap
 import time
 from pathlib import Path
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -86,16 +89,18 @@ class DryRun:
         self._last = -float("inf")
         self.result: Any = None          # strategy.Analysis
         self.result_shape: Optional[Tuple[int, ...]] = None
+        self.result_frame: Optional[np.ndarray] = None   # the frame the result is about
         self.result_time: Optional[float] = None
         self.last_reason: Optional[str] = None
 
     def feed(self, content: np.ndarray, diff: float) -> None:
         if self._future is not None and self._future.done():
             try:
-                res, shape = self._future.result()
-                self.result, self.result_shape, self.result_time = res, shape, self._clock()
+                res, frame = self._future.result()
+                self.result, self.result_shape, self.result_time = res, frame.shape, self._clock()
+                self.result_frame = frame
             except Exception as e:  # keep the live view running; show the error instead
-                self.result, self.result_shape = None, None
+                self.result, self.result_shape, self.result_frame = None, None, None
                 print(f"dry-run: analysis failed: {e!r}")
             self._future = None
             self._report()
@@ -104,7 +109,7 @@ class DryRun:
             self._last = now
             frame = content.copy()
             self._future = self._pool.submit(
-                lambda: (self._analyze(frame, log=lambda s: print("dry-run: " + s)), frame.shape))
+                lambda: (self._analyze(frame, log=lambda s: print("dry-run: " + s)), frame))
 
     def _report(self) -> None:
         res = self.result
@@ -138,6 +143,49 @@ class DryRun:
         self._pool.shutdown(wait=False, cancel_futures=True)
 
 
+def save_report(out_dir: Path, raw: np.ndarray, dry: Optional[DryRun] = None,
+                stamp: Optional[str] = None) -> List[Path]:
+    """Save the raw iPhone screen now, and with a dry-run result also the frame that result was
+    computed on (``-analysed``; it can be a few frames older), that frame annotated, and the
+    decision as text. Raises OSError if an image can't be written."""
+    import cv2
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = stamp or time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time() * 1000) % 1000:03d}"
+    base = out_dir / f"report-{stamp}"
+    saved = []
+
+    def write(path: Path, img: np.ndarray) -> None:
+        if not cv2.imwrite(str(path), img):
+            raise OSError(f"cannot write {path}")
+        saved.append(path)
+
+    write(base.with_suffix(".png"), raw)
+    if dry is not None:
+        lines = [dry.status()]
+        res = dry.result
+        if dry.result_frame is not None:
+            write(Path(f"{base}-analysed.png"), dry.result_frame)
+        if res is not None and res.decision is not None:
+            from strategy import draw_decision
+
+            write(Path(f"{base}-annotated.png"),
+                  draw_decision(dry.result_frame, res.view, res.decision))
+            tap = res.tap_rel()
+            lines += [f"screen: {res.screen}", f"decision: {res.decision.reason}"
+                      + (f" at rel ({tap[0]:.3f}, {tap[1]:.3f})" if tap else "")]
+            lines += ["grid:"] + ["  " + row for row in res.view.labels()]
+            lines += res.state.summary()
+            lines += ["candidates:"] + ["  " + c.describe() for c in res.decision.candidates]
+            lines += [f"sand: {res.state.sand}", f"exposed: {res.state.exposed}"]
+        elif res is not None:
+            lines.append(f"screen: {res.screen}" + (f" ({res.error})" if res.error else ""))
+        txt = Path(f"{base}.txt")
+        txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        saved.append(txt)
+    return saved
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     import cv2
 
@@ -162,15 +210,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     grabber = Grabber(cfg.screen.capture)
     tracker = WindowTracker(cfg, grabber)
-    hotkeys = Hotkeys(cfg.safety.hotkey_pause, cfg.safety.hotkey_quit).start()
+    save_req = threading.Event()   # global hotkey: works while iPhone Mirroring has the focus
+    hotkeys = Hotkeys(cfg.safety.hotkey_pause, cfg.safety.hotkey_quit,
+                      extra={cfg.overlay.hotkey_save: lambda: (print("[hotkey] save"),
+                                                               save_req.set())}).start()
     fps = Fps()
     mouse = {"pos": None}  # display-space cursor position
     cv2.namedWindow(WIN_NAME, cv2.WINDOW_AUTOSIZE)
     cv2.setMouseCallback(WIN_NAME, lambda ev, x, y, *_: mouse.__setitem__("pos", (x, y)))
     prev: Optional[np.ndarray] = None
     frame: Optional[np.ndarray] = None
-    print(f"overlay running — q/Esc to quit, s to save; hotkeys: pause={hotkeys.pause_spec} "
-          f"quit={hotkeys.quit_spec}")
+    print(f"overlay running — q/Esc to quit, s to save (overlay focused); hotkeys: "
+          f"save={cfg.overlay.hotkey_save} pause={hotkeys.pause_spec} quit={hotkeys.quit_spec}")
     waiting: Optional[str] = None
     try:
         while not hotkeys.quit.is_set():
@@ -202,12 +253,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 waiting = None
             diff = frame_change(prev, frame) if prev is not None and prev.shape == frame.shape else 1.0
             prev = frame
+            raw = frame
             if dry is not None:
                 if args.window:   # analyse and annotate only the iPhone screen inside the window
                     x0, y0 = int(round(origin[0])), int(round(origin[1]))
                     cw, chh = geo.frame_size
                     shown = frame.copy()
                     sub = shown[y0:y0 + chh, x0:x0 + cw]
+                    raw = frame[y0:y0 + chh, x0:x0 + cw]
                     if not hotkeys.paused.is_set():
                         dry.feed(sub, diff)
                     shown[y0:y0 + chh, x0:x0 + cw] = dry.annotate(sub)
@@ -237,12 +290,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             key = cv2.waitKey(1) & 0xFF
             if key in QUIT_KEYS:
                 break
-            if key == ord("s"):
-                out = Path(cfg.paths.debug)
-                out.mkdir(parents=True, exist_ok=True)
-                p = out / f"overlay-{time.strftime('%Y%m%d-%H%M%S')}.png"
-                cv2.imwrite(str(p), frame)
-                print(f"saved {p}")
+            if key == ord("s") or save_req.is_set():
+                save_req.clear()
+                try:
+                    paths = save_report(Path(cfg.paths.debug), raw, dry)
+                    print("saved " + ", ".join(str(p) for p in paths))
+                except OSError as e:
+                    print(f"save failed: {e}")
     finally:
         if dry is not None:
             dry.close()

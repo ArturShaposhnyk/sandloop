@@ -42,6 +42,7 @@ stability:
 
 overlay:
   max_height: 900            # overlay window height in pixels
+  hotkey_save: "ctrl+alt+s"  # global (works from any app): save frame + dry-run decision to debug/
 
 collect:                     # python -m tools.collect (dataset screenshots)
   hotkey_snap: "ctrl+alt+s"  # save the current frame now
@@ -70,7 +71,10 @@ vision:                      # vision.py / screens.py; colours come from dataset
   color_max_dist: 22.0       # LAB distance to the nearest palette bucket colour
   sand_max_dist: 18.0
   slot_min_cover: 0.55       # conveyor: object share of a bucket's run (end posts ~0.45)
-  bottom_band: 0.06          # bottom share of the picture counted as "exposed" sand
+  bottom_band: 0.06          # fallback "exposed" band (share of the picture) if no bottom edge found
+  # "exposed" = the contact layer: the lowest rows of sand right above the picture's bottom edge
+  contact_search: 0.02       # share of screen height searched around picture[3] for that edge
+  contact_layer: 0.008       # layer thickness, share of screen height (~10 px at 1302) sand
   canonical_width: 301       # frames are resized to this width for template matching
   template_threshold: 0.75
   template_thresholds: {close_red: 0.95, ad_mute: 0.85}
@@ -78,7 +82,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
 
 strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RULES.md
   conveyor_slots: 5          # "k/5" on the HUD
-  min_exposed: 0.03          # release a colour only if this share of the bottom band is that sand
+  min_exposed: 0.03          # release a colour only if avail (see below) is at least this
   last_slot_min_exposed: 0.25  # stricter threshold when the tap would take the last free slot
   # remaining sand of the colour >= margin * (its conveyor need + 1) * estimated bucket capacity,
   # capacity = remaining sand / pending buckets (levels are balanced, GAME_RULES.md)
@@ -87,6 +91,11 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   weight_exposed: 1.0        # score per exposed share of the colour
   weight_open_bucket: 0.15   # score per bucket the tap connects to the exit (lookahead)
   weight_open_lock: 0.05     # score per lock cell (ice, curtain) the tap connects to the exit
+  weight_new_colour: 0.05    # bonus for a colour that is not on the belt yet (also the tie-break)
+  # demand-aware exposure: avail = contact-layer share of the colour - this x (1 - fill) for
+  # every same-colour bucket already on the belt
+  belt_demand_exposure: 0.25
+  stall_s: 4.0               # a belt colour whose fill hasn't grown this long = sand not reachable
   analyze_interval_s: 0.5    # overlay --dry-run: min seconds between analyses
 
 paths:

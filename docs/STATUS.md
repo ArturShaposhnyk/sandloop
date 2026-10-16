@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | this commit |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 184 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 195 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -83,6 +83,19 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
 - Fix after the live dry-run: face up/down is judged on the top stage only (centre vs the rim =
   85th percentile of V in the top part). A tall tower's opening is drawn above the cell, so the
   old median reference read it face-down and L181 start (030/041) had no tappable bucket.
+
+- Live dry-run feedback (L181, shot 052 `-live`): it chose red while a red bucket at 49% on the
+  belt was starving. Now: "exposed" = the **contact layer** (lowest ~10 px above the picture's
+  real bottom edge, found by walking past `vision.picture`; the old band measured the pile's
+  slope). **Demand-aware**: avail = exposed - `belt_demand_exposure` x (1 - fill) per
+  same-colour belt bucket. **Stalled**: `state.BeltTracker` keeps per-colour fill across frames;
+  no growth for `stall_s` = colour rejected. New colours get a small bonus and win ties. Each
+  candidate's reason shows `exp / belt / avail / stalled / new`.
+- Overlay reports: `ctrl+alt+s` (global, confirmed live) or `s` (overlay focused) ->
+  `debug/report-<time>.png` (now), `-analysed.png` (frame the decision is about), `-annotated.png`,
+  `.txt` (decision + every candidate). Plain `s` over iPhone Mirroring goes to the phone.
+- Live: some frames fail vision intermittently ("grid panel background not found", "counter
+  not read") -> the bot waits that frame; the same position re-analysed is fine. Watch in phase 5.
 
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all

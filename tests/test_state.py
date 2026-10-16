@@ -100,6 +100,20 @@ def test_bucket_counts_hidden_and_capacity_estimate():
     assert st.free_slots == 3
 
 
+def test_belt_tracker_stall_clock():
+    from state import BeltTracker
+
+    t = BeltTracker()
+    red = lambda f: ConveyorBucket("red", f)  # noqa: E731
+    assert t.update([red(40)], 0.0) == {"red": 0.0}
+    assert t.update([red(40)], 3.0) == {"red": 3.0}          # no growth
+    assert t.update([red(45)], 4.0) == {"red": 0.0}          # grew: clock restarts
+    assert t.update([], 6.0) == {}                           # out of sight: clock kept
+    assert t.update([red(45)], 9.0) == {"red": 5.0}
+    assert t.update([red(45), red(0)], 10.0) == {"red": 0.0}  # a new red bucket arrived
+    assert t.update([red(100), ConveyorBucket("blue", None)], 11.0) == {}  # done / unread
+
+
 def test_free_slots_unknown_without_counter():
     assert make_state(["red"], k=None).free_slots is None
     assert make_state(["red"], k=5).free_slots == 0
@@ -127,7 +141,8 @@ def shot(seq):
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1] / "dataset" / "screens"
-    return _cv2.imread(str(next(root.glob(f"*-{seq}-auto.png"))))
+    path, = [p for p in root.glob("*.png") if p.stem.split("-")[3] == seq]  # exactly one
+    return _cv2.imread(str(path))
 
 
 def test_state_from_view_l180_start(analyzer):

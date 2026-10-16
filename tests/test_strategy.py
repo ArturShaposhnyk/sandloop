@@ -31,7 +31,7 @@ def test_rejects_colour_whose_sand_is_not_exposed():
     st = make_state(["red blue"], k=0, sand={"red": .3, "blue": .3}, exposed={"blue": .5})
     d = choose(st, SC)
     assert d.move.pos == (0, 1)
-    assert "not exposed" in by_pos(d)[(0, 0)].rejected
+    assert "not enough exposed sand" in by_pos(d)[(0, 0)].rejected
 
 
 def test_last_free_slot_needs_strongly_exposed_sand():
@@ -78,7 +78,7 @@ def test_only_tappable_cells_are_candidates():
 
 @pytest.mark.parametrize("seq,want", [
     ("001", (0, 1)),     # L180 start: blue (only exposed colour), opens the pink behind it
-    ("043", (3, 2)),     # last slot: red is 67% of the bottom, opens two buckets
+    ("052", (2, 3)),     # live regression: red 49% on the belt starves, bottom is darkred
     ("008", (4, 0)),     # blue is the most exposed colour
 ])
 def test_decision_on_shot(seq, want, analyzer):  # noqa: F811
@@ -107,7 +107,70 @@ def test_waits_on_full_conveyor(seq, analyzer):  # noqa: F811
 def test_never_taps_cream_when_its_sand_is_buried(analyzer):  # noqa: F811
     d = analyzer.analyze(shot("043"), log=lambda s: None).decision
     for pos in [(2, 1), (2, 4), (4, 3)]:
-        assert "not exposed" in by_pos(d)[pos].rejected
+        assert "not enough exposed sand" in by_pos(d)[pos].rejected
+
+
+def test_last_slot_not_spent_on_a_colour_the_belt_already_claims(analyzer):  # noqa: F811
+    """043, 4/5: red is 31% of the contact layer but the red bucket on the belt (16%) still
+    claims most of it, so a second red is not worth the last slot."""
+    d = analyzer.analyze(shot("043"), log=lambda s: None).decision
+    assert d.move is None and d.reason == "wait: no bucket passes the rules"
+    red = by_pos(d)[(3, 2)]
+    assert red.exposed > 0.2 and red.belt_demand > 0.15 and "last slot" in red.rejected
+
+
+def test_live_regression_052_prefers_darkred_over_starving_red(analyzer):  # noqa: F811
+    """L181 dry-run feedback: red 49% on the belt collects nothing (no red in the contact
+    layer); the bottom is darkred. Expected: darkred (r2c3 or r4c1), red rejected."""
+    res = analyzer.analyze(shot("052"), log=lambda s: None)
+    d = res.decision
+    assert d.move.color == "darkred" and d.move.pos in [(2, 3), (4, 1)]
+    assert res.state.exposed["darkred"] > 0.5 and res.state.exposed.get("red", 0) < 0.03
+    red = by_pos(d)[(3, 2)]
+    assert red.rejected and red.avail < 0
+    text = red.describe()
+    assert "exp 0%" in text and "belt 13%" in text
+
+
+def test_demand_aware_exposure_blocks_a_second_bucket():
+    # contact layer 30% red; one empty red bucket on the belt claims 25% -> avail 5%
+    st = make_state(["red blue"], k=1, conveyor=[ConveyorBucket("red", 0)],
+                    sand={"red": .4, "blue": .4}, exposed={"red": .3, "blue": .1})
+    d = choose(st, SC)
+    assert by_pos(d)[(0, 0)].avail == pytest.approx(0.05)
+    assert d.move.color == "blue"      # 10% avail, new colour, beats red's 5%
+    st.exposed["red"] = .9             # clearly enough for both
+    assert choose(st, SC).move.color == "red"
+
+
+def test_stalled_belt_colour_is_rejected():
+    st = make_state(["red blue"], k=1, conveyor=[ConveyorBucket("red", 49)],
+                    sand={"red": .4, "blue": .4}, exposed={"red": .9, "blue": .1})
+    st.belt_stalled = {"red": 10.0}
+    d = choose(st, SC)
+    assert "not filling" in by_pos(d)[(0, 0)].rejected and "stalled 10s" in by_pos(d)[(0, 0)].describe()
+    assert d.move.color == "blue"
+    st.belt_stalled = {"red": 1.0}     # below stall_s: still fine
+    assert choose(st, SC).move.color == "red"
+
+
+def test_tie_break_prefers_colour_not_on_the_belt():
+    sc = StrategyConfig(weight_new_colour=0.0, belt_demand_exposure=0.0)
+    st = make_state(["red blue"], k=1, conveyor=[ConveyorBucket("red", 50)],
+                    sand={"red": .4, "blue": .4}, exposed={"red": .5, "blue": .5})
+    assert choose(st, sc).move.color == "blue"
+
+
+def test_belt_stall_across_frames(analyzer):  # noqa: F811
+    """The same frame twice, 10 s apart: the red bucket's fill didn't grow -> stalled."""
+    from strategy import Analyzer
+
+    an = Analyzer(analyzer.cfg)
+    img = shot("052")
+    assert an.analyze(img, log=lambda s: None, now=0.0).state.belt_stalled == {"red": 0.0}
+    res = an.analyze(img, log=lambda s: None, now=10.0)
+    assert res.state.belt_stalled == {"red": 10.0}
+    assert by_pos(res.decision)[(3, 2)].stalled == 10.0
 
 
 def test_non_gameplay_has_no_decision(analyzer):  # noqa: F811

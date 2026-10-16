@@ -39,3 +39,4 @@ Not covered yet: **level_complete** (after winning L180 the game went straight t
 | 20261016-102548-249-043-auto.png | gameplay | L181 retry, 4/5 |
 | 20261016-102557-076-045-auto.png | gameplay | L181 retry, 5/5, one bucket at 100% |
 | 20261016-102620-667-051-auto.png | menu | popup: Sandy Race event, START, close (x) |
+| 20261016-113331-000-052-live.png | gameplay | L181, 1/5, red 49% stalled on the belt, contact layer darkred/orange: regression for demand-aware exposure (expect darkred) |

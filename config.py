@@ -55,6 +55,7 @@ class StabilityConfig:
 @dataclass
 class OverlayConfig:
     max_height: int = 900
+    hotkey_save: str = "ctrl+alt+s"   # global: save a report (frame + decision) to debug/
 
 
 @dataclass
@@ -87,7 +88,9 @@ class VisionConfig:
     color_max_dist: float = 22.0      # LAB distance to the nearest palette colour
     sand_max_dist: float = 18.0
     slot_min_cover: float = 0.55      # conveyor: object share of a bucket's run (posts ~0.45)
-    bottom_band: float = 0.06         # bottom share of the picture counted as "exposed"
+    bottom_band: float = 0.06         # fallback "exposed" band if the contact layer isn't found
+    contact_search: float = 0.02      # share of screen height searched for the picture's bottom edge
+    contact_layer: float = 0.008      # contact layer thickness (share of screen height)
     canonical_width: int = 301        # frames are resized to this width for template matching
     template_threshold: float = 0.75
     template_thresholds: Dict[str, float] = field(  # per-anchor overrides
@@ -106,6 +109,9 @@ class StrategyConfig:
     weight_exposed: float = 1.0           # score per exposed share of the colour
     weight_open_bucket: float = 0.15      # score per bucket the tap connects to the exit
     weight_open_lock: float = 0.05        # score per lock cell the tap connects to the exit
+    weight_new_colour: float = 0.05       # bonus for a colour not on the belt yet
+    belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
+    stall_s: float = 4.0                  # belt colour without fill growth this long = stalled
     analyze_interval_s: float = 0.5       # overlay --dry-run: min seconds between analyses
 
 
@@ -198,8 +204,9 @@ def validate(cfg: Config) -> Config:
     for name in ("min_exposed", "last_slot_min_exposed", "unknown_fill_need"):
         if not 0 <= getattr(st, name) <= 1:
             raise ConfigError(f"strategy.{name} must be in [0, 1]")
-    if st.sufficiency_margin < 0 or st.analyze_interval_s < 0:
-        raise ConfigError("strategy.sufficiency_margin and analyze_interval_s must be >= 0")
+    if min(st.sufficiency_margin, st.analyze_interval_s, st.belt_demand_exposure, st.stall_s) < 0:
+        raise ConfigError("strategy.sufficiency_margin, analyze_interval_s, "
+                          "belt_demand_exposure and stall_s must be >= 0")
     return cfg
 
 

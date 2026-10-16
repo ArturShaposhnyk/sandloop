@@ -56,14 +56,16 @@ class LevelState:
     conveyor_slots: int
     conveyor: List[ConveyorBucket]
     sand: Dict[str, float] = field(default_factory=dict)      # share of the picture
-    exposed: Dict[str, float] = field(default_factory=dict)   # share of the bottom band
+    exposed: Dict[str, float] = field(default_factory=dict)   # share of the contact layer
     unknown_fill_need: float = 0.5
+    belt_stalled: Dict[str, float] = field(default_factory=dict)  # colour -> s without fill growth
 
     # -- construction ---------------------------------------------------------------------
 
     @classmethod
     def from_view(cls, gv: "GameView", conveyor_slots: int = 5,
-                  unknown_fill_need: float = 0.5) -> "LevelState":
+                  unknown_fill_need: float = 0.5,
+                  belt_stalled: Optional[Dict[str, float]] = None) -> "LevelState":
         grid = copy.deepcopy(gv.grid)
         locks: List[Lock] = []
         for reg in gv.regions:
@@ -79,7 +81,7 @@ class LevelState:
                                                for s in gv.slots if not s.uncertain]
         return cls(grid, gv.lattice.exits(), list(gv.tappable()), list(gv.disagreements), locks,
                    gv.counter, conveyor_slots, conveyor, dict(gv.sand), dict(gv.exposed),
-                   unknown_fill_need)
+                   unknown_fill_need, dict(belt_stalled or {}))
 
     # -- grid -----------------------------------------------------------------------------
 
@@ -115,6 +117,9 @@ class LevelState:
     def free_slots(self) -> Optional[int]:
         """Free conveyor slots from the "k/5" counter (None if it was not read)."""
         return None if self.conveyor_k is None else max(0, self.conveyor_slots - self.conveyor_k)
+
+    def on_belt(self, color: str) -> bool:
+        return any(b.color == color for b in self.conveyor)
 
     def conveyor_need(self, color: str) -> float:
         """Bucket capacities of ``color`` the conveyor still has to fill."""
@@ -204,3 +209,32 @@ class LevelState:
                                    for l in self.locks) or "-"),
             f"capacity estimate: {'-' if cap is None else f'{cap:.3f}'} of the picture / bucket",
         ]
+
+
+class BeltTracker:
+    """Remembers the belt across frames: for every colour on the belt, how long its buckets'
+    fill has not grown (a starving bucket = that colour's sand is not reachable right now).
+
+    Per colour the key is (number of buckets with a read fill < 100%, sum of their fills); any
+    change of it (fill grew, a bucket left at 100% or a new one arrived) restarts the clock. A
+    colour that is briefly not visible keeps its clock, so a bucket passing an edge is no reset.
+    """
+
+    def __init__(self) -> None:
+        self._key: Dict[str, Tuple[int, int]] = {}
+        self._since: Dict[str, float] = {}
+
+    def update(self, conveyor: List[ConveyorBucket], now: float) -> Dict[str, float]:
+        """Feed one frame's belt; returns colour -> seconds without fill growth (colours on the
+        belt in this frame only)."""
+        keys: Dict[str, Tuple[int, int]] = {}
+        for b in conveyor:
+            if b.color is None or b.fill is None or b.fill >= 100:
+                continue
+            n, total = keys.get(b.color, (0, 0))
+            keys[b.color] = (n + 1, total + b.fill)
+        for color, key in keys.items():
+            if self._key.get(color) != key:
+                self._key[color] = key
+                self._since[color] = now
+        return {c: now - self._since[c] for c in keys}
