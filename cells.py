@@ -182,6 +182,15 @@ def path_playable(cells: Sequence[Sequence[Optional[Cell]]],
     """Path rule: a bucket is playable iff a 4-neighbour path of EMPTY cells connects it to an
     exit cell (front-row cells adjacent to the conveyor exit). An exit cell itself counts as
     connected. ``cells[r][c]`` is None where the lattice has no grid cell."""
+    conn = exit_connected(cells, exits)
+    return [[conn[r][c] and cell is not None and cell.kind is Kind.BUCKET
+             for c, cell in enumerate(row)] for r, row in enumerate(cells)]
+
+
+def exit_connected(cells: Sequence[Sequence[Optional[Cell]]],
+                   exits: Sequence[Tuple[int, int]]) -> List[List[bool]]:
+    """Occupied cells (buckets, locks, unknown) that the path rule connects to the exit: an exit
+    cell itself, or a cell next to an empty cell that an empty path links to the exit."""
     rows = len(cells)
     cols = len(cells[0]) if rows else 0
     reach = [[False] * cols for _ in range(rows)]   # empty cells connected to the exit
@@ -201,7 +210,7 @@ def path_playable(cells: Sequence[Sequence[Optional[Cell]]],
     for r in range(rows):
         for c in range(cols):
             cell = cells[r][c]
-            if cell is None or cell.kind is not Kind.BUCKET:
+            if cell is None or not cell.is_obstacle:
                 continue
             nbrs = ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1))
             out[r][c] = (r, c) in exit_set or any(

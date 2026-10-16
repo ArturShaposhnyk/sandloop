@@ -10,8 +10,9 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 1 | capture (window + screen rect, hover chrome handled), taps, overlay | `3b5b8f7`, `ba16f6d`, `9cf1d40` |
 | 2 | `tools/collect.py`, 32 labeled screenshots in `dataset/screens/` (`LABELS.md`) | `385c523`, `015ab26` |
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
+| 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | this commit |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 154 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 182 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -26,6 +27,8 @@ python -m tools.build_palette            # rebuild palette.json, digits.npz, tem
 python -m tools.show_annotations         # draw annotated grids -> debug/annotations/
 python -m vision dataset/screens/*-043-auto.png   # read a gameplay frame -> debug/vision-*.png
 python -m screens dataset/screens/*.png  # classify screen types
+python -m strategy dataset/screens/*.png # greedy decision per shot -> debug/strategy-*.png
+python -m tools.overlay --dry-run        # live: detections + chosen move, never clicks
 python -m pytest -q                      # all tests, no live game needed
 ```
 Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner = failsafe stop.
@@ -57,13 +60,25 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   playable. Asked the user whether flips are delayed or the rule has a nuance. Bot doesn't tap it.
 - **Face-up tower** (shot 031 r1c2) reads face-down (one sample); more tower shots needed.
 - Popup ✕ template threshold is tight (real 0.96–1.00 vs false up to 0.93).
+- **Shot 035**: darkred r2c3, darkred r4c1, cream r4c3 look face-up although BFS says closed
+  (they were face-up in 033), and an orange bucket sits in r2c2 that was empty in 033. Do
+  buckets stay face-up once opened? Can buckets move/appear in empty cells? Asked the user.
+- **Ice**: what is under an ice block once it opens (a bucket? empty?) is unknown, so ice cells
+  are not counted as pending buckets in the capacity estimate.
+- Screen classification costs ~0.7 s per frame (template matching at 8 scales); the overlay runs
+  the analysis on a worker thread. Phase 5 may want a cheap gameplay pre-check.
 
-## Phase 4 — next
-- `state.py`: dataclass model of the level state built from `vision.GameView` (grid cells,
-  playable/tappable buckets, locks with counters, conveyor k + slot colours/fill, remaining sand
-  per colour and exposed bottom colours).
-- `strategy.py` (greedy): choose the next bucket per `GAME_RULES.md` "Strategy implications"
-  (release only colours whose sand is exposed and sufficient, prefer moves that open paths /
-  unlock locks, keep a conveyor slot usable; never tap UNKNOWN or disagreeing cells).
-- `--dry-run` in the overlay: draw detections and the chosen move, never click.
-- Tests on the saved screenshots; then stop and wait for the user's OK.
+## Phase 4 — greedy strategy (done, awaiting OK)
+- `state.LevelState.from_view(GameView)`: grid, tappable, locks (ice / curtain regions with
+  counters), conveyor (k/5 authoritative; uncertain edge slots dropped, empty at k=0), sand and
+  exposed shares, pending buckets (grid + one hidden per curtain cell + conveyor need) and a
+  capacity estimate = remaining sand / pending buckets. `after_tap()` / `opened_by()`: one-tap
+  lookahead (cell empties, a tower keeps its next stage locked, ice counters count down).
+- `strategy.choose()`: hard rules (tappable only; free slot; colour exposed >= `min_exposed`,
+  or >= `last_slot_min_exposed` for the last free slot; enough sand left), then score =
+  exposed share + buckets/lock cells opened. Weights/thresholds in `config.yaml` `strategy:`.
+- `strategy.Analyzer`: frame -> screen type -> GameView -> LevelState -> Decision (+ tap point).
+
+## Phase 5 — next
+- `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all
+  safety checks), log every move (frame + decision) to `debug/`.

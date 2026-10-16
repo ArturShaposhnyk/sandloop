@@ -96,6 +96,19 @@ class VisionConfig:
 
 
 @dataclass
+class StrategyConfig:
+    conveyor_slots: int = 5               # "k/5" on the HUD
+    min_exposed: float = 0.03             # share of the picture's bottom band in the colour
+    last_slot_min_exposed: float = 0.25   # stricter, when the move takes the last free slot
+    sufficiency_margin: float = 0.5       # remaining sand >= margin * need * est. capacity
+    unknown_fill_need: float = 0.5        # conveyor bucket without a fill label: still needs
+    weight_exposed: float = 1.0           # score per exposed share of the colour
+    weight_open_bucket: float = 0.15      # score per bucket the tap connects to the exit
+    weight_open_lock: float = 0.05        # score per lock cell the tap connects to the exit
+    analyze_interval_s: float = 0.5       # overlay --dry-run: min seconds between analyses
+
+
+@dataclass
 class PathsConfig:
     dataset: str = "dataset"
     debug: str = "debug"
@@ -112,6 +125,7 @@ class Config:
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
     collect: CollectConfig = field(default_factory=CollectConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -177,6 +191,14 @@ def validate(cfg: Config) -> Config:
     if not v.template_scales or not all(isinstance(s, (int, float)) and s > 0
                                         for s in v.template_scales):
         raise ConfigError("vision.template_scales must be a non-empty list of numbers > 0")
+    st = cfg.strategy
+    if st.conveyor_slots < 1:
+        raise ConfigError("strategy.conveyor_slots must be >= 1")
+    for name in ("min_exposed", "last_slot_min_exposed", "unknown_fill_need"):
+        if not 0 <= getattr(st, name) <= 1:
+            raise ConfigError(f"strategy.{name} must be in [0, 1]")
+    if st.sufficiency_margin < 0 or st.analyze_interval_s < 0:
+        raise ConfigError("strategy.sufficiency_margin and analyze_interval_s must be >= 0")
     return cfg
 
 

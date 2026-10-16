@@ -2,6 +2,10 @@
 
     python -m tools.overlay            # iPhone screen area only
     python -m tools.overlay --window   # whole window, detected screen rect drawn in green
+    python -m tools.overlay --dry-run  # + read stable gameplay frames, draw the chosen move
+
+--dry-run never clicks (this tool does not import actions): it shows the grid detections and the
+greedy strategy's next move (cyan ring "TAP"; rejected candidates crossed out in orange).
 
 Keys (overlay window focused): q / Esc quit, s save frame to debug/.
 Global hotkeys from config.yaml (pause / quit) also work.
@@ -15,7 +19,8 @@ import sys
 import textwrap
 import time
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -66,6 +71,73 @@ def waiting_frame(msg: str, size: Tuple[int, int] = (480, 220)) -> np.ndarray:
     return img
 
 
+class DryRun:
+    """Runs ``analyze(frame)`` (strategy.Analyzer.analyze) on a worker thread for stable frames,
+    at most every ``interval_s``, and draws the latest result onto later frames. Never taps."""
+
+    def __init__(self, analyze, interval_s: float, stable_below: float,
+                 clock=time.monotonic) -> None:
+        self._analyze = analyze
+        self.interval_s = interval_s
+        self.stable_below = stable_below
+        self._clock = clock
+        self._pool = ThreadPoolExecutor(max_workers=1)
+        self._future: Optional[Future] = None
+        self._last = -float("inf")
+        self.result: Any = None          # strategy.Analysis
+        self.result_shape: Optional[Tuple[int, ...]] = None
+        self.result_time: Optional[float] = None
+        self.last_reason: Optional[str] = None
+
+    def feed(self, content: np.ndarray, diff: float) -> None:
+        if self._future is not None and self._future.done():
+            try:
+                res, shape = self._future.result()
+                self.result, self.result_shape, self.result_time = res, shape, self._clock()
+            except Exception as e:  # keep the live view running; show the error instead
+                self.result, self.result_shape = None, None
+                print(f"dry-run: analysis failed: {e!r}")
+            self._future = None
+            self._report()
+        now = self._clock()
+        if self._future is None and diff < self.stable_below and now - self._last >= self.interval_s:
+            self._last = now
+            frame = content.copy()
+            self._future = self._pool.submit(
+                lambda: (self._analyze(frame, log=lambda s: print("dry-run: " + s)), frame.shape))
+
+    def _report(self) -> None:
+        res = self.result
+        reason = None if res is None else (
+            res.decision.reason if res.decision is not None else f"screen: {res.screen}")
+        if reason != self.last_reason:
+            tap = res.tap_rel() if res is not None else None
+            print(f"dry-run: {reason}" + (f" at rel ({tap[0]:.3f}, {tap[1]:.3f}) — not clicked"
+                                          if tap else ""))
+            self.last_reason = reason
+
+    def status(self) -> str:
+        res = self.result
+        if res is None:
+            return "dry-run: analysing..." if self._future is not None else "dry-run: waiting for a stable frame"
+        age = self._clock() - (self.result_time or self._clock())
+        if res.decision is None:
+            return f"dry-run: {res.screen}{f' ({res.error})' if res.error else ''}"
+        return f"dry-run ({age:.1f}s ago): {res.decision.reason}"
+
+    def annotate(self, content: np.ndarray) -> np.ndarray:
+        """Draw the latest gameplay decision onto ``content`` (same-size frames only)."""
+        res = self.result
+        if res is None or res.decision is None or self.result_shape != content.shape:
+            return content
+        from strategy import draw_decision
+
+        return draw_decision(content, res.view, res.decision)
+
+    def close(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     import cv2
 
@@ -75,10 +147,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m tools.overlay", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--window", action="store_true", help="show the whole window + screen rect")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="analyse gameplay frames and draw the chosen move (never clicks)")
     ap.add_argument("--config", default=None)
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     permissions.require(screen=True, accessibility=False)
+    dry: Optional[DryRun] = None
+    if args.dry_run:
+        from strategy import Analyzer
+
+        dry = DryRun(Analyzer(cfg).analyze, cfg.strategy.analyze_interval_s,
+                     cfg.stability.threshold)
 
     grabber = Grabber(cfg.screen.capture)
     tracker = WindowTracker(cfg, grabber)
@@ -120,15 +200,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if waiting is not None:
                 print("window found")
                 waiting = None
-            diff = frame_change(prev, frame) if prev is not None and prev.shape == frame.shape else 0.0
+            diff = frame_change(prev, frame) if prev is not None and prev.shape == frame.shape else 1.0
             prev = frame
+            if dry is not None:
+                if args.window:   # analyse and annotate only the iPhone screen inside the window
+                    x0, y0 = int(round(origin[0])), int(round(origin[1]))
+                    cw, chh = geo.frame_size
+                    shown = frame.copy()
+                    sub = shown[y0:y0 + chh, x0:x0 + cw]
+                    if not hotkeys.paused.is_set():
+                        dry.feed(sub, diff)
+                    shown[y0:y0 + chh, x0:x0 + cw] = dry.annotate(sub)
+                else:
+                    if not hotkeys.paused.is_set():
+                        dry.feed(frame, diff)
+                    shown = dry.annotate(frame)
+            else:
+                shown = frame
             k = min(1.0, cfg.overlay.max_height / frame.shape[0])
-            view = cv2.resize(frame, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else frame.copy()
+            view = cv2.resize(shown, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else shown.copy()
             _text(view, f"FPS {fps.tick():5.1f}  diff {diff:.4f}  scale {geo.scale:.2f}", (10, 25))
             _text(view, f"screen {geo.content.w:.0f}x{geo.content.h:.0f}pt @ "
                         f"({geo.content.x:.0f},{geo.content.y:.0f})", (10, 50))
+            if dry is not None:
+                _text(view, dry.status()[:70], (10, 75))
             if hotkeys.paused.is_set():
-                _text(view, "PAUSED", (10, 75))
+                _text(view, "PAUSED", (10, 100))
             clear_bar(view)
             if mouse["pos"] is not None:
                 mx, my = mouse["pos"]
@@ -147,6 +244,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 cv2.imwrite(str(p), frame)
                 print(f"saved {p}")
     finally:
+        if dry is not None:
+            dry.close()
         cv2.destroyAllWindows()
         grabber.close()
     return 0
