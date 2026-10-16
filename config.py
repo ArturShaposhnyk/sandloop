@@ -58,6 +58,14 @@ class OverlayConfig:
 
 
 @dataclass
+class CollectConfig:
+    hotkey_snap: str = "ctrl+alt+s"
+    change_threshold: float = 0.03
+    min_interval_s: float = 1.0
+    poll_s: float = 0.2
+
+
+@dataclass
 class PathsConfig:
     dataset: str = "dataset"
     debug: str = "debug"
@@ -72,6 +80,7 @@ class Config:
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     stability: StabilityConfig = field(default_factory=StabilityConfig)
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
+    collect: CollectConfig = field(default_factory=CollectConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -123,6 +132,10 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("window.refresh_interval_s must be > 0")
     if not cfg.window.owner_name:
         raise ConfigError("window.owner_name must not be empty")
+    if not 0 < cfg.collect.change_threshold <= 1:
+        raise ConfigError("collect.change_threshold must be in (0, 1]")
+    if cfg.collect.min_interval_s < 0 or cfg.collect.poll_s <= 0:
+        raise ConfigError("collect.min_interval_s must be >= 0 and collect.poll_s > 0")
     return cfg
 
 

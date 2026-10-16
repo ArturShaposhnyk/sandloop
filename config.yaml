@@ -43,6 +43,12 @@ stability:
 overlay:
   max_height: 900            # overlay window height in pixels
 
+collect:                     # python -m tools.collect (dataset screenshots)
+  hotkey_snap: "ctrl+alt+s"  # save the current frame now
+  change_threshold: 0.03     # auto mode: min difference (0..1) from the last saved shot
+  min_interval_s: 1.0        # auto mode: min seconds between saved shots
+  poll_s: 0.2                # how often to grab a frame
+
 paths:
   dataset: dataset
   debug: debug

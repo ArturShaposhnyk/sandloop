@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from capture import Rect
 
@@ -136,15 +136,18 @@ def hotkey_pressed(combo: Tuple[int, int], key_down: Callable[[int], bool], flag
 class Hotkeys:
     """Polls the keyboard state in a background thread (no event tap needed).
 
-    Pause hotkey toggles ``paused``; quit hotkey sets ``quit``.
+    Pause hotkey toggles ``paused``; quit hotkey sets ``quit``. ``extra`` maps more hotkey specs
+    to callbacks, called once per press (on key down) from the polling thread.
     """
 
-    def __init__(self, pause_spec: str, quit_spec: str, poll_s: float = 0.05) -> None:
+    def __init__(self, pause_spec: str, quit_spec: str, poll_s: float = 0.05,
+                 extra: Optional[Dict[str, Callable[[], None]]] = None) -> None:
         self.pause_combo = parse_hotkey(pause_spec)
         self.quit_combo = parse_hotkey(quit_spec)
         self.pause_spec, self.quit_spec = pause_spec, quit_spec
         self.paused = threading.Event()
         self.quit = threading.Event()
+        self._extra = [(parse_hotkey(spec), cb) for spec, cb in (extra or {}).items()]
         self._poll_s = poll_s
         self._thread: Optional[threading.Thread] = None
 
@@ -159,6 +162,7 @@ class Hotkeys:
         state = Quartz.kCGEventSourceStateCombinedSessionState
         key_down = lambda code: bool(Quartz.CGEventSourceKeyState(state, code))  # noqa: E731
         was_pause = False
+        was_extra = [False] * len(self._extra)
         while not self.quit.is_set():
             flags = int(Quartz.CGEventSourceFlagsState(state))
             if hotkey_pressed(self.quit_combo, key_down, flags):
@@ -173,4 +177,9 @@ class Hotkeys:
                     self.paused.set()
                     print("[hotkey] paused")
             was_pause = is_pause
+            for i, (combo, cb) in enumerate(self._extra):
+                down = hotkey_pressed(combo, key_down, flags)
+                if down and not was_extra[i]:
+                    cb()
+                was_extra[i] = down
             time.sleep(self._poll_s)
