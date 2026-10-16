@@ -1,0 +1,48 @@
+# Sand Loop bot configuration.
+# All game coordinates are relative (0..1) to the iPhone screen area inside the mirroring window.
+
+window:
+  # Owner (app) name of the iPhone Mirroring window. It may be localized —
+  # run `python -m capture list` and copy the exact owner name from there.
+  owner_name: "iPhone Mirroring"
+  title_contains: ""          # optional extra filter on the window title
+  refresh_interval_s: 2.0     # re-resolve window bounds this often (the window can move)
+  # iPhone screen area inside the window: "auto" (detected from the frame) or a manual
+  # override [x, y, w, h] as fractions of the window, e.g. [0.0, 0.035, 1.0, 0.965].
+  content_rect: auto
+  content_detect:
+    border_tolerance: 18      # max color distance from the window border color to count as chrome
+    min_aspect: 0.40          # accepted width/height range of the detected phone screen
+    max_aspect: 0.56
+
+capture:
+  backend: mss                # mss (screen region) | quartz (window image, works when occluded)
+
+stability:
+  threshold: 2.0              # mean abs grayscale diff (0..255) between frames to call it "stable"
+  consecutive: 2              # this many stable diffs in a row
+  timeout_s: 3.0              # give up waiting and use the latest frame
+  poll_s: 0.08
+  downscale_width: 160        # frames are downscaled before diffing
+
+click:
+  backend: quartz             # quartz (CGEvent) | pyautogui
+  press_s: 0.05               # pause between mouseDown and mouseUp
+  activate_before_click: true # bring iPhone Mirroring to front if it is not frontmost
+  activate_settle_s: 0.3
+
+safety:
+  dry_run: false              # never click; only log/draw decisions
+  max_taps_per_sec: 3.0
+  failsafe_corner_pt: 5       # cursor within this many points of a screen corner = stop
+  hotkey_pause: "<ctrl>+<alt>+p"
+  hotkey_quit: "<ctrl>+<alt>+q"
+
+overlay:
+  max_height: 900             # overlay window height in screen pixels
+  grid_step: 0.1              # relative grid drawn over the frame (0 = off)
+
+paths:
+  dataset: dataset
+  debug: debug
+  palette: dataset/palette.json

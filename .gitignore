@@ -1,0 +1,19 @@
+.claude-flow/
+.swarm/
+ruvector.db
+verification-history.jsonl
+verification.md.json
+witness-fixes.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Runtime output (screenshots are personal data; keep them local)
+debug/*
+!debug/.gitkeep
+dataset/*
+!dataset/.gitkeep
