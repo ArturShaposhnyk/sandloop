@@ -82,6 +82,33 @@
 - Prefer moves that unlock face-down buckets, ice blocks, and curtains.
 - Avoid deadlock: keep at least one conveyor slot usable.
 
+## Unlock value and paths (user, 2026-10-16; `planner.py`, weights in `config.yaml` `strategy:`)
+- Face-down buckets show their colour, so what a move opens is plannable. The bot stays
+  greedy + 1 tap of lookahead, plus a bonus for the first step of a planned path.
+- **Usefulness of a colour** = max(share in the contact layer, `lower_weight` x share in the
+  lower part of the picture (`vision.lower_band`)) - belt demand (`belt_demand_exposure` x what
+  the same-colour belt buckets still need); 0 if not enough of its sand remains. Useful =
+  `useful_min` and up. "Opens 2 buckets" is not enough: "opens 2 darkred buckets while darkred
+  is at the bottom" is what scores.
+- **Unlock value of a tap**: every bucket the tap connects to the exit (path rule; also after a
+  key flies) is scored by its colour's usefulness in the state after the tap. Buckets under a
+  curtain / lock / ice have no known colour: only the existing per-cell credits apply.
+- **Path planning**: targets = useful buckets the path rule does not connect yet, and keys whose
+  colour has exactly one lock (value `path_key_value` per bucket under it). For each, the
+  cheapest set of buckets to remove that connects it to the exit (Dijkstra; empty cells cost 0,
+  a bucket costs 1 + up to `path_cost_low_exposure` when its colour is barely exposed; locks,
+  unknown cells and buckets not safe to release now are impassable).
+- **Never a path that could deadlock the belt**: the path is replayed tap by tap and every step
+  must pass the release rules in the state it would be tapped in (free slot, last-slot
+  threshold, exposure minus the growing belt demand, enough sand, no tower stage short of sand).
+  Conservative: it assumes no belt bucket fills up meanwhile.
+- Best safe path: highest rank = value - `path_step_cost` x cost (must be > 0); its first step
+  gets `weight_path_bonus` x rank. One-step paths are the tap's own unlock value (not planned).
+  Plans are recomputed every frame (no commitment to a path yet).
+- Overlay / report text: `r2c3 darkred -> opens r3c3 cream, r4c2 darkred (useful)`,
+  `path to r5c1 darkred: step 1/3`, `path to key yellow: step 1/2` (rejected paths with the
+  failing step and why).
+
 ## Unknown colours
 - New levels bring new bucket / sand colours (L183: green and dark green grass). A bucket colour
   that matches nothing in the palette makes the cell UNKNOWN (never tapped); sand colours that

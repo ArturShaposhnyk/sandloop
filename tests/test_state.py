@@ -8,7 +8,8 @@ from state import ConveyorBucket, LevelState, Lock
 
 
 def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optional[Dict] = None,
-               exposed: Optional[Dict] = None, locks=()) -> LevelState:
+               exposed: Optional[Dict] = None, locks=(), lower: Optional[Dict] = None
+               ) -> LevelState:
     """Rows of space-separated cells: '.' empty, 'x' no cell, 'ice3' lock, 'cur2' curtain cell,
     'red' face-up bucket, 'red_' face-down bucket, 'red/blue' tower (top/body),
     'lock:red' / 'key:red' lock icon / key."""
@@ -41,7 +42,8 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
             if cell is not None and cell.kind is Kind.LOCK and cell.region is None:
                 locks.append(Lock(cell.lock, cell.unlock, cell.counter, ((cell.row, cell.col),),
                                   cell.color))
-    st = LevelState(grid, exits, [], [], locks, k, 5, list(conveyor), sand or {}, exposed or {})
+    st = LevelState(grid, exits, [], [], locks, k, 5, list(conveyor), sand or {}, exposed or {},
+                    lower=lower or {})
     st.tappable = st.playable()
     return st
 

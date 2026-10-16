@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 485 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 494 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -179,6 +179,20 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   tower still dropping onto the belt (031) has its base below the zone and reads one-colour
   for that frame. Only the next stage is visible (deeper stages unknown).
 - Open (phase 5): remember the stages of towers the bot tapped itself, to cover the belt view.
+
+## Unlock value + path planning (2026-10-16) — done, awaiting OK
+- User request: score what a move opens by colour usefulness, plan paths to useful hidden
+  buckets / keys (e.g. L183: open the way to a key). Rules in GAME_RULES.md "Unlock value and
+  paths"; code `planner.py` (usefulness, `opened_value`, Dijkstra `shortest_path`, `replay`
+  safety check, `plan`); `strategy.evaluate` = the hard rules (shared with the path check),
+  `choose` adds the unlock value and the path bonus; `Decision.plans` (best first, rejected
+  with reason) in the overlay text, `.txt` report ("paths:") and `python -m strategy`.
+- Vision: `GameView.lower` / `LevelState.lower` = sand share per colour in the lower
+  `vision.lower_band` (0.3) of the picture zone.
+- `weight_open_bucket` 0.15 -> 0.05 (colour worth now comes from `weight_unlock_value`); all
+  saved-shot decisions unchanged. Tests `tests/test_planner.py` (greedy-wrong / path-right grid,
+  deadlock and starving-step rejections, key target).
+- Not live-tested yet. Weights are first guesses.
 
 ## Phase 5 — next
 - `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all

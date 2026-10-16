@@ -82,6 +82,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
   sand_max_dist: 18.0
   slot_min_cover: 0.55       # conveyor: object share of a bucket's run (end posts ~0.45)
   bottom_band: 0.06          # fallback "exposed" band (share of the picture) if no bottom edge found
+  lower_band: 0.3            # "lower part" of the picture zone: sand there reaches the belt soon (strategy: unlock value)
   # "exposed" = the contact layer: the lowest rows of sand right above the picture's bottom edge
   contact_search: 0.02       # share of screen height searched around picture[3] for that edge
   contact_layer: 0.008       # layer thickness, share of screen height (~10 px at 1302) sand
@@ -99,7 +100,7 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   sufficiency_margin: 0.5
   unknown_fill_need: 0.5     # conveyor bucket with no fill label: assumed share still to fill
   weight_exposed: 1.0        # score per exposed share of the colour
-  weight_open_bucket: 0.15   # score per bucket the tap connects to the exit (lookahead)
+  weight_open_bucket: 0.05   # score per bucket the tap connects to the exit, any colour (the colour's worth: weight_unlock_value)
   weight_open_lock: 0.05     # score per lock cell (ice, curtain) the tap connects to the exit
   weight_key_unlock: 0.15    # score per bucket under a lock that the tap opens (its key gets connected and flies)
   # a tower takes one belt slot until all its stages are full: penalty per later stage whose

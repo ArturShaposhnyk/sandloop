@@ -215,6 +215,7 @@ class GameView:
     slots: List[Slot] = field(default_factory=list)
     sand: Dict[str, float] = field(default_factory=dict)     # share of picture area per colour
     exposed: Dict[str, float] = field(default_factory=dict)  # share of the bottom band
+    lower: Dict[str, float] = field(default_factory=dict)    # share of the picture's lower part
     frame_size: Tuple[int, int] = (0, 0)       # w, h in pixels
     unknown_colours: List[UnknownColour] = field(default_factory=list)
 
@@ -359,9 +360,10 @@ def _belt_base(bgr: np.ndarray, lab: np.ndarray, m: np.ndarray, color: Optional[
 
 
 def read_sand(img: np.ndarray, palette: Palette, v: VisionConfig
-              ) -> Tuple[Dict[str, float], Dict[str, float]]:
-    """Share of the picture covered by each sand colour, and the share of each colour in the
-    contact layer (sand the belt can collect right now, see ``contact_layer``)."""
+              ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+    """Share of the picture covered by each sand colour, the share of each colour in the
+    contact layer (sand the belt can collect right now, see ``contact_layer``) and in the lower
+    ``lower_band`` of the picture zone (sand that will reach the belt soon)."""
     pic = crop_rel(img, v.picture)
     lab = bgr_to_lab(pic)
     idx, names = palette.classify_pixels(lab, "sand", v.sand_max_dist)
@@ -373,8 +375,11 @@ def read_sand(img: np.ndarray, palette: Palette, v: VisionConfig
     if exposed is None:   # bottom edge not found: fall back to the zone's bottom band
         band = idx[int((1 - v.bottom_band) * idx.shape[0]):]
         exposed = {n: float((band == i).sum()) / max(1, band.size) for i, n in enumerate(names)}
+    low = idx[int((1 - v.lower_band) * idx.shape[0]):]
+    lower = {n: float((low == i).sum()) / max(1, low.size) for i, n in enumerate(names)}
     return ({n: f for n, f in sand.items() if f > 0.002},
-            {n: f for n, f in exposed.items() if f > 0.01})
+            {n: f for n, f in exposed.items() if f > 0.01},
+            {n: f for n, f in lower.items() if f > 0.01})
 
 
 def contact_layer(img: np.ndarray, palette: Palette, v: VisionConfig
@@ -426,7 +431,7 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
                     f"{'face-up' if cell.face_up else 'face-down'} but the path rule says "
                     f"{'playable' if playable[r][c] else 'closed'} — not tapping it")
     k, slots = read_conveyor(img, palette, v, reader)
-    sand, exposed = read_sand(img, palette, v) if palette.sand else ({}, {})
+    sand, exposed, lower = read_sand(img, palette, v) if palette.sand else ({}, {}, {})
     unknown = [UnknownColour(cell.reason.split()[0] if cell.reason.startswith(("lock", "key"))
                              else "bucket", cell.lab, cell=(cell.row, cell.col))
                for row in grid for cell in row
@@ -435,7 +440,7 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
     for u in unknown:
         log(f"warning: {u.describe()} — not in the palette (dataset/unknown_colours/, "
             f"python -m tools.add_colour)")
-    return GameView(lat, grid, regions, playable, disagree, k, slots, sand, exposed,
+    return GameView(lat, grid, regions, playable, disagree, k, slots, sand, exposed, lower,
                     (img.shape[1], img.shape[0]), unknown)
 
 
@@ -504,6 +509,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                          sorted(gv.sand.items(), key=lambda kv: -kv[1])))
         print("  exposed : " + ", ".join(f"{k} {v:.0%}" for k, v in
                                          sorted(gv.exposed.items(), key=lambda kv: -kv[1])))
+        print("  lower   : " + ", ".join(f"{k} {v:.0%}" for k, v in
+                                         sorted(gv.lower.items(), key=lambda kv: -kv[1])))
         p = out_dir / f"vision-{Path(path).stem}.png"
         cv2.imwrite(str(p), draw(img, gv))
         print(f"  saved   : {p}")

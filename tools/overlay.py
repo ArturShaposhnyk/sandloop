@@ -205,7 +205,9 @@ def save_report(out_dir: Path, raw: np.ndarray, dry: Optional[DryRun] = None,
             lines += ["grid:"] + ["  " + row for row in res.view.labels()]
             lines += res.state.summary()
             lines += ["candidates:"] + ["  " + c.describe() for c in res.decision.candidates]
-            lines += [f"sand: {res.state.sand}", f"exposed: {res.state.exposed}"]
+            lines += ["paths:"] + ["  " + p.describe() for p in res.decision.plans]
+            lines += [f"sand: {res.state.sand}", f"exposed: {res.state.exposed}",
+                      f"lower: {res.state.lower}"]
         elif res is not None:
             lines.append(f"screen: {res.screen}" + (f" ({res.error})" if res.error else ""))
         txt = Path(f"{base}.txt")

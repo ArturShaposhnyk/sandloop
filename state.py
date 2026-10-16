@@ -73,6 +73,7 @@ class LevelState:
     belt_stalled: Dict[str, float] = field(default_factory=dict)  # colour -> s without fill growth
     unlocked: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)
     # ^ after_tap: (colour, lock cells) opened by keys that flew because of the simulated tap
+    lower: Dict[str, float] = field(default_factory=dict)     # share of the picture's lower part
 
     # -- construction ---------------------------------------------------------------------
 
@@ -97,7 +98,7 @@ class LevelState:
             for s in gv.slots if not s.uncertain]
         return cls(grid, gv.lattice.exits(), list(gv.tappable()), list(gv.disagreements), locks,
                    gv.counter, conveyor_slots, conveyor, dict(gv.sand), dict(gv.exposed),
-                   unknown_fill_need, dict(belt_stalled or {}))
+                   unknown_fill_need, dict(belt_stalled or {}), lower=dict(gv.lower))
 
     # -- grid -----------------------------------------------------------------------------
 

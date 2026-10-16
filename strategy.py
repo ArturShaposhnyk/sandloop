@@ -13,10 +13,12 @@ Hard rules, a candidate is rejected if any fails:
     keep a slot usable, avoid deadlock);
   * enough of its colour remains to fill it: sand >= margin x (conveyor need + 1) x capacity.
 Score of the rest: avail + buckets / lock cells the tap connects to the exit (one-tap
-lookahead) + buckets under a lock that a released key opens - a penalty per later tower stage
-whose colour has not enough sand left (a tower takes one belt slot until ALL its stages are
-full, so a starving stage blocks that slot) + a bonus for a colour not on the belt yet. Ties: colour not on the belt, then the
-front row, then the left.
+lookahead) + the unlock value (usefulness of the opened buckets' colours, planner.py) + buckets
+under a lock that a released key opens - a penalty per later tower stage whose colour has not
+enough sand left (a tower takes one belt slot until ALL its stages are full, so a starving stage
+blocks that slot) + a bonus for a colour not on the belt yet + the path bonus for the first step
+of the best safe path to a useful hidden bucket or a key (planner.plan). Ties: colour not on
+the belt, then the front row, then the left.
 
     python -m strategy dataset/screens/*.png   # decisions on saved shots -> debug/strategy-*.png
 """
@@ -27,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from config import StrategyConfig
+from planner import Opened, Plan, opened_value, plan
 from state import BeltTracker, LevelState, Pos
 
 if TYPE_CHECKING:
@@ -51,6 +54,13 @@ class Candidate:
     #   (colour, cells of the lock they open)
     stages: List[str] = field(default_factory=list)        # tower: later stage colours
     short_stages: List[str] = field(default_factory=list)  # ... without enough sand left
+    opened: List[Opened] = field(default_factory=list)     # opens, with colour usefulness
+    plan: Optional[Plan] = None                # first step of the best path plan
+    path_bonus: float = 0.0
+
+    @property
+    def unlock_value(self) -> float:
+        return sum(o.value for o in self.opened if o.useful)
 
     @property
     def unlocked_buckets(self) -> int:
@@ -70,14 +80,18 @@ class Candidate:
         r, c = self.pos
         if self.rejected:
             return f"r{r}c{c} {self.color}: no - {self.rejected} [{self.numbers()}]"
-        extra = f", opens {len(self.opens)} bucket(s)" if self.opens else ""
-        extra += f", {len(self.opens_locks)} lock cell(s)" if self.opens_locks else ""
+        head = f"r{r}c{c} {self.color}"
+        if self.opened:
+            head += " -> opens " + ", ".join(o.describe() for o in self.opened)
+        extra = f", {len(self.opens_locks)} lock cell(s)" if self.opens_locks else ""
         extra += "".join(f", opens lock {col} with {len(cells)} bucket(s)"
                          for col, cells in self.unlocks)
         if self.stages:
             extra += ", tower then " + "/".join(
                 f"{s}{' (sand short)' if s in self.short_stages else ''}" for s in self.stages)
-        return f"r{r}c{c} {self.color}: score {self.score:.2f}{extra} [{self.numbers()}]"
+        if self.plan is not None:
+            extra += f", {self.plan.describe(1)} (+{self.path_bonus:.2f})"
+        return f"{head}: score {self.score:.2f}{extra} [{self.numbers()}]"
 
 
 @dataclass
@@ -85,6 +99,56 @@ class Decision:
     move: Optional[Candidate]                  # None = wait
     reason: str
     candidates: List[Candidate] = field(default_factory=list)
+    plans: List[Plan] = field(default_factory=list)   # best first, rejected ones last
+
+
+def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig) -> Candidate:
+    """The hard rules for releasing the bucket at ``pos`` now (``rejected`` = the first that
+    fails; tappability is not checked here) and its tower stages short of sand."""
+    cell = state.cell(pos)
+    cand = Candidate(pos, cell.color or "?")
+    free = state.free_slots
+    cap = state.capacity_estimate()
+    cand.exposed = state.exposed.get(cand.color, 0.0)
+    cand.belt_demand = state.conveyor_need(cand.color) * sc.belt_demand_exposure
+    cand.on_belt = state.on_belt(cand.color)
+    stalled = state.belt_stalled.get(cand.color)
+    cand.stalled = stalled if stalled is not None and stalled >= sc.stall_s else None
+    min_exp = sc.last_slot_min_exposed if free == 1 else sc.min_exposed
+    need = (state.conveyor_need(cand.color) + 1) * cap * sc.sufficiency_margin if cap else 0.0
+    have = state.sand.get(cand.color, 0.0)
+    if free is None:
+        cand.rejected = "conveyor counter not read"
+    elif free == 0:
+        cand.rejected = "conveyor full"
+    elif cand.stalled is not None:
+        cand.rejected = f"{cand.color} on the belt is not filling - sand not reachable now"
+    elif cand.avail < min_exp:
+        cand.rejected = (f"not enough exposed sand (avail {cand.avail:.0%} < {min_exp:.0%}"
+                         f"{', last slot' if free == 1 else ''})")
+    elif have < need:
+        cand.rejected = f"not enough sand ({have:.1%} < {need:.1%})"
+    cand.stages = [cell.body] if cell.body else []
+    if cap:   # tower: the later stages need their sand too (after the top's, in order)
+        for s in cand.stages:
+            stage_need = ((state.conveyor_need(s) + 1 + (s == cand.color))
+                          * cap * sc.sufficiency_margin)
+            if state.sand.get(s, 0.0) < stage_need:
+                cand.short_stages.append(s)
+    return cand
+
+
+def path_check(sc: StrategyConfig):
+    """planner.Check: a bucket on a planned path must pass the hard rules AND have no tower
+    stage short of sand (it would block its belt slot)."""
+    def check(state: LevelState, pos: Pos) -> Optional[str]:
+        cand = evaluate(state, pos, sc)
+        if cand.rejected:
+            return cand.rejected
+        if cand.short_stages:
+            return f"tower stage {'/'.join(cand.short_stages)} short of sand"
+        return None
+    return check
 
 
 def choose(state: LevelState, sc: StrategyConfig) -> Decision:
@@ -92,45 +156,30 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
     if free is None:
         return Decision(None, "wait: conveyor counter not read")
     cands: List[Candidate] = []
-    cap = state.capacity_estimate()
     for pos in state.tappable:
-        cell = state.cell(pos)
-        cand = Candidate(pos, cell.color or "?")
+        cand = evaluate(state, pos, sc)
         cands.append(cand)
-        cand.exposed = state.exposed.get(cand.color, 0.0)
-        cand.belt_demand = state.conveyor_need(cand.color) * sc.belt_demand_exposure
-        cand.on_belt = state.on_belt(cand.color)
-        stalled = state.belt_stalled.get(cand.color)
-        cand.stalled = stalled if stalled is not None and stalled >= sc.stall_s else None
-        min_exp = sc.last_slot_min_exposed if free == 1 else sc.min_exposed
-        need = (state.conveyor_need(cand.color) + 1) * cap * sc.sufficiency_margin if cap else 0.0
-        have = state.sand.get(cand.color, 0.0)
-        if free == 0:
-            cand.rejected = "conveyor full"
-        elif cand.stalled is not None:
-            cand.rejected = f"{cand.color} on the belt is not filling - sand not reachable now"
-        elif cand.avail < min_exp:
-            cand.rejected = (f"not enough exposed sand (avail {cand.avail:.0%} < {min_exp:.0%}"
-                             f"{', last slot' if free == 1 else ''})")
-        elif have < need:
-            cand.rejected = f"not enough sand ({have:.1%} < {need:.1%})"
         if cand.rejected:
             continue
+        after = state.after_tap(pos)
         cand.opens, cand.opens_locks = state.opened_by(pos)
-        cand.unlocks = state.after_tap(pos).unlocked
-        cand.stages = [cell.body] if cell.body else []
-        if cap:   # tower: the later stages need their sand too (after the top's, in order)
-            for s in cand.stages:
-                stage_need = ((state.conveyor_need(s) + 1 + (s == cand.color))
-                              * cap * sc.sufficiency_margin)
-                if state.sand.get(s, 0.0) < stage_need:
-                    cand.short_stages.append(s)
+        cand.opened = opened_value(after, cand.opens, sc)
+        cand.unlocks = after.unlocked
         cand.score = (sc.weight_exposed * cand.avail + sc.weight_open_bucket * len(cand.opens)
+                      + sc.weight_unlock_value * cand.unlock_value
                       + sc.weight_open_lock * len(cand.opens_locks)
                       + sc.weight_key_unlock * cand.unlocked_buckets
                       - sc.weight_tower_short_stage * len(cand.short_stages)
                       + (0.0 if cand.on_belt else sc.weight_new_colour))
     allowed = [c for c in cands if c.rejected is None]
+    plans = plan(state, path_check(sc), sc) if allowed else []
+    best_plan = plans[0] if plans and plans[0].rejected is None else None
+    if best_plan is not None:
+        for cand in allowed:
+            if cand.pos == best_plan.steps[0]:
+                cand.plan = best_plan
+                cand.path_bonus = sc.weight_path_bonus * best_plan.rank
+                cand.score += cand.path_bonus
     if not allowed:
         if free == 0:
             why = "conveyor full"
@@ -141,7 +190,10 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
         return Decision(None, f"wait: {why}", cands)
     best = max(allowed, key=lambda c: (round(c.score, 6), not c.on_belt, -c.pos[0], -c.pos[1]))
     r, c = best.pos
-    return Decision(best, f"tap r{r}c{c} {best.color} (score {best.score:.2f})", cands)
+    reason = f"tap r{r}c{c} {best.color} (score {best.score:.2f})"
+    if best.plan is not None:
+        reason += f", {best.plan.describe(1, detail=False)}"
+    return Decision(best, reason, cands, plans)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -175,7 +227,8 @@ def draw_decision(img: "np.ndarray", gv: "GameView", decision: Decision) -> "np.
             bx0, by0, bx1, by1 = (int(round(a)) for a in lat.rect(*p))
             cv2.rectangle(out, (bx0 + 4, by0 + 4), (bx1 - 4, by1 - 4), (255, 255, 0), 1)
     unknown = [u.describe().upper() for u in gv.unknown_colours]
-    lines = [decision.reason] + unknown + [c.describe() for c in decision.candidates][:5]
+    lines = ([decision.reason] + unknown + [c.describe() for c in decision.candidates][:5]
+             + [p.describe() for p in decision.plans][:3])
     y0 = int(lat.y0 + lat.rows * lat.ch) + 6
     y1 = min(h, y0 + 20 * len(lines) + 6)
     out[y0:y1] = (out[y0:y1] * 0.25).astype(out.dtype)
@@ -377,6 +430,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("  " + line)
         for cand in res.decision.candidates:
             print("    " + cand.describe())
+        for p in res.decision.plans:
+            print("    " + p.describe())
         tap = res.tap_rel()
         print(f"  => {res.decision.reason}"
               + (f"  at rel ({tap[0]:.3f}, {tap[1]:.3f})" if tap else ""))

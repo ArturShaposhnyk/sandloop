@@ -96,6 +96,7 @@ class VisionConfig:
     sand_max_dist: float = 18.0
     slot_min_cover: float = 0.55      # conveyor: object share of a bucket's run (posts ~0.45)
     bottom_band: float = 0.06         # fallback "exposed" band if the contact layer isn't found
+    lower_band: float = 0.3           # "lower part" of the picture zone (sand reaching soon)
     contact_search: float = 0.02      # share of screen height searched for the picture's bottom edge
     contact_layer: float = 0.008      # contact layer thickness (share of screen height)
     canonical_width: int = 301        # frames are resized to this width for template matching
@@ -114,11 +115,20 @@ class StrategyConfig:
     sufficiency_margin: float = 0.5       # remaining sand >= margin * need * est. capacity
     unknown_fill_need: float = 0.5        # conveyor bucket without a fill label: still needs
     weight_exposed: float = 1.0           # score per exposed share of the colour
-    weight_open_bucket: float = 0.15      # score per bucket the tap connects to the exit
+    weight_open_bucket: float = 0.05      # score per bucket the tap connects (any colour)
     weight_open_lock: float = 0.05        # score per lock cell the tap connects to the exit
     weight_key_unlock: float = 0.15       # score per bucket under a lock a released key opens
     weight_tower_short_stage: float = 0.5  # penalty per later tower stage short of sand
     weight_new_colour: float = 0.05       # bonus for a colour not on the belt yet
+    # unlock value / path planning (planner.py)
+    lower_weight: float = 0.5             # usefulness counts the lower-part share x this
+    useful_min: float = 0.05              # usefulness from which a colour counts as useful
+    weight_unlock_value: float = 1.0      # score per usefulness of every useful opened bucket
+    path_key_value: float = 0.3           # target value of a key, per bucket under its lock
+    path_good_avail: float = 0.3          # path step costs 1 + extra below this avail
+    path_cost_low_exposure: float = 1.0   # ... up to this extra (avail 0)
+    path_step_cost: float = 0.02          # plan rank = target value - this x path cost
+    weight_path_bonus: float = 1.0        # bonus for the first step = this x plan rank
     belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
     stall_s: float = 4.0                  # belt colour without fill growth this long = stalled
     analyze_interval_s: float = 0.5       # overlay --dry-run: min seconds between analyses
@@ -219,6 +229,10 @@ def validate(cfg: Config) -> Config:
     for name in ("min_exposed", "last_slot_min_exposed", "unknown_fill_need"):
         if not 0 <= getattr(st, name) <= 1:
             raise ConfigError(f"strategy.{name} must be in [0, 1]")
+    if min(st.lower_weight, st.useful_min, st.weight_unlock_value, st.path_key_value,
+           st.path_good_avail, st.path_cost_low_exposure, st.path_step_cost,
+           st.weight_path_bonus) < 0:
+        raise ConfigError("strategy: unlock value / path weights must be >= 0")
     if min(st.sufficiency_margin, st.analyze_interval_s, st.belt_demand_exposure, st.stall_s) < 0:
         raise ConfigError("strategy.sufficiency_margin, analyze_interval_s, "
                           "belt_demand_exposure and stall_s must be >= 0")
