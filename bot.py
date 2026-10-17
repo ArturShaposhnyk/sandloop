@@ -1,0 +1,383 @@
+"""Sand Loop bot, phase 5: plays ONE level by itself with real taps.
+
+    python -m bot --dry-run            # full loop, logs every decision, never clicks
+    python -m bot --max-taps 5         # real taps, stop after 5 (first live test)
+    python -m bot                      # real taps until the level ends
+
+Loop: capture -> screen type -> (gameplay) analyse -> 2-frame confirmed decision -> tap(s)
+via actions.Tapper. Safety (never remove): cursor in a screen corner = stop (checked every
+loop and before every tap), ctrl+alt+p pause / ctrl+alt+q quit (config.yaml safety:), taps-per-
+second limit, taps only inside the detected iPhone screen rect, geometry re-checked right before
+tapping (window moved / resized since the analysed frame -> no tap), --dry-run.
+
+After a tap: the decision gate restarts, the tapped cells are remembered (no re-tap while the
+bucket flies; towers keep their stages for the belt), and only the grid + k/5 counter must
+settle (sand never stops moving). Tempo (tempo.py): up to bot.burst_max buckets back to back
+from one confirmed decision; colours being covered get a bonus. Non-gameplay screens: stop and
+log (phase 6 handles them). Every run is logged to debug/runs/<stamp>/ (runlog.py); post-mortem:
+``python -m tools.analyze_run``.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+from cells import Kind
+from config import Config, load_config
+from runlog import RunLog, analysis_record
+from tempo import ExposureTrend, ReleaseLedger, burst, prioritize
+
+RESULTS = {"level_complete": "win", "fail": "fail", "revive": "revive"}
+
+
+class Stop(Exception):
+    def __init__(self, result: str, reason: str) -> None:
+        super().__init__(reason)
+        self.result, self.reason = result, reason
+
+
+def zone_change(a: np.ndarray, b: np.ndarray, zones: Sequence[Sequence[float]]) -> float:
+    """Largest frame change (capture.frame_change) over the given relative zones."""
+    from capture import frame_change
+    from zones import crop_rel
+
+    if a.shape != b.shape:
+        return 1.0
+    return max((frame_change(crop_rel(a, z), crop_rel(b, z)) for z in zones), default=0.0)
+
+
+class Bot:
+    """``grab()`` -> iPhone screen frame (raises capture errors), ``geometry(force)`` ->
+    capture.ScreenGeometry, ``tapper.tap(rx, ry)``, ``controls`` has ``paused`` / ``quit``
+    events (safety.Hotkeys), ``failsafe.check()`` raises safety.FailsafeTriggered."""
+
+    def __init__(self, cfg: Config, analyzer: Any, tapper: Any, grab: Callable[[], np.ndarray],
+                 geometry: Callable[..., Any], log: RunLog, controls: Any, failsafe: Any,
+                 dry_run: bool = False, max_taps: Optional[int] = None,
+                 clock: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], None] = time.sleep) -> None:
+        from strategy import DecisionGate
+
+        self.cfg, self.bc = cfg, cfg.bot
+        self.analyzer, self.tapper, self.grab, self.geometry = analyzer, tapper, grab, geometry
+        self.log, self.controls, self.failsafe = log, controls, failsafe
+        self.dry_run, self.max_taps = dry_run, max_taps
+        self.clock, self.sleep = clock, sleep
+        self.gate = DecisionGate(cfg.strategy.confirm_frames)
+        self.trend = ExposureTrend(self.bc.cover_window_s, self.bc.cover_min_drop)
+        self.ledger = ReleaseLedger(self.bc.retap_guard_s)
+        self.zones = [getattr(cfg.vision, z) for z in self.bc.settle_zones]
+        self.frame_no = 0
+        self.taps = 0
+        self.prev_frame: Optional[np.ndarray] = None
+        self.prev_game: Any = None            # last gameplay Analysis with a state
+        self.settle_from: Optional[float] = None
+        self.pending: Optional[Tuple[List[Tuple[Tuple[int, int], str]], Optional[int]]] = None
+        self.no_effect = 0
+        self.non_game = 0
+        self.seen_gameplay = False
+        self.last_sand: Optional[float] = None
+        self.last_reason: Optional[str] = None
+        self.lost_since: Optional[float] = None
+        self.was_paused = False
+
+    # -- main loop --------------------------------------------------------------------------
+
+    def run(self) -> str:
+        from safety import FailsafeTriggered
+
+        start = self.clock()
+        result, reason = "stopped", "?"
+        try:
+            while True:
+                self._checks(start)
+                frame = self._capture()
+                if frame is None or self._settling(frame):
+                    continue
+                self._analyse(frame)
+        except Stop as s:
+            result, reason = s.result, s.reason
+        except FailsafeTriggered as e:
+            result, reason = "stopped", f"failsafe: {e}"
+        except KeyboardInterrupt:
+            result, reason = "stopped", "Ctrl+C"
+        self.log.log(f"RESULT: {result} - {reason} ({self.taps} taps)")
+        self.log.result(result, reason, taps=self.taps, frames=self.frame_no,
+                        dry_run=self.dry_run, last_sand_total=self.last_sand,
+                        released=list(self.ledger.describe()))
+        return result
+
+    def _checks(self, start: float) -> None:
+        if self.controls.quit.is_set():
+            raise Stop("stopped", "quit hotkey")
+        self.failsafe.check()
+        if self.clock() - start > self.bc.max_run_s:
+            raise Stop("stopped", f"max_run_s {self.bc.max_run_s:.0f}s reached")
+        if self.max_taps is not None and self.taps >= self.max_taps and self.pending is None:
+            raise Stop("stopped", f"--max-taps {self.max_taps} reached")
+        while self.controls.paused.is_set() and not self.controls.quit.is_set():
+            if not self.was_paused:
+                self.log.log("paused (hotkey again to resume)")
+                self.log.event("log", msg="paused")
+                self.was_paused = True
+            self.gate.reset()
+            self.prev_game = None
+            self.failsafe.check()
+            self.sleep(0.1)
+        if self.was_paused:
+            self.log.log("resumed")
+            self.was_paused = False
+
+    def _capture(self) -> Optional[np.ndarray]:
+        from capture import CaptureError, WindowNotFound
+
+        self.sleep(self.bc.loop_interval_s)
+        try:
+            frame = self.grab()
+        except (WindowNotFound, CaptureError) as e:
+            now = self.clock()
+            if self.lost_since is None:
+                self.lost_since = now
+                self.log.log(f"window / geometry problem: {e} - waiting")
+                self.log.event("log", msg=f"window lost: {e}")
+            if now - self.lost_since > self.bc.window_lost_max_s:
+                raise Stop("stopped", f"window lost for {self.bc.window_lost_max_s:.0f}s: {e}")
+            self.gate.reset()
+            self.prev_game = None
+            self.sleep(0.5)
+            return None
+        if self.lost_since is not None:
+            self.log.log("window back")
+            self.lost_since = None
+        self.frame_no += 1
+        return frame
+
+    def _settling(self, frame: np.ndarray) -> bool:
+        """After a tap: True (skip this frame) until the grid / counter calmed down."""
+        prev, self.prev_frame = self.prev_frame, frame
+        if self.settle_from is None:
+            return False
+        age = self.clock() - self.settle_from
+        if age < self.bc.settle_min_s:
+            return True
+        if (age < self.bc.settle_max_s and prev is not None
+                and zone_change(prev, frame, self.zones) >= self.bc.settle_threshold):
+            return True
+        self.settle_from = None
+        return False
+
+    # -- one analysed frame -----------------------------------------------------------------
+
+    def _analyse(self, frame: np.ndarray) -> None:
+        now = self.clock()
+        res = self.analyzer.analyze(frame, log=self.log.log, now=now,
+                                    adjust=lambda st: self.ledger.update(st, now))
+        if res.screen != "gameplay":
+            self._non_gameplay(res, frame)
+            return
+        self.non_game = 0
+        self.seen_gameplay = True
+        st = res.state
+        if st is not None:
+            self.trend.update(now, st.exposed)
+            self.last_sand = round(sum(st.sand.values()), 4)
+            if res.decision is not None:
+                covering = self.trend.covering(b.color for b in st.conveyor if b.color)
+                res.decision = prioritize(res.decision, covering, self.bc.weight_covering)
+            self._verify(st)
+        confirmed = self.gate.feed(res)
+        rec = self.log.event("analysis", frame=self.frame_no, gate=self.gate.count,
+                             confirmed=confirmed is not None, **analysis_record(res))
+        self.log.belt(self.frame_no, res)
+        self._report(res, frame, confirmed is not None, rec)
+        if confirmed is not None:
+            self._play(res, frame, confirmed, now)
+        if st is not None and res.failure is None:
+            self.prev_game = res
+
+    def _report(self, res: Any, frame: np.ndarray, confirmed: bool, rec: Dict) -> None:
+        if res.failure:
+            reason = f"read failed ({res.failure}) - wait"
+        elif res.decision is None:
+            reason = "no decision"
+        elif res.decision.move is not None and not confirmed:
+            return   # pending: printed once confirmed
+        else:
+            reason = res.decision.reason
+        if reason != self.last_reason:
+            self.log.log(reason + (" CONFIRMED" if confirmed else ""))
+            if not confirmed:
+                self.log.frame(f"{self.frame_no:05d}-wait", frame)
+            self.last_reason = reason
+
+    def _non_gameplay(self, res: Any, frame: np.ndarray) -> None:
+        self.non_game += 1
+        self.gate.reset()
+        self.log.event("screen", frame=self.frame_no, screen=res.screen, count=self.non_game)
+        if self.non_game < self.bc.screen_confirm_frames:
+            return
+        self.log.frame(f"{self.frame_no:05d}-screen-{res.screen}", frame)
+        if res.screen in RESULTS:
+            raise Stop(RESULTS[res.screen], f"screen {res.screen}")
+        if not self.seen_gameplay:
+            raise Stop("stopped", f"not in a level (screen {res.screen})")
+        if self.last_sand is not None and self.last_sand < self.bc.win_sand_max:
+            raise Stop("win", f"inferred: sand left {self.last_sand:.1%}, then screen "
+                              f"{res.screen} (no level_complete template yet)")
+        raise Stop("stopped", f"non-gameplay screen {res.screen} (phase 6 handles it)")
+
+    def _verify(self, st: Any) -> None:
+        """First settled gameplay frame after taps: did the tapped cells change?"""
+        if self.pending is None or self.dry_run:
+            self.pending = None
+            return
+        tapped, k_before = self.pending
+        self.pending = None
+        changed = 0
+        for (r, c), color in tapped:
+            if r >= st.rows or c >= st.cols:
+                return   # lattice changed: can't tell
+            cell = st.cell((r, c))
+            if cell is None or cell.kind is not Kind.BUCKET or cell.color != color:
+                changed += 1
+        k_up = (st.conveyor_k is not None and k_before is not None and st.conveyor_k > k_before)
+        ok = changed > 0 or k_up
+        self.log.event("effect", ok=ok, changed=changed, taps=len(tapped), k_before=k_before,
+                       k_after=st.conveyor_k)
+        if ok:
+            self.no_effect = 0
+            return
+        self.no_effect += 1
+        self.log.log(f"warning: tap had no visible effect ({self.no_effect}/"
+                     f"{self.bc.max_no_effect_taps})")
+        if self.no_effect >= self.bc.max_no_effect_taps:
+            raise Stop("stopped", f"{self.no_effect} taps in a row had no effect")
+
+    # -- tapping ----------------------------------------------------------------------------
+
+    def _play(self, res: Any, frame: np.ndarray, move: Any, now: float) -> None:
+        from actions import OutOfBounds
+        from strategy import draw_decision
+
+        st = res.state
+        self.gate.reset()
+        if self.ledger.guarded(move.pos, now):
+            self.log.log(f"r{move.pos[0]}c{move.pos[1]} was just tapped - not again yet")
+            return
+        both = set(st.tappable) & (set(self.prev_game.state.tappable)
+                                   if self.prev_game is not None else set(st.tappable))
+        both = {p for p in both if not self.ledger.guarded(p, now)}
+        covering = self.trend.covering(b.color for b in st.conveyor if b.color)
+        moves = burst(st, move, both, self.cfg.strategy, self.bc, covering)
+        if self.max_taps is not None:
+            moves = moves[:max(1, self.max_taps - self.taps)]
+        geo = self.geometry(force=True)   # geometry check right before tapping
+        if tuple(geo.frame_size) != (frame.shape[1], frame.shape[0]):
+            self.log.log(f"geometry changed since the frame ({geo.frame_size} vs "
+                         f"{frame.shape[1]}x{frame.shape[0]}) - no tap")
+            self.log.event("log", msg="geometry changed - no tap")
+            return
+        raw = self.log.frame(f"{self.frame_no:05d}-tap", frame)
+        ann = self.log.frame(f"{self.frame_no:05d}-tap-annotated",
+                             draw_decision(frame, res.view, res.decision))
+        tapped: List[Tuple[Tuple[int, int], str]] = []
+        last = None
+        for i, (cand, why) in enumerate(moves):
+            if i > 0:
+                self.failsafe.check()
+                if self.controls.quit.is_set() or self.controls.paused.is_set():
+                    break
+                wait = self.bc.burst_gap_s - (self.clock() - last)
+                if wait > 0:
+                    self.sleep(wait)
+            rel = res.view.cell_center_rel(*cand.pos)
+            try:
+                tr = self.tapper.tap(*rel)
+            except OutOfBounds as e:
+                self.log.log(f"tap refused: {e}")
+                self.log.event("log", msg=f"tap refused: {e}")
+                break
+            last = self.clock()
+            self.taps += 1
+            cell = st.cell(cand.pos)
+            self.ledger.add(last, cand.pos, cand.color, cell.body if cell is not None else None)
+            tapped.append((cand.pos, cand.color))
+            r, c = cand.pos
+            self.log.log(f"TAP #{self.taps} r{r}c{c} {cand.color} ({why})"
+                         f"{' [dry-run]' if self.dry_run else ''}")
+            self.log.event("tap", n=self.taps, frame=self.frame_no, burst=i + 1,
+                           pos=[r, c], color=cand.color, stages=list(cand.stages),
+                           score=round(cand.score, 4), avail=round(cand.avail, 4),
+                           exposed=round(cand.exposed, 4),
+                           k_before=None if st.conveyor_k is None else st.conveyor_k + i,
+                           free_before=None if st.free_slots is None else st.free_slots - i,
+                           why=why, rel=[round(rel[0], 4), round(rel[1], 4)],
+                           point=[round(tr.point[0], 1), round(tr.point[1], 1)],
+                           executed=tr.executed, frame_png=raw, annotated_png=ann,
+                           alternatives=sum(1 for x in res.decision.candidates
+                                            if x.rejected is None) - 1)
+        if tapped:
+            self.pending = (tapped, st.conveyor_k)
+            self.settle_from = self.clock()
+            self.prev_game = None
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    ap = argparse.ArgumentParser(prog="python -m bot", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dry-run", action="store_true", help="never click (logs the taps)")
+    ap.add_argument("--max-taps", type=int, default=None, help="stop after this many taps")
+    ap.add_argument("--countdown", type=float, default=3.0,
+                    help="seconds before the first capture (default 3)")
+    ap.add_argument("--config", default=None)
+    args = ap.parse_args(argv)
+    if args.max_taps is not None and args.max_taps < 1:
+        ap.error("--max-taps must be >= 1")
+
+    import permissions
+    from actions import Tapper
+    from capture import Grabber, WindowTracker
+    from safety import Failsafe, Hotkeys
+    from strategy import Analyzer
+
+    cfg = load_config(args.config)
+    permissions.require(screen=True, accessibility=not args.dry_run)
+    grabber = Grabber(cfg.screen.capture)
+    tracker = WindowTracker(cfg, grabber)
+    log = RunLog(cfg.paths.debug, cfg, vars(args), cfg.bot.max_saved_frames)
+    hotkeys = Hotkeys(cfg.safety.hotkey_pause, cfg.safety.hotkey_quit).start()
+    failsafe = Failsafe(cfg.safety.failsafe_corner_pt)
+    log.log(f"run log: {log.dir}")
+    log.log(f"{'DRY RUN (no clicks)' if args.dry_run else 'LIVE: real taps'}; "
+            f"pause {cfg.safety.hotkey_pause}, quit {cfg.safety.hotkey_quit}, "
+            f"cursor in a screen corner = stop")
+    try:
+        analyzer = Analyzer(cfg)
+        tapper = Tapper(cfg, tracker, dry_run=args.dry_run, failsafe=failsafe, log=log.log)
+        bot = Bot(cfg, analyzer, tapper, tracker.grab, tracker.get, log, hotkeys, failsafe,
+                  dry_run=args.dry_run, max_taps=args.max_taps)
+        end = time.monotonic() + args.countdown
+        while time.monotonic() < end and not hotkeys.quit.is_set():
+            failsafe.check()
+            time.sleep(0.1)
+        result = bot.run()
+    except Exception as e:   # noqa: BLE001 - record any crash in the run log, then re-raise
+        if type(e).__name__ != "FailsafeTriggered":
+            log.result("stopped", f"crash: {e!r}")
+            raise
+        log.result("stopped", f"failsafe: {e}")
+        result = "stopped"
+    finally:
+        hotkeys.quit.set()
+        log.close()
+        grabber.close()
+    print(f"post-mortem: python -m tools.analyze_run {log.dir}")
+    return 0 if result == "win" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

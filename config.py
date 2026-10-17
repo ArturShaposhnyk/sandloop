@@ -9,6 +9,9 @@ from typing import Any, Dict, List, Optional, Union
 DEFAULT_PATH = Path(__file__).resolve().parent / "config.yaml"
 
 
+VISION_ZONES = ("picture", "conveyor", "fill_text", "counter", "grid_zone")
+
+
 class ConfigError(ValueError):
     pass
 
@@ -151,6 +154,30 @@ class StrategyConfig:
 
 
 @dataclass
+class BotConfig:
+    """bot.py: the playing loop (tempo, settle after taps, stop conditions, run logs)."""
+    settle_min_s: float = 0.25           # after a tap: wait at least this long
+    settle_max_s: float = 1.5            # ... and at most this long for the grid to calm down
+    settle_threshold: float = 0.01       # frame change (0..1) in settle_zones below = settled
+    settle_zones: List[str] = field(default_factory=lambda: ["grid_zone", "counter"])
+    burst_max: int = 3                   # taps released back to back from one confirmed decision
+    burst_min_free: int = 2              # a follow-up tap needs this many free slots (never the last)
+    burst_min_avail: float = 0.05        # ... and its colour this much avail (useful right now)
+    burst_gap_s: float = 0.3             # min seconds between burst taps (rate limit applies too)
+    cover_window_s: float = 2.0          # exposure trend window for "about to be covered"
+    cover_min_drop: float = 0.03         # contact-layer share drop in that window that counts
+    weight_covering: float = 1.0         # score bonus per dropped share (colour not on the belt)
+    retap_guard_s: float = 2.0           # never tap a cell we tapped this recently again
+    max_no_effect_taps: int = 2          # taps in a row that changed nothing -> stop
+    screen_confirm_frames: int = 3       # non-gameplay this many analyses in a row -> stop
+    win_sand_max: float = 0.01           # level ends with less sand than this -> inferred win
+    window_lost_max_s: float = 10.0      # window missing / geometry check failing this long -> stop
+    max_run_s: float = 900.0             # safety stop for one level
+    loop_interval_s: float = 0.05        # min seconds between captures
+    max_saved_frames: int = 1500         # PNGs per run in debug/runs/<stamp>/frames/
+
+
+@dataclass
 class PathsConfig:
     dataset: str = "dataset"
     debug: str = "debug"
@@ -168,6 +195,7 @@ class Config:
     collect: CollectConfig = field(default_factory=CollectConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
+    bot: BotConfig = field(default_factory=BotConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -226,7 +254,7 @@ def validate(cfg: Config) -> Config:
     if cfg.collect.min_interval_s < 0 or cfg.collect.poll_s <= 0:
         raise ConfigError("collect.min_interval_s must be >= 0 and collect.poll_s > 0")
     v = cfg.vision
-    for name in ("picture", "conveyor", "fill_text", "counter", "grid_zone"):
+    for name in VISION_ZONES:
         r = getattr(v, name)
         if (not isinstance(r, (list, tuple)) or len(r) != 4
                 or not all(isinstance(x, (int, float)) for x in r)
@@ -250,6 +278,21 @@ def validate(cfg: Config) -> Config:
     if min(st.sufficiency_margin, st.analyze_interval_s, st.belt_demand_exposure, st.stall_s) < 0:
         raise ConfigError("strategy.sufficiency_margin, analyze_interval_s, "
                           "belt_demand_exposure and stall_s must be >= 0")
+    b = cfg.bot
+    if b.burst_max < 1 or b.burst_min_free < 2 or b.screen_confirm_frames < 1:
+        raise ConfigError("bot.burst_max and screen_confirm_frames must be >= 1, "
+                          "burst_min_free >= 2 (a burst never takes the last slot)")
+    if b.max_no_effect_taps < 1 or b.max_saved_frames < 0:
+        raise ConfigError("bot.max_no_effect_taps must be >= 1, max_saved_frames >= 0")
+    if min(b.settle_min_s, b.settle_threshold, b.burst_min_avail, b.burst_gap_s,
+           b.cover_window_s, b.cover_min_drop, b.weight_covering, b.retap_guard_s,
+           b.win_sand_max, b.loop_interval_s) < 0 or b.settle_max_s < b.settle_min_s:
+        raise ConfigError("bot: times / thresholds must be >= 0, settle_max_s >= settle_min_s")
+    if b.window_lost_max_s <= 0 or b.max_run_s <= 0:
+        raise ConfigError("bot.window_lost_max_s and max_run_s must be > 0")
+    for z in b.settle_zones:
+        if z not in VISION_ZONES:
+            raise ConfigError(f"bot.settle_zones: unknown vision zone {z!r}")
     return cfg
 
 

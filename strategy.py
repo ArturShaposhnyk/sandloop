@@ -373,9 +373,10 @@ class Analyzer:
         self.reads = self.fails = self.fails_saved = 0
 
     def analyze(self, img: "np.ndarray", log=print, now: Optional[float] = None,
-                diff: Optional[float] = None) -> Analysis:
+                diff: Optional[float] = None, adjust=None) -> Analysis:
         """``now``: frame time in seconds (default: monotonic clock) for the belt stall clock.
-        ``diff``: frame-to-frame change at capture, logged with failed reads."""
+        ``diff``: frame-to-frame change at capture, logged with failed reads. ``adjust(state)``
+        may amend the state before the decision (bot.py: what it knows of released towers)."""
         import time
         from vision import VisionError, read_gameplay
 
@@ -394,6 +395,8 @@ class Analyzer:
             state = LevelState.from_view(gv, st.conveyor_slots, st.unknown_fill_need)
             state.belt_stalled = self.belt.update(state.conveyor,
                                                   time.monotonic() if now is None else now)
+            if adjust is not None:
+                adjust(state)
             res = Analysis(screen, gv, state, choose(state, st))
             if gv.counter is None:
                 res.failure = "counter: k/5 not read"

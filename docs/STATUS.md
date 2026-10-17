@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 515 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 529 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -29,6 +29,9 @@ python -m vision dataset/screens/*-043-auto.png   # read a gameplay frame -> deb
 python -m screens dataset/screens/*.png  # classify screen types
 python -m strategy dataset/screens/*.png # greedy decision per shot -> debug/strategy-*.png
 python -m tools.overlay --dry-run        # live: detections + chosen move, never clicks
+python -m bot --dry-run                  # phase 5 loop, logs to debug/runs/, never clicks
+python -m bot --max-taps 3               # real taps, stop after 3
+python -m tools.analyze_run              # post-mortem of the latest run
 python -m pytest -q                      # all tests, no live game needed
 ```
 Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner = failsafe stop.
@@ -270,6 +273,23 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
 - Many single-frame "looks face-down but the path rule says playable" warnings right after
   moves: flip animation in progress, expected (never tapped; 2-frame confirmation).
 
-## Phase 5 — next
-- `bot.py`: full loop on one level (stable frame -> Analyzer -> tap via actions.Tapper with all
-  safety checks), log every move (frame + decision) to `debug/`.
+## Phase 5 — bot.py plays one level (2026-10-17) — done, awaiting OK (not live-tested yet)
+- `bot.py`: capture -> screen type -> analyse -> 2-frame `DecisionGate` -> `actions.Tapper`.
+  Failsafe corner checked every loop + before every tap; ctrl+alt+p / ctrl+alt+q; rate limit;
+  only inside the screen rect; geometry re-resolved right before tapping (frame size must match
+  the analysed frame, else no tap). `--dry-run`, `--max-taps N`, `--countdown S`.
+- After taps: gate reset, `tempo.ReleaseLedger` (no re-tap for `retap_guard_s`; towers keep
+  their later stages on the belt), settle on `bot.settle_zones` (grid + counter) only, then the
+  first gameplay frame verifies the tap changed the cell / k (`max_no_effect_taps` -> stop).
+- Tempo (`tempo.py`, `config.yaml bot:`): up to `burst_max` taps from one confirmed decision,
+  each re-chosen by `strategy.choose` on the simulated state, tappable in both confirming
+  frames, >= `burst_min_free` free slots before it (never the last slot), avail >=
+  `burst_min_avail`. "About to be covered" = contact-layer share of a colour not on the belt
+  dropped >= `cover_min_drop` within `cover_window_s` -> `weight_covering` x drop bonus
+  (bot heuristic, not a game rule).
+- Non-gameplay `screen_confirm_frames` x in a row -> stop: fail / revive / level_complete = win;
+  other screens with < `win_sand_max` sand left = inferred win (no level_complete template).
+- Run log `debug/runs/<stamp>/` (`runlog.py`): run.json, events.jsonl, belt.csv, frames/,
+  result.json, bot.log. Post-mortem: `python -m tools.analyze_run [run_dir]`.
+- `Analyzer.analyze(adjust=...)` hook (the ledger amends the state before `choose`).
+- Analysis ~0.85 s/frame (screen classification ~0.7 s), so a confirmed move takes ~1.7 s.

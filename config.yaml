@@ -138,6 +138,33 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   confirm_frames: 2          # tap only after this many consecutive analyses chose the same move
   vision_fail_max_saves: 300 # failed reads (frame + step) saved to debug/vision_fail/ per run
 
+bot:                         # python -m bot: plays one level (docs/GAME_RULES.md, PROMPT.md phase 5)
+  # after a tap only the grid and the k/5 counter must calm down (sand never stops moving)
+  settle_min_s: 0.25
+  settle_max_s: 1.5
+  settle_threshold: 0.01     # frame change (0..1) of settle_zones below this = settled
+  settle_zones: [grid_zone, counter]
+  # tempo: from one confirmed decision release up to burst_max buckets back to back (each
+  # follow-up re-checked on the simulated state after the previous taps, tappable in both
+  # confirming frames, never the last free slot, its colour at least burst_min_avail avail)
+  burst_max: 3
+  burst_min_free: 2
+  burst_min_avail: 0.05
+  burst_gap_s: 0.3           # + clicks.max_taps_per_second
+  # "about to be covered": a colour's contact-layer share dropped by cover_min_drop within
+  # cover_window_s while no bucket of it is on the belt -> bonus weight_covering x drop
+  cover_window_s: 2.0
+  cover_min_drop: 0.03
+  weight_covering: 1.0
+  retap_guard_s: 2.0         # never tap the same cell again this soon (flying bucket animation)
+  max_no_effect_taps: 2      # taps in a row that changed nothing -> stop
+  screen_confirm_frames: 3   # non-gameplay this many analyses in a row -> stop (phase 5)
+  win_sand_max: 0.01         # no level_complete template yet: level left with less sand = win
+  window_lost_max_s: 10.0    # no window / failed geometry check this long -> stop
+  max_run_s: 900.0
+  loop_interval_s: 0.05
+  max_saved_frames: 1500     # PNGs per run in debug/runs/<stamp>/frames/
+
 paths:
   dataset: dataset
   debug: debug
