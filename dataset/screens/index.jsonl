@@ -35,3 +35,8 @@
 {"file": "20261016-185258-702-056-live.png", "time": "2026-10-16T18:52:58", "source": "live", "label": "gameplay", "change": null, "frame_px": [602, 1302], "scale": 2.0}
 {"file": "20261019-162708-850-057-live.png", "time": "2026-10-19T16:27:08", "source": "live", "label": "gameplay", "change": null, "frame_px": [598, 1298], "scale": 2.0}
 {"file": "20261019-162746-400-058-live.png", "time": "2026-10-19T16:27:46", "source": "live", "label": "gameplay", "change": null, "frame_px": [598, 1298], "scale": 2.0}
+{"file": "20261019-171450-497-001-auto.png", "time": "2026-10-19T17:14:50", "source": "auto", "label": null, "change": 1.0, "frame_px": [598, 1298], "scale": 2.0, "window_pt": [24.0, 225.0, 315.0, 695.0], "screen_pt": [32.0, 263.0, 299.0, 649.0]}
+{"file": "20261019-171509-276-002-snap.png", "time": "2026-10-19T17:15:09", "source": "snap", "label": null, "change": 0.0054, "frame_px": [598, 1298], "scale": 2.0, "window_pt": [26.0, 221.0, 315.0, 695.0], "screen_pt": [34.0, 259.0, 299.0, 649.0]}
+{"file": "20261019-171510-884-003-snap.png", "time": "2026-10-19T17:15:10", "source": "snap", "label": null, "change": 0.0052, "frame_px": [598, 1298], "scale": 2.0, "window_pt": [26.0, 221.0, 315.0, 695.0], "screen_pt": [34.0, 259.0, 299.0, 649.0]}
+{"file": "20261019-171512-124-004-auto.png", "time": "2026-10-19T17:15:12", "source": "auto", "label": null, "change": 1.0, "frame_px": [598, 1300], "scale": 2.0, "window_pt": [26.0, 221.0, 315.0, 695.0], "screen_pt": [34.0, 258.0, 299.0, 650.0]}
+{"file": "20261019-171515-475-005-auto.png", "time": "2026-10-19T17:15:15", "source": "auto", "label": null, "change": 1.0, "frame_px": [598, 1298], "scale": 2.0, "window_pt": [-30.0, 221.0, 315.0, 695.0], "screen_pt": [-22.0, 259.0, 299.0, 649.0]}

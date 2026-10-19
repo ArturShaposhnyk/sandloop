@@ -11,15 +11,37 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 2 | `tools/collect.py`, 32 labeled screenshots in `dataset/screens/` (`LABELS.md`) | `385c523`, `015ab26` |
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
-| 5 | `bot.py` plays one level with real taps; live-tested once (L186, run 20261019-162703: 9 good taps, then a freeze, fixed) | `4b1883a`, `4f297f2`, `00daa0e` |
+| 5 | `bot.py` plays one level with real taps; **won L186 live by itself** (run 20261019-171033, 21 taps, 118 s) | `4b1883a`, `4f297f2`, `00daa0e` |
 
 Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 581 passed, 1 xfailed (screen 020, see below).
 
 ## Current state and NEXT (2026-10-19)
-- Phase 5 (`bot.py`) is done and has been live-tested **once**, on L186 (run
-  `debug/runs/20261019-162703`): 9 good taps, then a freeze at 4/5. The cause (boosters pulsing
-  into the grid zone -> a phantom 7th lattice row) is fixed with `hints.LatticeLock`; a cell that
-  keeps disagreeing with no move now logs STUCK and saves the frame. Not live-tested since.
+- **Phase 5 (`bot.py`) is done: it won L186 live by itself** (run
+  `debug/runs/20261019-171033`: 21 taps, 118 s, 0 read failures, 0 no-effect taps; result
+  `win`, inferred from sand 0 % then a non-gameplay screen). Live runs that day, all L186:
+  `162703` (9 good taps, then the phantom-7th-row freeze, fixed with `hints.LatticeLock`),
+  `170512` / `170812` / `170918` (`--max-taps 10`, no freeze), then `171033` (the win).
+- Win screen captured: "Well Done! / Level completed!" with NEXT and Watch Ad (shots
+  `dataset/screens/20261019-171450-*` .. `20261019-171515-*`, 5 shots, unlabeled, classified `other`; also the
+  bot's last frame `debug/runs/20261019-171033/frames/00179-screen-other.png`).
+- Issues seen in these runs (analysed with `tools.analyze_run`), proposed fixes NOT made yet,
+  waiting for the user's OK:
+  A. `170812` tap #4: r1c3 cream at **0 % exposed** (opener rule, score 0.55) beat r1c2
+     darkgreen (25 %, 0.54) and r0c4 darkred, which opens the same cell r1c4. Cream then stalled
+     31 s (lost slot). Fix idea: a cost for taking a slot with low exposure, so an opener at
+     ~0 % loses to a move with exposure that opens the same cells. Asked the user: is tapping a
+     buried colour ever right just to open a path?
+  B. `170918`: every candidate was negative (chest risk). It tapped #2 magenta (-0.11) and, as
+     a **burst** (unconfirmed), #4 magenta (-0.19), which opened the second chest. Fix idea:
+     burst only moves with score > 0 that don't open a chest. Asked the user: when every move is
+     negative and a belt bucket still fills, should the bot wait instead?
+  C. `170918` tap #2: a false "no visible effect": the check ran 1.1 s after the tap (bucket
+     still in its cell) and k fell 3->2 because pink finished at the same moment. Two in a row
+     would stop the bot. Fix idea: `bot._verify` waits ~2 s for a change and counts finished
+     belt buckets.
+  D. The chest-opening flash is logged and saved as an unknown bucket colour (LAB 98/-18/68)
+     every time. Fix idea: don't report unknown colours on a chest cell while it opens.
+  E. Add a `level_complete` template from the win shots (WIN detected, not inferred).
 - L186 mechanics added (user-confirmed, see GAME_RULES.md): **chest N** (opens when connected,
   scatters N buckets; risk-priced, never forbidden), **mystery bucket** (revealed by tapping a
   4-neighbour; small bonus), **wall** (panel-coloured hole = `x`, blocks paths).
@@ -30,11 +52,8 @@ Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 581 passed, 1 xfailed (sc
   stop at 0 lives) is NOT started. The bot still stops on any non-gameplay screen, and needs to
   be started inside a level (it does not press PLAY).
 - **NEXT**:
-  1. Live run on L186: open the level, then `python -m bot --max-taps 3`, then a longer run
-     (`python -m bot`), then `python -m tools.analyze_run`. Optionally first
-     `python -m tools.overlay --dry-run` to watch the chest-risk decisions (weights
-     `weight_chest_cut` / `weight_chest_free` are first guesses).
-  2. Then phase 6, after the user's OK.
+  1. Get the user's answers on A and B, then fixes A-E (E is safe either way).
+  2. Then phase 6 (win screen -> NEXT, etc.), after the user's OK.
 
 ## Key commands
 ```bash
@@ -90,7 +109,8 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 ## Open questions / known gaps
-- **Win screen (level_complete)**: not captured yet — user will grab one with `ctrl+alt+s`.
+- **Win screen (level_complete)**: captured 2026-10-19 (5 shots `20261019-1714*`/`1715*`), no
+  template yet (fix E above).
 - **Screen 020** (ad end card without Get App / mute / ✕): no anchor, classified `other`
   (xfail in tests). Needs more ad end-card shots, ideally when the ✕ appears, to add a generic
   ad anchor.
