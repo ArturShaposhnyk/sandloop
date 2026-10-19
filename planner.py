@@ -11,12 +11,12 @@ Pure logic on ``state.LevelState``, used by ``strategy.choose`` (greedy + 1 with
 * **Path planning**: for every useful bucket the path rule does not connect yet, and every key
   whose colour has exactly one lock, the cheapest set of buckets to remove that connects it to
   the exit (Dijkstra over the grid; empty cells cost 0, a bucket costs 1 + more when its colour
-  is barely exposed, a bucket that is not safe to release now - and every lock / unknown cell -
-  is impassable). The path is then replayed tap by tap (``LevelState.after_tap``): every step
-  must pass the release rules in the state it would be tapped in (free slot, the last-slot
-  threshold, exposure with the growing belt demand, enough sand, no short tower stage), so a
-  path whose buckets would fill the belt with starving buckets is never taken. Paths of one
-  step are the tap's own unlock value and are not planned.
+  is barely exposed, more when its colour is stalled on the belt, a bucket that is not safe to
+  release now - and every lock / unknown cell - is impassable). The path is then replayed tap by
+  tap (``LevelState.after_tap``): every step must pass the release rules in the state it would
+  be tapped in (free slot, the last-slot threshold, exposure with the growing belt demand,
+  enough sand, no short tower stage), so a path whose buckets would fill the belt with starving
+  buckets is never taken. Paths of one step are the tap's own unlock value and are not planned.
 """
 from __future__ import annotations
 
@@ -107,7 +107,9 @@ def targets(state: LevelState, sc: StrategyConfig) -> List[Tuple[Pos, str, float
 
 def release_costs(state: LevelState, check: Check, sc: StrategyConfig) -> Dict[Pos, float]:
     """Cost of every cell a path may cross: empty 0, a bucket safe to release now 1 + up to
-    ``path_cost_low_exposure`` the less its colour is exposed. Missing = impassable."""
+    ``path_cost_low_exposure`` the less its colour is exposed + ``path_cost_stalled`` if its
+    colour is stalled on the belt (a lost slot: another path is preferred). Missing =
+    impassable."""
     costs: Dict[Pos, float] = {}
     for r, row in enumerate(state.grid):
         for c, cell in enumerate(row):
@@ -120,7 +122,9 @@ def release_costs(state: LevelState, check: Check, sc: StrategyConfig) -> Dict[P
                 avail = (state.exposed.get(colour, 0.0)
                          - state.conveyor_need(colour) * sc.belt_demand_exposure)
                 short = max(0.0, 1.0 - avail / sc.path_good_avail) if sc.path_good_avail else 0.0
-                costs[(r, c)] = 1.0 + sc.path_cost_low_exposure * short
+                stalled = state.belt_stalled.get(colour, 0.0) >= sc.stall_s
+                costs[(r, c)] = (1.0 + sc.path_cost_low_exposure * short
+                                 + (sc.path_cost_stalled if stalled else 0.0))
     return costs
 
 

@@ -180,15 +180,60 @@ def test_demand_aware_exposure_blocks_a_second_bucket():
     assert choose(st, SC).move.color == "red"
 
 
-def test_stalled_belt_colour_is_rejected():
+def test_stalled_belt_colour_waits_while_the_belt_collects():
+    """One more bucket of a stalled colour is a lost slot: rejected while another belt bucket
+    still collects (waiting helps)."""
+    st = make_state(["red blue"], k=2, conveyor=[ConveyorBucket("red", 49),
+                                                 ConveyorBucket("green", 20)],
+                    sand={"red": .4, "blue": .4, "green": .2},
+                    exposed={"red": .9, "blue": .1, "green": .3})
+    st.belt_stalled = {"red": 10.0, "green": 0.5}
+    d = choose(st, SC)
+    red = by_pos(d)[(0, 0)]
+    assert "lost slot" in red.rejected and "stalled 10s" in red.describe()
+    assert d.move.color == "blue"
+    st.belt_stalled = {"red": 1.0}     # below stall_s: still fine
+    assert choose(st, SC).move.color == "red"
+
+
+def test_stalled_belt_colour_is_a_penalised_last_resort_on_an_idle_belt():
+    """Belt idle (nothing collects): waiting changes nothing. The stalled colour is allowed but
+    loses weight_stalled_colour, so any other move goes first."""
     st = make_state(["red blue"], k=1, conveyor=[ConveyorBucket("red", 49)],
                     sand={"red": .4, "blue": .4}, exposed={"red": .9, "blue": .1})
     st.belt_stalled = {"red": 10.0}
     d = choose(st, SC)
-    assert "not filling" in by_pos(d)[(0, 0)].rejected and "stalled 10s" in by_pos(d)[(0, 0)].describe()
+    red = by_pos(d)[(0, 0)]
+    assert red.rejected is None and red.stalled == 10.0
     assert d.move.color == "blue"
-    st.belt_stalled = {"red": 1.0}     # below stall_s: still fine
-    assert choose(st, SC).move.color == "red"
+    alone = make_state(["red"], k=1, conveyor=[ConveyorBucket("red", 49)],
+                       sand={"red": .4}, exposed={"red": .9})
+    alone.belt_stalled = {"red": 10.0}
+    d = choose(alone, SC)
+    assert d.move.color == "red"
+    assert d.move.score == pytest.approx(choose(make_state(
+        ["red"], k=1, conveyor=[ConveyorBucket("red", 49)], sand={"red": .4},
+        exposed={"red": .9}), SC).move.score - SC.weight_stalled_colour)
+
+
+def test_path_avoids_a_stalled_colour_step():
+    """Two 2-step paths to the useful face-down green: through cream (better exposed, but stalled
+    on the belt) or through blue. With cream stalled the planner takes the blue one."""
+    def state(stalled):
+        st = make_state(["cream x blue",
+                         "orange green_ orange"], k=1, conveyor=[ConveyorBucket("cream", 99)],
+                        sand={"cream": .2, "blue": .2, "orange": .3, "green": .3},
+                        exposed={"cream": .3, "blue": .2, "orange": .2, "green": .3})
+        st.belt_stalled = stalled
+        return st
+
+    def green_plan(d):
+        return next(p for p in d.plans if p.label.endswith("green") and p.rejected is None)
+
+    assert green_plan(choose(state({}), SC)).steps[0] == (0, 0)
+    d = choose(state({"cream": 10.0}), SC)
+    assert green_plan(d).steps[0] == (0, 2)
+    assert d.move.pos == (0, 2)
 
 
 def test_tie_break_prefers_colour_not_on_the_belt():

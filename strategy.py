@@ -7,18 +7,19 @@ the belt touches) - what the same-colour buckets already on the belt still need
 Hard rules, a candidate is rejected if any fails:
   * it is tappable: path rule AND visual face-up agree (never UNKNOWN, locked or disagreeing);
   * the conveyor has a free slot ("k/5" counter read and k < 5);
-  * its colour is not stalled: a same-colour bucket on the belt whose fill hasn't grown for
-    stall_s seconds means that sand is not reachable now;
+  * its colour is not stalled while the belt still collects: a same-colour bucket on the belt
+    whose fill hasn't grown for stall_s seconds means that sand is not reachable now, so one
+    more is a lost slot (on an idle belt it is a last resort: weight_stalled_colour penalty);
   * avail >= min_exposed (a stricter threshold when the tap would take the last free slot:
     keep a slot usable, avoid deadlock);
   * enough of its colour remains to fill it: sand >= margin x (conveyor need + 1) x capacity.
-Score of the rest: avail + buckets / lock cells the tap connects to the exit (one-tap
-lookahead) + the unlock value (usefulness of the opened buckets' colours, planner.py) + buckets
-under a lock that a released key opens - a penalty per later tower stage whose colour has not
-enough sand left (a tower takes one belt slot until ALL its stages are full, so a starving stage
-blocks that slot) + a bonus for a colour not on the belt yet + the path bonus for the first step
-of the best safe path to a useful hidden bucket or a key (planner.plan). Ties: colour not on
-the belt, then the front row, then the left.
+Score of the rest: avail + buckets / lock cells the tap connects to the exit (one-tap lookahead)
++ the unlock value (usefulness of the opened buckets' colours, planner.py) + buckets under a
+lock that a released key opens - a penalty for a stalled colour - a penalty per later tower
+stage whose colour has not enough sand left (a tower takes one belt slot until ALL its stages
+are full, so a starving stage blocks that slot) + a bonus for a colour not on the belt yet + the
+path bonus for the first step of the best safe path to a useful hidden bucket or a key
+(planner.plan). Ties: colour not on the belt, then the front row, then the left.
 
     python -m strategy dataset/screens/*.png   # decisions on saved shots -> debug/strategy-*.png
 """
@@ -152,8 +153,9 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig, opener: bool = Fal
         cand.rejected = "conveyor counter not read"
     elif free == 0:
         cand.rejected = "conveyor full"
-    elif cand.stalled is not None:
-        cand.rejected = f"{cand.color} on the belt is not filling - sand not reachable now"
+    elif cand.stalled is not None and not belt_idle(state, sc):
+        cand.rejected = (f"{cand.color} on the belt is not filling - one more would be a lost "
+                         f"slot, wait while the belt collects")
     elif cand.avail < min_exp:
         cand.low_exposure = True
         cand.rejected = f"not enough exposed sand (avail {cand.avail:.1%} < {min_exp:.0%}, {why})"
@@ -192,6 +194,7 @@ def _score(state: LevelState, cand: Candidate, sc: StrategyConfig) -> None:
                   + sc.weight_open_lock * len(cand.opens_locks)
                   + sc.weight_key_unlock * cand.unlocked_buckets
                   - sc.weight_tower_short_stage * len(cand.short_stages)
+                  - (sc.weight_stalled_colour if cand.stalled is not None else 0.0)
                   + (0.0 if cand.on_belt else sc.weight_new_colour))
 
 
@@ -353,7 +356,7 @@ class Analyzer:
         from digits import DigitReader
         from palette import Palette
         from screens import ScreenClassifier, load_templates
-        from hints import CellMemory, HintArrows
+        from hints import CellMemory, HintArrows, RecentUnlocks
         from icons import IconMatcher
 
         self.cfg = cfg
@@ -362,9 +365,10 @@ class Analyzer:
         self.icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons")
         self.hints = HintArrows.load(Path(cfg.paths.dataset) / "templates" / "hints")
         self.memory = CellMemory()   # last clean cell readings, for cells under hint arrows
+        self.unlocks = RecentUnlocks(cfg.vision.unlock_trust_s)   # key locks that just opened
         self.classifier = ScreenClassifier(load_templates(Path(cfg.paths.dataset) / "templates"),
                                            cfg.vision)
-        self.belt = BeltTracker()
+        self.belt = BeltTracker(cfg.strategy.stall_min_growth, cfg.strategy.stall_forget_s)
         self.fail_dir = Path(cfg.paths.debug) / "vision_fail"
         self.colour_dir = Path(cfg.paths.dataset) / "unknown_colours"
         self.unknown_dir = Path(cfg.paths.dataset) / "unknown"
@@ -380,21 +384,22 @@ class Analyzer:
         import time
         from vision import VisionError, read_gameplay
 
+        now = time.monotonic() if now is None else now
         screen = self.classifier.classify(img).screen
         if screen != "gameplay":
             return Analysis(screen, reads=self.reads, fails=self.fails)
         self.reads += 1
         try:
             gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log,
-                               icons=self.icons, hints=self.hints, memory=self.memory)
+                               icons=self.icons, hints=self.hints, memory=self.memory,
+                               unlocks=self.unlocks, now=now)
         except VisionError as e:
             res = Analysis(screen, error=str(e), failure=f"grid: {e}")
         else:
             self._save_unknowns(img, gv, log)
             st = self.cfg.strategy
             state = LevelState.from_view(gv, st.conveyor_slots, st.unknown_fill_need)
-            state.belt_stalled = self.belt.update(state.conveyor,
-                                                  time.monotonic() if now is None else now)
+            state.belt_stalled = self.belt.update(state.conveyor, now)
             if adjust is not None:
                 adjust(state)
             res = Analysis(screen, gv, state, choose(state, st))

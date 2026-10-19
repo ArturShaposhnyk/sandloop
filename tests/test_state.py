@@ -129,10 +129,34 @@ def test_belt_tracker_stall_clock():
     assert t.update([red(40)], 0.0) == {"red": 0.0}
     assert t.update([red(40)], 3.0) == {"red": 3.0}          # no growth
     assert t.update([red(45)], 4.0) == {"red": 0.0}          # grew: clock restarts
-    assert t.update([], 6.0) == {}                           # out of sight: clock kept
+    assert t.update([], 6.0) == {"red": 2.0}                 # out of sight: clock kept
     assert t.update([red(45)], 9.0) == {"red": 5.0}
     assert t.update([red(45), red(0)], 10.0) == {"red": 0.0}  # a new red bucket arrived
     assert t.update([red(100), ConveyorBucket("blue", None)], 11.0) == {}  # done / unread
+    assert t.update([red(30)], 12.0) == {"red": 0.0}
+    assert t.update([], 15.5) == {}                          # out of sight > forget_s: gone
+
+
+def test_belt_tracker_ignores_label_jitter_and_gaps():
+    """Run 20261017-103804 (belt.csv, 282-298 s): cream sat at 99% (one frame 98%, some frames
+    without cream or with its label unread) - the clock kept restarting, so the stalled colour was
+    released again. It must count as stalled."""
+    from state import BeltTracker
+
+    t = BeltTracker(min_growth=2, forget_s=3.0)
+    rows = [(282.4, [("orange", 29), ("cream", 94), ("red", 87)]),
+            (283.3, [("red", None), ("orange", 29), ("cream", 99)]),
+            (284.6, [("cream", 99), ("red", 87)]),
+            (285.5, [("orange", 30), ("cream", 99), ("red", None)]),
+            (287.4, [("cream", 98), ("red", 87)]),
+            (288.7, [("cream", None), ("orange", 30), ("cream", 99)]),
+            (289.6, [("red", 87), ("orange", 30)]),
+            (290.5, [("orange", 30), ("cream", 99), ("red", 87)])]
+    for now, slots in rows:
+        out = t.update([ConveyorBucket(c, f) for c, f in slots], now)
+    assert out["cream"] == pytest.approx(290.5 - 283.3)   # since 94 -> 99, real growth
+    assert out["orange"] == pytest.approx(290.5 - 282.4)  # 29 -> 30 is jitter
+    assert out["red"] == pytest.approx(290.5 - 282.4)
 
 
 def test_free_slots_unknown_without_counter():

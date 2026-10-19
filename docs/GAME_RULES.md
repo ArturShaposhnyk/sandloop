@@ -25,6 +25,10 @@
     released), the key flies by itself to the **lock of the same colour** and opens it.
   - Under a lock there are **buckets** (not tappable while the lock is there). After it opens
     they become regular buckets under the path rule (colours unknown until seen).
+  - They are playable **immediately**, while the padlock animation still covers them (user,
+    2026-10-19; run 20261017-103804 r2c1, r3c5). They read face-down meanwhile, so for
+    `vision.unlock_trust_s` after a key lock cell reads as a bucket / empty, the path rule
+    alone decides there (`hints.RecentUnlocks`).
   - After the key flies, its cell is **empty** (confirmed).
   - Several locks of the same colour: not seen yet (open question). Until then the bot credits
     no unlock when a key's colour has several separate locks.
@@ -103,7 +107,12 @@
   not already claimed by same-colour belt buckets); otherwise `min_exposed` (3 %).
 - A tap that opens a useful bucket, or is a step of a planned path, uses `opener_min_exposed`
   (0) once `opener_free_slots` (2) are free.
-- A colour stalled on the belt is still never released again; the sufficiency rule always holds.
+- **Stalled colour** (user, 2026-10-19): one more bucket of a colour that is stalled on the belt
+  (e.g. cream at 99 % not moving) is a lost slot. While another belt bucket still collects it is
+  never released (wait); on an idle belt it is a last resort with the `weight_stalled_colour`
+  penalty, and a path step of that colour costs `path_cost_stalled` extra, so another move or
+  path goes first. The stall clock ignores ±1 % label jitter (`stall_min_growth`) and frames
+  where the colour is not read (`stall_forget_s`). The sufficiency rule always holds.
 
 ## Unlock value and paths (user, 2026-10-16; `planner.py`, weights in `config.yaml` `strategy:`)
 - Face-down buckets show their colour, so what a move opens is plannable. The bot stays

@@ -143,6 +143,40 @@ class CellMemory:
                     self._cells[(cell.row, cell.col)] = copy.deepcopy(cell)
 
 
+class RecentUnlocks:
+    """Cells whose key lock opened in the last ``trust_s`` seconds. The buckets under a lock are
+    playable at once (GAME_RULES "Locks and keys"), but the padlock animation still covers them
+    and they read face-down: for these cells the path rule alone decides. A lock cell counts as
+    opened once it reads as a bucket or empty; same lattice rule as CellMemory."""
+
+    def __init__(self, trust_s: float = 10.0) -> None:
+        self.trust_s = trust_s
+        self._key: Optional[Tuple[int, int, int, int]] = None
+        self._locked: set = set()
+        self._opened: Dict[Tuple[int, int], float] = {}
+
+    def update(self, lat, grid, now: float) -> set:
+        """Feed one frame's grid; returns the cells unlocked within ``trust_s``."""
+        from cells import Kind
+
+        k = CellMemory.key(lat)
+        if k != self._key:
+            self._key, self._locked, self._opened = k, set(), {}
+        for row in grid:
+            for cell in row:
+                if cell is None or cell.occluded:
+                    continue
+                pos = (cell.row, cell.col)
+                if cell.kind is Kind.LOCK and cell.unlock == "key":
+                    self._locked.add(pos)
+                    self._opened.pop(pos, None)
+                elif pos in self._locked and cell.kind in (Kind.BUCKET, Kind.EMPTY):
+                    self._locked.discard(pos)
+                    self._opened[pos] = now
+        self._opened = {p: t for p, t in self._opened.items() if now - t <= self.trust_s}
+        return set(self._opened)
+
+
 def cut_template(img: np.ndarray, box: Box, tol: float = 25.0, outline: int = 3
                  ) -> np.ndarray:
     """BGRA template of the arrow in ``box``: alpha = pixels near the fill colour sampled at the

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -16,7 +16,7 @@ from cells import (Cell, Kind, cell_features, classify_cell, colour_distances, e
                    icon_lab, path_playable)
 from config import VisionConfig
 from digits import DigitReader
-from hints import CellMemory, HintArrows, clean, occlusion_mask
+from hints import CellMemory, HintArrows, RecentUnlocks, clean, occlusion_mask
 from belt import Slot, read_conveyor
 from icons import IconMatcher
 from palette import Palette, bgr_to_lab, lab_distance
@@ -217,15 +217,17 @@ class GameView:
     unknown_colours: List[UnknownColour] = field(default_factory=list)
     hints: List[Tuple[int, int, int, int]] = field(default_factory=list)  # hint arrow boxes
     colour_notes: List[str] = field(default_factory=list)   # close colour calls (debug)
+    unlocked: Set[Tuple[int, int]] = field(default_factory=set)  # key lock just opened
 
     def labels(self) -> List[str]:
         return [" ".join("x" if c is None else c.label() for c in row) for row in self.grid]
 
     def tappable(self) -> List[Tuple[int, int]]:
-        """Buckets that are playable by the path rule AND look face-up (both must agree)."""
+        """Buckets that are playable by the path rule AND look face-up (both must agree; in a
+        cell whose key lock just opened the padlock animation hides the face: path rule alone)."""
         return [(r, c) for r, row in enumerate(self.grid) for c, cell in enumerate(row)
                 if cell is not None and cell.kind is Kind.BUCKET and self.playable[r][c]
-                and cell.face_up and not cell.occluded]
+                and (cell.face_up or (r, c) in self.unlocked) and not cell.occluded]
 
     def cell_center_rel(self, r: int, c: int) -> Tuple[float, float]:
         x0, y0, x1, y1 = self.lattice.rect(r, c)
@@ -289,9 +291,12 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
                   reader: Optional[DigitReader] = None,
                   log: Callable[[str], None] = print,
                   icons: Optional[IconMatcher] = None, hints: Optional[HintArrows] = None,
-                  memory: Optional[CellMemory] = None) -> GameView:
+                  memory: Optional[CellMemory] = None,
+                  unlocks: Optional[RecentUnlocks] = None, now: float = 0.0) -> GameView:
     """``hints``: game hint arrows to ignore (hints.py); ``memory``: last clean cell readings,
-    used for cells the arrows hide and updated with this frame's clean cells."""
+    used for cells the arrows hide and updated with this frame's clean cells; ``unlocks``: cells
+    whose key lock opened recently (``now`` = frame time in s), where the path rule alone decides
+    (their face reads down under the padlock animation)."""
     arrows = hints.find(img, v) if hints is not None else []
     occ = occlusion_mask(img.shape, arrows) if arrows else None
     if arrows:
@@ -301,11 +306,12 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
     if memory is not None:
         memory.store(lat, grid)
     playable = path_playable(grid, lat.exits())
+    unlocked = unlocks.update(lat, grid, now) if unlocks is not None else set()
     disagree = []
     for r, row in enumerate(grid):
         for c, cell in enumerate(row):
             if (cell is not None and cell.kind is Kind.BUCKET and not cell.occluded
-                    and cell.face_up != playable[r][c]):
+                    and cell.face_up != playable[r][c] and (r, c) not in unlocked):
                 disagree.append((r, c))
                 log(f"warning: cell r{r}c{c} ({cell.label()}) looks "
                     f"{'face-up' if cell.face_up else 'face-down'} but the path rule says "
@@ -323,7 +329,7 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
             f"python -m tools.add_colour)")
     return GameView(lat, grid, regions, playable, disagree, k, slots, sand, exposed, lower,
                     (img.shape[1], img.shape[0]), unknown, [b for b, _ in arrows],
-                    colour_notes(grid, palette, v))
+                    colour_notes(grid, palette, v), unlocked)
 
 
 def colour_notes(grid: Grid, palette: Palette, v: VisionConfig) -> List[str]:

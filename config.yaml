@@ -63,6 +63,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
   grid_zone: [0.0, 0.52, 1.0, 0.88]
   cell_aspect: 0.885         # cell height / width (fixed camera perspective)
   cell_shift_up: 0.1         # objects are drawn overhanging into the row above
+  unlock_trust_s: 10.0       # a key lock just opened: its cells follow the path rule alone this long (padlock animation hides the face)
   cell_inset: 0.125          # crop inset per side, share of the cell size
   panel_tol: 12.0            # LAB distance to the panel background colour
   # live crops can be a few px off (pt/px rounding, window edge, hover-chrome frame):
@@ -134,6 +135,12 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   opener_free_slots: 2
   opener_min_exposed: 0.0
   stall_s: 4.0               # a belt colour whose fill hasn't grown this long = sand not reachable
+  stall_min_growth: 2        # fill points that count as growth (the % labels jitter by 1)
+  stall_forget_s: 3.0        # a belt colour not seen this long is forgotten (shorter gaps keep its clock)
+  # one more bucket of a stalled colour = a lost slot: never while the belt still collects,
+  # else this penalty (a last resort); a path step of that colour costs path_cost_stalled extra
+  weight_stalled_colour: 2.0
+  path_cost_stalled: 3.0
   analyze_interval_s: 0.5    # overlay --dry-run: min seconds between analyses
   confirm_frames: 2          # tap only after this many consecutive analyses chose the same move
   vision_fail_max_saves: 300 # failed reads (frame + step) saved to debug/vision_fail/ per run

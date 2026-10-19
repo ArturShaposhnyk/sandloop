@@ -81,6 +81,7 @@ class VisionConfig:
     grid_zone: List[float] = field(default_factory=lambda: [0.0, 0.52, 1.0, 0.88])
     cell_aspect: float = 0.885        # cell height / width (fixed camera perspective)
     cell_shift_up: float = 0.1        # objects are drawn overhanging into the row above
+    unlock_trust_s: float = 10.0      # after a key lock opens, its cells follow the path rule alone
     cell_inset: float = 0.125         # crop inset per side, share of the cell size
     panel_tol: float = 12.0           # LAB distance to the panel background colour
     edge_margin: float = 0.03         # share of width ignored at the frame's left/right edge
@@ -148,6 +149,10 @@ class StrategyConfig:
     opener_free_slots: int = 2            # a tap that opens a useful bucket / a path step,
     opener_min_exposed: float = 0.0       # ... with this many free slots: this minimum
     stall_s: float = 4.0                  # belt colour without fill growth this long = stalled
+    stall_min_growth: int = 2             # fill points that count as growth (labels jitter by 1)
+    stall_forget_s: float = 3.0           # a belt colour out of sight this long is forgotten
+    weight_stalled_colour: float = 2.0    # penalty: one more bucket of a stalled colour = lost slot
+    path_cost_stalled: float = 3.0        # extra path cost of a step whose colour is stalled
     analyze_interval_s: float = 0.5       # overlay --dry-run: min seconds between analyses
     confirm_frames: int = 2               # consecutive agreeing analyses before a tap
     vision_fail_max_saves: int = 300      # failed reads saved to debug/vision_fail per run
@@ -275,9 +280,11 @@ def validate(cfg: Config) -> Config:
            st.path_good_avail, st.path_cost_low_exposure, st.path_step_cost,
            st.weight_path_bonus) < 0:
         raise ConfigError("strategy: unlock value / path weights must be >= 0")
-    if min(st.sufficiency_margin, st.analyze_interval_s, st.belt_demand_exposure, st.stall_s) < 0:
+    if min(st.sufficiency_margin, st.analyze_interval_s, st.belt_demand_exposure, st.stall_s,
+           st.stall_min_growth, st.stall_forget_s, st.weight_stalled_colour,
+           st.path_cost_stalled) < 0:
         raise ConfigError("strategy.sufficiency_margin, analyze_interval_s, "
-                          "belt_demand_exposure and stall_s must be >= 0")
+                          "belt_demand_exposure and the stall settings must be >= 0")
     b = cfg.bot
     if b.burst_max < 1 or b.burst_min_free < 2 or b.screen_confirm_frames < 1:
         raise ConfigError("bot.burst_max and screen_confirm_frames must be >= 1, "

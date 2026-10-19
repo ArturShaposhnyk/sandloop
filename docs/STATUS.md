@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 529 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 536 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -293,3 +293,18 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   result.json, bot.log. Post-mortem: `python -m tools.analyze_run [run_dir]`.
 - `Analyzer.analyze(adjust=...)` hook (the ledger amends the state before `choose`).
 - Analysis ~0.85 s/frame (screen classification ~0.7 s), so a confirmed move takes ~1.7 s.
+
+## Dry run 20261017-103804 (user playing, bot watching) + fixes (2026-10-19) — done, awaiting OK
+- Of the user's 18 moves the bot had picked the same cell for 11, the same colour for 2.
+- **Unlocked buckets**: right after a key opens a lock the bucket under it reads face-down
+  (padlock animation) and was refused; the user confirmed they are playable at once.
+  `hints.RecentUnlocks`: for `vision.unlock_trust_s` (10 s) after a key-lock cell reads as a
+  bucket / empty, the path rule alone decides (`GameView.unlocked`).
+- **Stalled colour**: cream sat at 99 % but the stall clock kept restarting (labels 99/98, frames
+  without cream), so a second cream (path step r4c5) was chosen. `BeltTracker` now needs
+  `stall_min_growth` points to count growth and keeps unseen colours for `stall_forget_s`.
+  Strategy: stalled colour = lost slot - rejected while the belt collects, else a penalised
+  last resort (`weight_stalled_colour`); planner path cost `path_cost_stalled`.
+- Regression tests: `tests/test_run_20261017.py` on 5 frames in `tests/data/run-20261017-103804/`,
+  belt jitter replay in `tests/test_state.py`, rules in `tests/test_strategy.py`.
+- Next: first live run `python -m bot --max-taps 3`.
