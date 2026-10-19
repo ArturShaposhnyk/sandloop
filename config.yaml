@@ -72,6 +72,13 @@ vision:                      # vision.py / screens.py; colours come from dataset
   disc_min_dist: 20.0        # face-down tower = centre disc this far (LAB) from the ring around it (open bucket: <= 5, disc: >= 76)
   unknown_sand_min: 0.03     # unknown sand colour = a compact cluster of unmatched pixels >= this share of the picture
   icon_threshold: 0.75       # lock / key icon match (grey shape; L183: icons >= 0.82, other cells <= 0.62)
+  # L186 chest (wooden box with a number) and mystery bucket (grey with "?"): colour shares
+  # against palette ui chest_wood / mystery_grey (chests 0.33-0.35 vs <= 0.06; mystery ~0.5)
+  chest_tol: 12.0
+  chest_min_wood: 0.2
+  mystery_tol: 10.0
+  mystery_min_grey: 0.3
+  lattice_switch_frames: 3   # the grid geometry is fixed in a level: a different one must hold this many frames (extra bottom rows are ignored)
   empty_tol: 10.0            # LAB distance to the empty-cell colour
   empty_min_frac: 0.5        # share of empty-colour pixels for an empty cell
   face_up_max_ratio: 0.88    # centre V / top-stage rim V below this = face-up (up <= 0.83, down >= 0.93)
@@ -141,6 +148,16 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   # else this penalty (a last resort); a path step of that colour costs path_cost_stalled extra
   weight_stalled_colour: 2.0
   path_cost_stalled: 3.0
+  # L186 chest: opening it (its cell connects to the exit) scatters N buckets into free cells
+  # at random. Penalty = weight_chest_cut x expected free cells on paths it fills (blocking one
+  # disconnects something) + weight_chest_free x share of free cells (few free cells: prefer
+  # it). A penalty, not a rule: with nothing better it still goes.
+  weight_chest_cut: 0.3
+  weight_chest_free: 0.3
+  # L186 mystery bucket: tapping a 4-neighbour reveals its colour (information)
+  weight_mystery_reveal: 0.05
+  weight_mystery_reachable: 0.15   # extra when the revealed bucket is then connected to the exit
+  chest_settle_s: 1.5        # a chest opened: no decision this long (its buckets are landing), then a full re-read
   analyze_interval_s: 0.5    # overlay --dry-run: min seconds between analyses
   confirm_frames: 2          # tap only after this many consecutive analyses chose the same move
   vision_fail_max_saves: 300 # failed reads (frame + step) saved to debug/vision_fail/ per run
@@ -169,6 +186,7 @@ bot:                         # python -m bot: plays one level (docs/GAME_RULES.m
   win_sand_max: 0.01         # no level_complete template yet: level left with less sand = win
   window_lost_max_s: 10.0    # no window / failed geometry check this long -> stop
   max_run_s: 900.0
+  disagree_report_s: 10.0    # a cell's look and the path rule disagree this long while there is no move: log STUCK + save the frame
   loop_interval_s: 0.05
   max_saved_frames: 1500     # PNGs per run in debug/runs/<stamp>/frames/
 

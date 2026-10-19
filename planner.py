@@ -20,11 +20,12 @@ Pure logic on ``state.LevelState``, used by ``strategy.choose`` (greedy + 1 with
 """
 from __future__ import annotations
 
+import copy
 import heapq
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
-from cells import Kind
+from cells import Cell, Kind
 from config import StrategyConfig
 from state import LevelState, Pos
 
@@ -169,7 +170,8 @@ def shortest_path(state: LevelState, target: Pos, costs: Dict[Pos, float]
 
 def replay(state: LevelState, steps: List[Pos], check: Check) -> Optional[str]:
     """Tap the steps one by one: why the path is not safe, or None if every step passes the
-    release rules in the state it would be tapped in."""
+    release rules in the state it would be tapped in. A step that opens a chest ends the plan
+    unless it is the last one: the chest scatters buckets at random, the rest is unknown."""
     st = state
     for i, p in enumerate(steps, 1):
         r, c = p
@@ -179,7 +181,55 @@ def replay(state: LevelState, steps: List[Pos], check: Check) -> Optional[str]:
         if why:
             return f"step {i} r{r}c{c}: {why}"
         st = st.after_tap(p)
+        if st.chests_opened and i < len(steps):
+            (cr, cc), n = st.chests_opened[0]
+            return f"step {i} r{r}c{c} opens chest r{cr}c{cc} ({n} buckets scatter)"
     return None
+
+
+@dataclass
+class ScatterRisk:
+    """What a chest opening may do (GAME_RULES.md, L186): its N buckets land in N of the free
+    cells at random (worst case: they block paths)."""
+    landing: int                  # free cells they can land in (empty cells + the chest cells)
+    important: int                # ... of which blocking one disconnects an occupied cell
+    buckets: int                  # buckets scattered (sum of N)
+    cells: int                    # grid cells
+
+    @property
+    def expected_cuts(self) -> float:
+        """Expected number of important cells hit."""
+        if not self.landing:
+            return 0.0
+        return min(self.buckets, self.landing) * self.important / self.landing
+
+    @property
+    def free_share(self) -> float:
+        return self.landing / self.cells if self.cells else 0.0
+
+
+def scatter_risk(after: LevelState) -> Optional[ScatterRisk]:
+    """Risk of the chests opened in ``after`` (a LevelState.after_tap result), None if none.
+    Important free cell = blocking it alone disconnects an occupied cell (bucket, key, lock,
+    chest) the path rule connects now."""
+    if not after.chests_opened:
+        return None
+    chests = {p for p, _ in after.chests_opened}
+    free = [(r, c) for r, row in enumerate(after.grid) for c, cell in enumerate(row)
+            if cell is not None and (cell.kind is Kind.EMPTY or (r, c) in chests)]
+    trial = copy.deepcopy(after)
+    for p in chests:   # the chest cells are free again in the real game (landing spots)
+        trial.grid[p[0]][p[1]] = Cell(p[0], p[1], Kind.EMPTY)
+    base = trial.connected()
+    important = 0
+    for r, c in free:
+        saved = trial.grid[r][c]
+        trial.grid[r][c] = Cell(r, c, Kind.UNKNOWN)
+        if not base - {(r, c)} <= trial.connected():
+            important += 1
+        trial.grid[r][c] = saved
+    cells = sum(cell is not None for row in after.grid for cell in row)
+    return ScatterRisk(len(free), important, sum(n for _, n in after.chests_opened), cells)
 
 
 def plan(state: LevelState, check: Check, sc: StrategyConfig) -> List[Plan]:

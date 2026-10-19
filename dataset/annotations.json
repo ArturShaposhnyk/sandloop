@@ -1,5 +1,5 @@
 {
-  "_doc": "Hand annotations of dataset/screens (shots referenced by their 3-digit sequence number). Used by tools/build_palette.py to build dataset/palette.json + templates, and by tests as ground truth. Grid cells (rows top=conveyor side, 0-based): '.' empty, 'x' not a grid cell, 'iceN' ice block with counter N, 'curN' cell covered by a curtain with counter N, '<color>-up|down' bucket, '<top>/<body>-up|down' tower bucket (top stage color / body color), 'lock:<colour>' lock icon (buckets underneath, opened by the key of the same colour), 'key:<colour>' key in its own cell. 'belts': settled conveyor buckets left to right (not the uncertain edge slots), '<top>/<next stage>' for a tower; 'sand_colors': colours in a shot's picture, when some have no visible bucket (hidden under curtains / locks). Rects are relative [x0, y0, x1, y1] of the iPhone screen.",
+  "_doc": "Hand annotations of dataset/screens (shots referenced by their 3-digit sequence number). Used by tools/build_palette.py to build dataset/palette.json + templates, and by tests as ground truth. Grid cells (rows top=conveyor side, 0-based): '.' empty, 'x' not a grid cell, 'iceN' ice block with counter N, 'curN' cell covered by a curtain with counter N, '<color>-up|down' bucket, '<top>/<body>-up|down' tower bucket (top stage color / body color), 'lock:<colour>' lock icon (buckets underneath, opened by the key of the same colour), 'key:<colour>' key in its own cell, 'chestN' chest showing N (L186), 'mystery' grey mystery bucket with '?' (L186); a wall is a hole in the panel: 'x'. 'belts': settled conveyor buckets left to right (not the uncertain edge slots), '<top>/<next stage>' for a tower; 'sand_colors': colours in a shot's picture, when some have no visible bucket (hidden under curtains / locks). Rects are relative [x0, y0, x1, y1] of the iPhone screen.",
   "grids": {
     "001": ["blue-up blue-up . blue-up blue-up",
             "ice17 pink-down magenta-up pink-down ice12",
@@ -49,7 +49,19 @@
             "cream-down orange-down x x x lock:red x",
             "green-down darkgreen/cyan-down key:red x green-down cream-down green/cyan-down",
             "darkgreen-down cur10 cur10 x cur15 cur15 darkgreen-down",
-            "cyan-down cur10 cur10 x cur15 cur15 orange-down"]
+            "cyan-down cur10 cur10 x cur15 cur15 orange-down"],
+    "057": [". . . . . . .",
+            "cur7 cur7 . . . cur17 cur17",
+            "cur7 cur7 . red-up . cur17 cur17",
+            ". magenta-up . x pink-up magenta-down .",
+            "darkgreen-down chest4 orange-up red-down orange-down chest4 darkgreen-down",
+            "red-down mystery cream-down magenta-down cream-down mystery red-down"],
+    "058": [". . . . . . .",
+            "cur1 cur1 . . . cur11 cur11",
+            "cur1 cur1 . . . cur11 cur11",
+            "pink-up . . x pink-up magenta-down magenta-down",
+            "darkgreen-up . orange-up red-down red-down . darkgreen-down",
+            "red-up . cream-up magenta-down cream-down darkgreen-down red-down"]
   },
   "belts": {
     "004": ["magenta", "pink", "cyan"],
@@ -96,6 +108,8 @@
   "ui_colors": {
     "panel_bg": [["008", [0.02, 0.70, 0.12, 0.80]], ["043", [0.02, 0.70, 0.12, 0.80]]],
     "picture_empty": [["011", [0.25, 0.14, 0.45, 0.22]], ["035", [0.20, 0.135, 0.35, 0.20]]],
-    "curtain_gold": [["001", [0.47, 0.6795, 0.62, 0.6855]]]
+    "curtain_gold": [["001", [0.47, 0.6795, 0.62, 0.6855]]],
+    "chest_wood": [["057", [0.2274, 0.7627, 0.2508, 0.7935]], ["057", [0.6765, 0.7627, 0.6999, 0.7935]]],
+    "mystery_grey": [["057", [0.2375, 0.8182, 0.2575, 0.8359]], ["057", [0.2943, 0.8182, 0.311, 0.8359]]]
   }
 }

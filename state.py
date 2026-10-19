@@ -73,6 +73,9 @@ class LevelState:
     belt_stalled: Dict[str, float] = field(default_factory=dict)  # colour -> s without fill growth
     unlocked: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)
     # ^ after_tap: (colour, lock cells) opened by keys that flew because of the simulated tap
+    chests_opened: List[Tuple[Pos, int]] = field(default_factory=list)
+    # ^ after_tap: chests the simulated tap connects (cell, number of buckets they scatter)
+    revealed: List[Pos] = field(default_factory=list)   # after_tap: mystery buckets revealed
     lower: Dict[str, float] = field(default_factory=dict)     # share of the picture's lower part
 
     # -- construction ---------------------------------------------------------------------
@@ -157,8 +160,12 @@ class LevelState:
 
     @property
     def hidden_buckets(self) -> int:
-        """Buckets of unknown colour: one under every curtain cell and every lock cell."""
-        return sum(len(lock.cells) for lock in self.locks if lock.kind in ("curtain", "lock"))
+        """Buckets of unknown colour: one under every curtain cell and every lock cell, one per
+        mystery bucket, N in a chest showing N (unread: 1), and opened cells not seen yet."""
+        n = sum(len(lock.cells) for lock in self.locks
+                if lock.kind in ("curtain", "lock", "mystery"))
+        n += sum(lock.counter or 1 for lock in self.locks if lock.kind == "chest")
+        return n + sum(c.hidden for c in self.cells(Kind.UNKNOWN))
 
     def pending_buckets(self) -> float:
         """Bucket capacities still to fill: grid + hidden + what the conveyor still needs.
@@ -184,8 +191,10 @@ class LevelState:
             raise ValueError(f"no bucket at {pos}")
         nxt = copy.deepcopy(self)
         nxt._release_keys()   # keys already connected are flying anyway: not this tap's credit
+        nxt._open_chests()    # ... and chests already connected open anyway
         r, c = pos
         nxt.grid[r][c] = Cell(r, c, Kind.EMPTY)
+        nxt.revealed = nxt._reveal_mysteries(pos)
         nxt.locks = [Lock(l.kind, l.unlock, max(0, l.counter - 1), l.cells)
                      if l.unlock == "taps" and l.counter is not None else l for l in self.locks]
         for lock in nxt.locks:
@@ -194,6 +203,7 @@ class LevelState:
                 if lcell is not None and lcell.kind is Kind.LOCK:
                     lcell.counter = lock.counter
         nxt.unlocked = nxt._release_keys()
+        nxt.chests_opened = nxt._open_chests()
         nxt.conveyor = self.conveyor + [
             ConveyorBucket(cell.color, 0, stages=(cell.body,) if cell.body else ())]
         nxt.conveyor_k = None if self.conveyor_k is None else self.conveyor_k + 1
@@ -226,6 +236,36 @@ class LevelState:
                     self.grid[lr][lc] = Cell(lr, lc, Kind.UNKNOWN,
                                              reason="opened lock: bucket colour not seen yet")
                 opened.append((key.color or "?", target.cells))
+
+    def _open_chests(self) -> List[Tuple[Pos, int]]:
+        """Chests the path rule connects to the exit open and scatter N buckets of unknown colour
+        into free cells (GAME_RULES.md, L186). Where they land is random: worst case they block
+        paths, so the chest's cell stays an obstacle (UNKNOWN) and the strategy prices the
+        scatter (planner.scatter_risk); the bot re-reads the whole grid after it."""
+        conn = self.connected()
+        opened = []
+        for lock in [l for l in self.locks if l.kind == "chest" and l.cells[0] in conn]:
+            (cr, cc), = lock.cells
+            self.locks.remove(lock)
+            n = lock.counter or 1
+            self.grid[cr][cc] = Cell(cr, cc, Kind.UNKNOWN, hidden=n,
+                                     reason=f"chest opened: {n} buckets scatter")
+            opened.append(((cr, cc), n))
+        return opened
+
+    def _reveal_mysteries(self, pos: Pos) -> List[Pos]:
+        """Tapping a bucket reveals the mystery buckets 4-adjacent to it: normal buckets from
+        then on, colour not seen yet (UNKNOWN here)."""
+        r, c = pos
+        out = []
+        for lock in [l for l in self.locks if l.kind == "mystery"]:
+            (mr, mc), = lock.cells
+            if abs(mr - r) + abs(mc - c) == 1:
+                self.locks.remove(lock)
+                self.grid[mr][mc] = Cell(mr, mc, Kind.UNKNOWN, hidden=1,
+                                         reason="mystery revealed: colour not seen yet")
+                out.append((mr, mc))
+        return out
 
     def opened_by(self, pos: Pos) -> Tuple[List[Pos], List[Pos]]:
         """Lookahead of one tap: (buckets, lock cells) that become connected to the exit."""

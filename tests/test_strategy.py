@@ -245,7 +245,7 @@ def test_tie_break_prefers_colour_not_on_the_belt():
 
 def test_belt_stall_across_frames(analyzer):  # noqa: F811
     """The same frame twice, 10 s apart: the red bucket's fill didn't grow -> stalled."""
-    from strategy import Analyzer
+    from analyzer import Analyzer
 
     an = Analyzer(analyzer.cfg)
     img = shot("052")
@@ -273,7 +273,7 @@ def test_draw_decision_marks_the_move(analyzer):  # noqa: F811
 
 def test_dry_run_analyses_only_stable_frames_and_annotates():
     pytest.importorskip("cv2")
-    from strategy import Analysis
+    from analyzer import Analysis
     from tools.overlay import DryRun
 
     calls = []
@@ -307,7 +307,7 @@ def test_dry_run_tools_never_import_actions():
 def _fresh_analyzer(analyzer, tmp_path, max_saves=300):  # noqa: F811
     import dataclasses
 
-    from strategy import Analyzer
+    from analyzer import Analyzer
 
     cfg = dataclasses.replace(analyzer.cfg, paths=dataclasses.replace(analyzer.cfg.paths,
                                                                        debug=str(tmp_path)),
@@ -353,7 +353,8 @@ def test_failed_read_saves_are_capped(analyzer, tmp_path):  # noqa: F811
 
 
 def test_decision_gate_needs_consecutive_agreeing_reads():
-    from strategy import Analysis, Candidate, Decision, DecisionGate
+    from analyzer import Analysis, DecisionGate
+    from strategy import Candidate, Decision
 
     def res(pos=None, color="red", failure=None):
         move = None if pos is None else Candidate(pos, color)

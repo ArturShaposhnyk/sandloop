@@ -60,10 +60,12 @@ class Bot:
                  dry_run: bool = False, max_taps: Optional[int] = None,
                  clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep) -> None:
-        from strategy import DecisionGate
+        from analyzer import DecisionGate
 
         self.cfg, self.bc = cfg, cfg.bot
         self.analyzer, self.tapper, self.grab, self.geometry = analyzer, tapper, grab, geometry
+        if hasattr(analyzer, "reset_level"):
+            analyzer.reset_level()
         self.log, self.controls, self.failsafe = log, controls, failsafe
         self.dry_run, self.max_taps = dry_run, max_taps
         self.clock, self.sleep = clock, sleep
@@ -83,6 +85,8 @@ class Bot:
         self.last_sand: Optional[float] = None
         self.last_reason: Optional[str] = None
         self.lost_since: Optional[float] = None
+        self.disagree_since: Dict[Tuple[int, int], float] = {}   # cell -> look != path rule since
+        self.disagree_reported = -1e9
         self.was_paused = False
 
     # -- main loop --------------------------------------------------------------------------
@@ -194,6 +198,7 @@ class Bot:
                              confirmed=confirmed is not None, **analysis_record(res))
         self.log.belt(self.frame_no, res)
         self._report(res, frame, confirmed is not None, rec)
+        self._watch_disagreements(res, frame, now)
         if confirmed is not None:
             self._play(res, frame, confirmed, now)
         if st is not None and res.failure is None:
@@ -213,6 +218,28 @@ class Bot:
             if not confirmed:
                 self.log.frame(f"{self.frame_no:05d}-wait", frame)
             self.last_reason = reason
+
+    def _watch_disagreements(self, res: Any, frame: np.ndarray, now: float) -> None:
+        """A cell whose look and path rule disagree is never tapped. When that has lasted
+        ``disagree_report_s`` and the bot has no other move, say so and save the frame (again
+        every ``disagree_report_s``) instead of waiting silently (live run 20261019-162703)."""
+        view = res.view
+        if res.failure or view is None:
+            return
+        self.disagree_since = {p: self.disagree_since.get(p, now)
+                               for p in map(tuple, view.disagreements)}
+        old = sorted(p for p, t in self.disagree_since.items()
+                     if now - t >= self.bc.disagree_report_s)
+        waiting = res.decision is not None and res.decision.move is None
+        if not (waiting and old) or now - self.disagree_reported < self.bc.disagree_report_s:
+            return
+        self.disagree_reported = now
+        cells = [f"r{r}c{c} {view.grid[r][c].label()}" for r, c in old]
+        png = self.log.frame(f"{self.frame_no:05d}-stuck-disagree", frame)
+        self.log.log(f"STUCK: no move, and {', '.join(cells)} look different from what the path "
+                     f"rule says for >= {self.bc.disagree_report_s:.0f}s (misread grid?) - frame "
+                     f"saved: {png}")
+        self.log.event("stuck", frame=self.frame_no, cells=cells, png=png)
 
     def _non_gameplay(self, res: Any, frame: np.ndarray) -> None:
         self.non_game += 1
@@ -342,7 +369,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     from actions import Tapper
     from capture import Grabber, WindowTracker
     from safety import Failsafe, Hotkeys
-    from strategy import Analyzer
+    from analyzer import Analyzer
 
     cfg = load_config(args.config)
     permissions.require(screen=True, accessibility=not args.dry_run)

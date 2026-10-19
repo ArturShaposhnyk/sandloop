@@ -1,7 +1,9 @@
 """Grid cell model and classification (see docs/GAME_RULES.md).
 
 Every grid cell is one of: EMPTY, BUCKET (with colour and visual face up/down), LOCK (a known
-lock type such as ice or curtain, with its counter) or UNKNOWN. UNKNOWN cells are never tapped.
+lock type such as ice, curtain, chest or mystery bucket, with its counter) or UNKNOWN. UNKNOWN
+cells are never tapped. A wall (L186) is a hole in the grid panel, drawn in the panel's own
+colour: the lattice has no cell there (None, 'x'), which blocks paths like a wall.
 
 Lock types are data-driven: each one is an entry in ``CELL_LOCKS`` (single-cell locks, decided from
 the cell's own features) or produced by a region detector in ``vision.py`` (multi-cell locks such
@@ -43,6 +45,7 @@ class Cell:
     occluded: bool = False            # hidden by a game hint arrow (hints.py): never tapped
     seen_lab: Optional[Lab] = None    # bucket: the LAB its top colour was read from (debug)
     seen_from: str = ""               # ... and where: "rim" (open bucket) | "top" | "disc"
+    hidden: int = 0                   # lookahead (state.py): buckets of unknown colour here
 
     @property
     def is_obstacle(self) -> bool:
@@ -80,6 +83,8 @@ class CellFeatures:
     icon: Optional[str] = None        # icon template matched in the cell ("lock", "key"), if any
     icon_color: Optional[str] = None  # its colour from the palette's ``keys`` group
     icon_lab: Optional[Lab] = None    # the icon's colour as seen
+    wood_frac: float = 0.0            # share of chest-wood pixels (palette ui "chest_wood")
+    grey_frac: float = 0.0            # share of mystery-grey pixels (palette ui "mystery_grey")
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,7 @@ class CellLock:
     counter_polarity: str = "light"                         # digit colour for digits.py
     coloured: bool = False         # has a colour (lock/key pairs); unknown colour = UNKNOWN cell
     before_empty: bool = False     # checked before "empty" (a key sits on an empty-looking cell)
+    counter: str = "optional"      # "optional" | "required" (unread: not this lock) | "none"
 
 
 def _is_ice(f: CellFeatures, v: VisionConfig) -> bool:
@@ -102,11 +108,18 @@ def _is_ice(f: CellFeatures, v: VisionConfig) -> bool:
 ICON_LOCKS = ("lock", "key")
 
 # Single-cell locks, checked in order after "empty" (unless before_empty) and before "bucket".
+# chest (L186): a wooden box with a number N; opens when the path rule connects it (like a key)
+# and scatters N buckets into free cells. mystery (L186): a grey bucket with "?", its colour is
+# revealed when a 4-neighbour bucket is tapped (the "?" reads as a digit: no counter).
 CELL_LOCKS: List[CellLock] = [
     CellLock("lock", "key", lambda f, v: f.icon == "lock", coloured=True, before_empty=True),
     CellLock("key", "path", lambda f, v: f.icon == "key", coloured=True, before_empty=True),
     CellLock("ice", "taps", _is_ice),
+    CellLock("chest", "path", lambda f, v: f.wood_frac >= v.chest_min_wood, counter="required"),
+    CellLock("mystery", "adjacent", lambda f, v: f.grey_frac >= v.mystery_min_grey,
+             counter="none"),
 ]
+CELL_LOCK_BY_NAME = {lock.name: lock for lock in CELL_LOCKS}
 
 
 def icon_lab(cell_bgr: np.ndarray) -> Optional[Lab]:
@@ -174,6 +187,11 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
     med = lambda m: (tuple(float(x) for x in np.median(lab[m], axis=0))  # noqa: E731
                      if m.sum() >= 10 else None)
     rim = upper & (V >= np.percentile(V[upper], v.rim_percentile)) if upper.sum() >= 20 else upper
+    def share(name: str, tol: float) -> float:
+        if name not in palette.ui:
+            return 0.0
+        return float((lab_distance(lab, palette.ui[name]) < tol).mean())
+
     return CellFeatures(
         empty_frac=float(empty.mean()),
         white_frac=float(((S < 50) & (V > 235)).mean()),
@@ -185,6 +203,8 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
         centre_lab=med(mid),  # type: ignore[arg-type]
         ring_lab=med(ring),  # type: ignore[arg-type]
         rim_lab=med(rim),  # type: ignore[arg-type]
+        wood_frac=share("chest_wood", v.chest_tol),
+        grey_frac=share("mystery_grey", v.mystery_tol),
     )
 
 

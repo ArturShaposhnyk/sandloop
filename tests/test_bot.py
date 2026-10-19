@@ -80,7 +80,7 @@ def cfg():
 
 @pytest.fixture(scope="module")
 def analyzer(cfg):
-    from strategy import Analyzer
+    from analyzer import Analyzer
 
     return Analyzer(cfg)
 

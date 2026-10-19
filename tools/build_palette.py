@@ -43,8 +43,8 @@ def read_shot(dataset: Path, seq: str) -> np.ndarray:
 
 
 def parse_label(label: str) -> Tuple[str, Optional[str], Optional[str], Optional[bool], Optional[int]]:
-    """'.', 'x', 'ice17', 'cur12', 'red-up', 'cream/red-down', 'lock:red', 'key:yellow' ->
-    (kind, color, body, face_up, counter)."""
+    """'.', 'x', 'ice17', 'cur12', 'chest4', 'mystery', 'red-up', 'cream/red-down', 'lock:red',
+    'key:yellow' -> (kind, color, body, face_up, counter)."""
     for kind in ("lock", "key"):
         if label.startswith(kind + ":"):
             return kind, label[len(kind) + 1:], None, None, None
@@ -52,7 +52,9 @@ def parse_label(label: str) -> Tuple[str, Optional[str], Optional[str], Optional
         return "empty", None, None, None, None
     if label == "x":
         return "none", None, None, None, None
-    for prefix, kind in (("ice", "ice"), ("cur", "curtain")):
+    if label == "mystery":
+        return "mystery", None, None, None, None
+    for prefix, kind in (("ice", "ice"), ("cur", "curtain"), ("chest", "chest")):
         if label.startswith(prefix):
             num = label[len(prefix):]
             return kind, None, None, None, int(num) if num else None

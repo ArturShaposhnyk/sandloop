@@ -37,7 +37,7 @@ def test_save_report_with_dry_run_decision(tmp_path):
     """The report must carry what is needed to explain a bad move: raw + annotated frame and
     the decision with every candidate."""
     from tests.test_state import shot
-    from strategy import Analyzer
+    from analyzer import Analyzer
     from tools.overlay import DryRun, save_report
     from config import load_config
     from pathlib import Path

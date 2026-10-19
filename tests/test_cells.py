@@ -75,8 +75,21 @@ def test_cell_label_notation():
 def test_lock_registry_is_data():
     names = [lock.name for lock in CELL_LOCKS]
     assert len(names) == len(set(names)) and "ice" in names
-    assert all(lock.unlock in ("taps", "fills", "key", "path") for lock in CELL_LOCKS)
-    assert {"lock", "key"} <= set(names)
+    assert all(lock.unlock in ("taps", "fills", "key", "path", "adjacent") for lock in CELL_LOCKS)
+    assert {"lock", "key", "chest", "mystery"} <= set(names)
+    assert all(lock.counter in ("optional", "required", "none") for lock in CELL_LOCKS)
+
+
+def test_chest_and_mystery_from_colour_shares():
+    from config import VisionConfig
+
+    v = VisionConfig()
+    chest = classify_cell(0, 0, feats(wood_frac=0.33), PAL, v)
+    assert chest.kind is Kind.LOCK and chest.lock == "chest" and chest.unlock == "path"
+    assert Cell(0, 0, Kind.LOCK, lock="chest", counter=4).label() == "chest4"
+    mystery = classify_cell(0, 0, feats(grey_frac=0.5), PAL, v)
+    assert mystery.kind is Kind.LOCK and mystery.label() == "mystery"
+    assert classify_cell(0, 0, feats(wood_frac=0.06, grey_frac=0.1), PAL, v).kind is Kind.BUCKET
 
 
 PAL = Palette(buckets={"red": [(50.0, 60.0, 40.0)], "blue": [(35.0, 20.0, -60.0)]},

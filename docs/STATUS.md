@@ -12,7 +12,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 536 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 581 passed, 1 xfailed (screen 020, see below).
 
 ## Key commands
 ```bash
@@ -307,4 +307,25 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   last resort (`weight_stalled_colour`); planner path cost `path_cost_stalled`.
 - Regression tests: `tests/test_run_20261017.py` on 5 frames in `tests/data/run-20261017-103804/`,
   belt jitter replay in `tests/test_state.py`, rules in `tests/test_strategy.py`.
-- Next: first live run `python -m bot --max-taps 3`.
+- First live run done (L186, below).
+
+## First live run 20261019-162703 (L186) + chests / mystery / walls (2026-10-19) — done, awaiting OK
+- 9 good taps, then frozen at 4/5. Cause: not the path rule. In runs of frames the boosters below
+  the grid joined the grid region, the lattice got a 7th row with a smaller pitch and every cell
+  was read across two rows; the 7-row frames chose nothing, the correct 6-row frames r4c0
+  darkgreen, so the 2-frame gate never confirmed. Fix: `hints.LatticeLock` (the level's grid
+  geometry; `Analyzer.reset_level()`, called by bot.py / overlay), regression with a synthetic
+  booster bridge on shot 058. Watchdog: STUCK log + frame after `bot.disagree_report_s`.
+- New cell types (GAME_RULES "Chest", "Mystery bucket", "Wall"): `chestN` / `mystery` locks in
+  `cells.CELL_LOCKS` from palette ui colours `chest_wood` / `mystery_grey` (built from shot 057);
+  walls are panel-coloured holes = `x`. Grey-shape templates did not work (the sprites are drawn
+  in perspective: left and right chests correlate at 0.2).
+- Lookahead / strategy: chests open when connected (risk penalty `planner.scatter_risk`, plans end
+  at a chest), mystery reveal bonus; Analyzer waits `chest_settle_s` after a chest opened and
+  re-reads. `strategy.py` was split: `analyzer.py` (Analysis, Analyzer, DecisionGate).
+- Dataset: shots 057 (L186 start) / 058 (the frozen state) annotated; palette rebuilt (new ui
+  colours; a few bucket looks refined by the new samples). Tests: `tests/test_run_20261019.py`,
+  `tests/test_chests.py`, frames in `tests/data/run-20261019-162703/`.
+- Open: no frame of the actual 7-row misread was saved (frames are saved on decision changes
+  only); the regression uses a synthetic bridge. The chest-opening flash reads as an unknown
+  yellow (`dataset/unknown_colours/` 20261019-*): not a bucket colour, nothing to add.

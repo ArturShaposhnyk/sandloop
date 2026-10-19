@@ -89,6 +89,11 @@ class VisionConfig:
     disc_min_dist: float = 20.0       # face-down tower: LAB distance disc vs the ring around it
     unknown_sand_min: float = 0.03    # share of the picture for an unknown sand colour
     icon_threshold: float = 0.75      # lock / key icon template match (other cells <= 0.62)
+    chest_tol: float = 12.0           # LAB distance to palette ui "chest_wood"
+    chest_min_wood: float = 0.2       # chest: wood share (L186 chests 0.33, others <= 0.06)
+    mystery_tol: float = 10.0         # LAB distance to palette ui "mystery_grey"
+    mystery_min_grey: float = 0.3     # mystery bucket: share of grey pixels (L186: 0.5)
+    lattice_switch_frames: int = 3    # a different grid geometry must hold this many frames
     hint_threshold: float = 0.8       # hint arrow template match (hints.py)
     hint_scales: List[float] = field(default_factory=lambda: [0.9, 1.0, 1.1])
     hint_downscale: float = 0.5       # hint arrows are matched on the grid zone scaled by this
@@ -153,6 +158,12 @@ class StrategyConfig:
     stall_forget_s: float = 3.0           # a belt colour out of sight this long is forgotten
     weight_stalled_colour: float = 2.0    # penalty: one more bucket of a stalled colour = lost slot
     path_cost_stalled: float = 3.0        # extra path cost of a step whose colour is stalled
+    # L186 chests / mystery buckets (bot heuristics on the user's rules, GAME_RULES.md)
+    weight_chest_cut: float = 0.3         # penalty per expected path cell a chest scatter fills
+    weight_chest_free: float = 0.3        # penalty x share of free cells (prefer few free cells)
+    weight_mystery_reveal: float = 0.05   # bonus per mystery bucket the tap reveals
+    weight_mystery_reachable: float = 0.15  # ... extra if it is connected to the exit after
+    chest_settle_s: float = 1.5           # after a chest opened: no decision this long
     analyze_interval_s: float = 0.5       # overlay --dry-run: min seconds between analyses
     confirm_frames: int = 2               # consecutive agreeing analyses before a tap
     vision_fail_max_saves: int = 300      # failed reads saved to debug/vision_fail per run
@@ -178,6 +189,7 @@ class BotConfig:
     win_sand_max: float = 0.01           # level ends with less sand than this -> inferred win
     window_lost_max_s: float = 10.0      # window missing / geometry check failing this long -> stop
     max_run_s: float = 900.0             # safety stop for one level
+    disagree_report_s: float = 10.0      # look != path rule this long with no move: log + frame
     loop_interval_s: float = 0.05        # min seconds between captures
     max_saved_frames: int = 1500         # PNGs per run in debug/runs/<stamp>/frames/
 
@@ -268,6 +280,10 @@ def validate(cfg: Config) -> Config:
     if not v.template_scales or not all(isinstance(s, (int, float)) and s > 0
                                         for s in v.template_scales):
         raise ConfigError("vision.template_scales must be a non-empty list of numbers > 0")
+    if min(v.chest_tol, v.chest_min_wood, v.mystery_tol, v.mystery_min_grey,
+           v.unlock_trust_s) < 0 or v.lattice_switch_frames < 1:
+        raise ConfigError("vision chest / mystery / unlock settings must be >= 0 and "
+                          "lattice_switch_frames >= 1")
     st = cfg.strategy
     if st.conveyor_slots < 1 or st.confirm_frames < 1:
         raise ConfigError("strategy.conveyor_slots and confirm_frames must be >= 1")
@@ -282,13 +298,16 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("strategy: unlock value / path weights must be >= 0")
     if min(st.sufficiency_margin, st.analyze_interval_s, st.belt_demand_exposure, st.stall_s,
            st.stall_min_growth, st.stall_forget_s, st.weight_stalled_colour,
-           st.path_cost_stalled) < 0:
+           st.path_cost_stalled, st.weight_chest_cut, st.weight_chest_free,
+           st.weight_mystery_reveal, st.weight_mystery_reachable, st.chest_settle_s) < 0:
         raise ConfigError("strategy.sufficiency_margin, analyze_interval_s, "
                           "belt_demand_exposure and the stall settings must be >= 0")
     b = cfg.bot
     if b.burst_max < 1 or b.burst_min_free < 2 or b.screen_confirm_frames < 1:
         raise ConfigError("bot.burst_max and screen_confirm_frames must be >= 1, "
                           "burst_min_free >= 2 (a burst never takes the last slot)")
+    if b.disagree_report_s <= 0:
+        raise ConfigError("bot.disagree_report_s must be > 0")
     if b.max_no_effect_taps < 1 or b.max_saved_frames < 0:
         raise ConfigError("bot.max_no_effect_taps must be >= 1, max_saved_frames >= 0")
     if min(b.settle_min_s, b.settle_threshold, b.burst_min_avail, b.burst_gap_s,

@@ -34,6 +34,26 @@
     no unlock when a key's colour has several separate locks.
   - Every lock in L183 covers one cell; adjacent lock cells of one colour are treated as one lock
     (not confirmed).
+- **Chest** (L186, confirmed by the user): an orange wooden box with a number N, in its own cell.
+  An obstacle for the path rule. It opens by itself when the path rule connects its cell to the
+  exit (like a key) and scatters **N buckets** (colours from the level's palette, random) into
+  free cells; buckets that were open can become closed because the new ones block paths.
+  - Vision: chest-wood colour share (palette ui `chest_wood`) **and** a readable number; wood
+    without a number is not a chest (a fading yellow padlock looks similar).
+  - Lookahead: a tap that connects a chest opens it; worst case its cell stays an obstacle and
+    its N buckets count as pending (unknown colour). A planned path ends at a step that opens a
+    chest (the board after it is unknown).
+  - After a chest opened (it is gone from the grid), the bot decides nothing for
+    `strategy.chest_settle_s` and forgets old cell readings: the next decision is on a full
+    re-read of the grid.
+- **Mystery bucket** (L186, confirmed by the user): grey with "?", colour unknown. Revealed only
+  when a bucket **directly 4-adjacent** to it is tapped (an original one or one a chest
+  scattered); from then on it is a normal bucket under the path rule. Until then an obstacle,
+  never tapped, counted as one pending bucket. Vision: grey share (palette ui `mystery_grey`);
+  the "?" is not read as a counter.
+- **Wall** (L186, confirmed by the user): a dark grey cell, never passable, never tappable. On
+  screen it is a hole in the grid panel in the panel's own colour (LAB = `panel_bg`), so the
+  lattice has no cell there (`x`), which blocks paths exactly like a wall.
 - Tower bucket = stacked buckets in one cell (confirmed by the user, L183):
   - Tapping a tower sends the **whole tower** to the conveyor; its cell is **empty at once**
     (so the path rule, key release etc. apply immediately).
@@ -140,6 +160,27 @@
 - Overlay / report text: `r2c3 darkred -> opens r3c3 cream, r4c2 darkred (useful)`,
   `path to r5c1 darkred: step 1/3`, `path to key yellow: step 1/2` (rejected paths with the
   failing step and why).
+
+## Chests and mystery buckets (user, 2026-10-19, L186; weights in `config.yaml` `strategy:`)
+- A move that opens a path to a chest is risky: its N buckets fill up to N free cells and can
+  close paths. Prefer it when free cells are few, when it doesn't cut off important paths, or
+  when nothing better is available. Bot heuristic (`planner.scatter_risk`): penalty =
+  `weight_chest_cut` x expected number of "important" free cells hit (blocking one alone
+  disconnects a bucket / key / lock now connected; N buckets land uniformly in the free cells)
+  + `weight_chest_free` x share of the grid's cells that are free. A penalty, never a rule.
+- Tapping a bucket next to a mystery bucket reveals its colour: small bonus
+  `weight_mystery_reveal` (information) + `weight_mystery_reachable` when the revealed bucket is
+  connected to the exit afterwards (with the path rule that is always the case right after the
+  tap: the tapped cell becomes an empty cell on the exit side).
+
+## Grid geometry (live run 20261019-162703, L186)
+- The grid's shape is fixed within a level. The boosters below the grid can pulse into the grid
+  zone when the player is idle; the grid region then grew by ~0.7 row and the lattice gained a
+  row, shifting every cell (towers that are really two buckets, boosters read as buckets). The
+  bot keeps the level's lattice (`hints.LatticeLock`): extra rows at the bottom are ignored, any
+  other change must hold `vision.lattice_switch_frames` frames.
+- If a cell's look and the path rule still disagree for `bot.disagree_report_s` while there is no
+  other move, the bot logs STUCK and saves the frame (`stuck` event) instead of waiting silently.
 
 ## Unknown colours
 - New levels bring new bucket / sand colours (L183: green and dark green grass). A bucket colour

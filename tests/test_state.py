@@ -12,7 +12,7 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
                ) -> LevelState:
     """Rows of space-separated cells: '.' empty, 'x' no cell, 'ice3' lock, 'cur2' curtain cell,
     'red' face-up bucket, 'red_' face-down bucket, 'red/blue' tower (top/body),
-    'lock:red' / 'key:red' lock icon / key."""
+    'lock:red' / 'key:red' lock icon / key, 'chest4' chest, 'mystery' mystery bucket."""
     grid = []
     for r, line in enumerate(rows):
         out = []
@@ -27,6 +27,10 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
                 kind, _, colour = t.partition(":")
                 out.append(Cell(r, c, Kind.LOCK, lock=kind,
                                 unlock="key" if kind == "lock" else "path", color=colour))
+            elif t.startswith("chest"):
+                out.append(Cell(r, c, Kind.LOCK, lock="chest", unlock="path", counter=int(t[5:])))
+            elif t == "mystery":
+                out.append(Cell(r, c, Kind.LOCK, lock="mystery", unlock="adjacent"))
             elif t.startswith("cur"):
                 out.append(Cell(r, c, Kind.LOCK, lock="curtain", unlock="fills",
                                 counter=int(t[3:]), region=0))
@@ -172,7 +176,7 @@ def analyzer():
     from pathlib import Path
 
     from config import load_config
-    from strategy import Analyzer
+    from analyzer import Analyzer
 
     root = Path(__file__).resolve().parents[1]
     cfg = load_config(root / "config.yaml")

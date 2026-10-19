@@ -14,6 +14,9 @@ Hard rules, a candidate is rejected if any fails:
     keep a slot usable, avoid deadlock);
   * enough of its colour remains to fill it: sand >= margin x (conveyor need + 1) x capacity.
 Score of the rest: avail + buckets / lock cells the tap connects to the exit (one-tap lookahead)
+- the risk of a chest it opens (its N buckets land in free cells at random: expected cuts of
+paths + the share of free cells, planner.scatter_risk) + a bonus per mystery bucket it reveals
+(more if that one is then connected to the exit)
 + the unlock value (usefulness of the opened buckets' colours, planner.py) + buckets under a
 lock that a released key opens - a penalty for a stalled colour - a penalty per later tower
 stage whose colour has not enough sand left (a tower takes one belt slot until ALL its stages
@@ -31,8 +34,8 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from cells import Kind
 from config import StrategyConfig
-from planner import Opened, Plan, opened_value, plan
-from state import BeltTracker, LevelState, Pos
+from planner import Opened, Plan, ScatterRisk, opened_value, plan, scatter_risk
+from state import LevelState, Pos
 
 if TYPE_CHECKING:
     import numpy as np
@@ -60,6 +63,10 @@ class Candidate:
     plan: Optional[Plan] = None                # first step of the best path plan
     low_exposure: bool = False                 # rejected only for its exposure
     path_bonus: float = 0.0
+    chests: List[Tuple[Pos, int]] = field(default_factory=list)   # chests the tap opens (N)
+    scatter: Optional[ScatterRisk] = None      # ... and what their buckets may block
+    reveals: List[Pos] = field(default_factory=list)       # mystery buckets the tap reveals
+    reveals_reachable: List[Pos] = field(default_factory=list)  # ... connected to the exit after
 
     @property
     def unlock_value(self) -> float:
@@ -94,6 +101,15 @@ class Candidate:
                 f"{s}{' (sand short)' if s in self.short_stages else ''}" for s in self.stages)
         if self.plan is not None:
             extra += f", {self.plan.describe(1)} (+{self.path_bonus:.2f})"
+        for (r0, c0), n in self.chests:
+            extra += f", opens chest{n} r{r0}c{c0}"
+        if self.scatter is not None:
+            extra += (f" (scatter: {self.scatter.landing} free cells, "
+                      f"{self.scatter.important} on paths)")
+        if self.reveals:
+            extra += ", reveals " + ", ".join(
+                f"r{r0}c{c0}{' (reachable)' if (r0, c0) in self.reveals_reachable else ''}"
+                for r0, c0 in self.reveals)
         return f"{head}: score {self.score:.2f}{extra} [{self.numbers()}]"
 
 
@@ -189,12 +205,21 @@ def _score(state: LevelState, cand: Candidate, sc: StrategyConfig) -> None:
     cand.opens, cand.opens_locks = state.opened_by(cand.pos)
     cand.opened = opened_value(after, cand.opens, sc)
     cand.unlocks = after.unlocked
+    cand.chests, cand.scatter = after.chests_opened, scatter_risk(after)
+    cand.reveals = after.revealed
+    reach = after.connected()
+    cand.reveals_reachable = [p for p in after.revealed if p in reach]
+    risk = (0.0 if cand.scatter is None else
+            sc.weight_chest_cut * cand.scatter.expected_cuts
+            + sc.weight_chest_free * cand.scatter.free_share)
     cand.score = (sc.weight_exposed * cand.avail + sc.weight_open_bucket * len(cand.opens)
                   + sc.weight_unlock_value * cand.unlock_value
                   + sc.weight_open_lock * len(cand.opens_locks)
                   + sc.weight_key_unlock * cand.unlocked_buckets
                   - sc.weight_tower_short_stage * len(cand.short_stages)
                   - (sc.weight_stalled_colour if cand.stalled is not None else 0.0)
+                  - risk + sc.weight_mystery_reveal * len(cand.reveals)
+                  + sc.weight_mystery_reachable * len(cand.reveals_reachable)
                   + (0.0 if cand.on_belt else sc.weight_new_colour))
 
 
@@ -325,156 +350,6 @@ def _label(img: "np.ndarray", s: str, org: Tuple[int, int], scale: float) -> Non
     cv2.putText(img, s, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 1, cv2.LINE_AA)
 
 
-# ---------------------------------------------------------------------------------------------
-# Frame -> decision (shared by the overlay and the CLI; the bot will use it too)
-# ---------------------------------------------------------------------------------------------
-
-
-@dataclass
-class Analysis:
-    screen: str
-    view: Optional["GameView"] = None
-    state: Optional[LevelState] = None
-    decision: Optional[Decision] = None
-    error: Optional[str] = None
-    failure: Optional[str] = None      # failed read of a gameplay frame: "<step>: <reason>"
-    reads: int = 0                     # gameplay frames read so far by this Analyzer
-    fails: int = 0                     # ... and how many of them failed
-
-    def tap_rel(self) -> Optional[Tuple[float, float]]:
-        """Relative screen point of the chosen move (what a tap would hit), or None."""
-        if self.view is None or self.decision is None or self.decision.move is None:
-            return None
-        return self.view.cell_center_rel(*self.decision.move.pos)
-
-
-class Analyzer:
-    """Loads palette, digits and screen templates once; ``analyze(frame)`` reads a frame of the
-    iPhone screen and decides the next move. Never taps."""
-
-    def __init__(self, cfg) -> None:
-        from digits import DigitReader
-        from palette import Palette
-        from screens import ScreenClassifier, load_templates
-        from hints import CellMemory, HintArrows, RecentUnlocks
-        from icons import IconMatcher
-
-        self.cfg = cfg
-        self.palette = Palette.load(cfg.paths.palette)
-        self.reader = DigitReader.load(Path(cfg.paths.dataset) / "digits.npz")
-        self.icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons")
-        self.hints = HintArrows.load(Path(cfg.paths.dataset) / "templates" / "hints")
-        self.memory = CellMemory()   # last clean cell readings, for cells under hint arrows
-        self.unlocks = RecentUnlocks(cfg.vision.unlock_trust_s)   # key locks that just opened
-        self.classifier = ScreenClassifier(load_templates(Path(cfg.paths.dataset) / "templates"),
-                                           cfg.vision)
-        self.belt = BeltTracker(cfg.strategy.stall_min_growth, cfg.strategy.stall_forget_s)
-        self.fail_dir = Path(cfg.paths.debug) / "vision_fail"
-        self.colour_dir = Path(cfg.paths.dataset) / "unknown_colours"
-        self.unknown_dir = Path(cfg.paths.dataset) / "unknown"
-        self.colours_seen: set = set()                  # unknown colours saved this run
-        self.cells_seen: set = set()                    # unknown cells (pos, reason) saved
-        self.reads = self.fails = self.fails_saved = 0
-
-    def analyze(self, img: "np.ndarray", log=print, now: Optional[float] = None,
-                diff: Optional[float] = None, adjust=None) -> Analysis:
-        """``now``: frame time in seconds (default: monotonic clock) for the belt stall clock.
-        ``diff``: frame-to-frame change at capture, logged with failed reads. ``adjust(state)``
-        may amend the state before the decision (bot.py: what it knows of released towers)."""
-        import time
-        from vision import VisionError, read_gameplay
-
-        now = time.monotonic() if now is None else now
-        screen = self.classifier.classify(img).screen
-        if screen != "gameplay":
-            return Analysis(screen, reads=self.reads, fails=self.fails)
-        self.reads += 1
-        try:
-            gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log,
-                               icons=self.icons, hints=self.hints, memory=self.memory,
-                               unlocks=self.unlocks, now=now)
-        except VisionError as e:
-            res = Analysis(screen, error=str(e), failure=f"grid: {e}")
-        else:
-            self._save_unknowns(img, gv, log)
-            st = self.cfg.strategy
-            state = LevelState.from_view(gv, st.conveyor_slots, st.unknown_fill_need)
-            state.belt_stalled = self.belt.update(state.conveyor, now)
-            if adjust is not None:
-                adjust(state)
-            res = Analysis(screen, gv, state, choose(state, st))
-            if gv.counter is None:
-                res.failure = "counter: k/5 not read"
-        if res.failure:
-            self.fails += 1
-            self._save_failure(img, res.failure, diff, log)
-        res.reads, res.fails = self.reads, self.fails
-        return res
-
-    def _save_unknowns(self, img: "np.ndarray", gv: "GameView", log) -> None:
-        """New unknown colours -> dataset/unknown_colours/, new UNKNOWN cells (other reasons)
-        -> dataset/unknown/; each once per run."""
-        from unknown_colours import save_unknown, save_unknown_colours
-
-        save_unknown_colours(img, gv, self.cfg.vision, self.colour_dir, self.colours_seen, log)
-        cells = {(c.row, c.col, c.reason) for c in gv.unknown_cells() if c.lab is None}
-        if cells - self.cells_seen:
-            self.cells_seen |= cells
-            save_unknown(img, gv, self.unknown_dir, log)
-
-    def _save_failure(self, img: "np.ndarray", failure: str, diff: Optional[float],
-                      log) -> None:
-        """Frame + step to debug/vision_fail/ (and fails.jsonl), to find the pattern behind
-        misreads. Capped at strategy.vision_fail_max_saves per run (disk)."""
-        import json
-        import time
-
-        import cv2
-
-        if self.fails_saved >= self.cfg.strategy.vision_fail_max_saves:
-            return
-        self.fail_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{int(time.time() * 1000) % 1000:03d}"
-        step = failure.split(":")[0]
-        path = self.fail_dir / f"{stamp}-{step}.png"
-        if not cv2.imwrite(str(path), img):
-            log(f"vision_fail: cannot write {path}")
-            return
-        self.fails_saved += 1
-        rec = {"time": stamp, "frame": path.name, "step": step, "failure": failure,
-               "diff": None if diff is None else round(diff, 5),
-               "reads": self.reads, "fails": self.fails}
-        with (self.fail_dir / "fails.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(rec) + "\n")
-        if self.fails_saved == self.cfg.strategy.vision_fail_max_saves:
-            log(f"vision_fail: saved {self.fails_saved} frames, not saving more this run")
-
-
-class DecisionGate:
-    """A move is confirmed only after ``frames`` consecutive analyses chose the same bucket
-    (cell and colour) with no failed read in between; anything else restarts the count. The
-    bot taps only confirmed moves; call ``reset()`` after a tap."""
-
-    def __init__(self, frames: int = 2) -> None:
-        self.frames = frames
-        self._key: Optional[Tuple[Pos, str]] = None
-        self.count = 0
-
-    def feed(self, res: Analysis) -> Optional[Candidate]:
-        move = (res.decision.move if res.failure is None and res.decision is not None
-                else None)
-        if move is None:
-            self.reset()
-            return None
-        key = (move.pos, move.color)
-        self.count = self.count + 1 if key == self._key else 1
-        self._key = key
-        return move if self.count >= self.frames else None
-
-    def reset(self) -> None:
-        self._key, self.count = None, 0
-
-
 def main(argv: Optional[Sequence[str]] = None) -> int:
     import argparse
 
@@ -487,6 +362,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("images", nargs="+")
     ap.add_argument("--config", default=None)
     args = ap.parse_args(argv)
+    from analyzer import Analyzer
+
     cfg = load_config(args.config)
     an = Analyzer(cfg)
     out_dir = Path(cfg.paths.debug)

@@ -82,7 +82,7 @@ class DryRun:
 
     def __init__(self, analyze, interval_s: float, stable_below: float,
                  clock=time.monotonic, confirm_frames: int = 2) -> None:
-        from strategy import DecisionGate
+        from analyzer import DecisionGate
 
         self._analyze = analyze
         self.gate = DecisionGate(confirm_frames)
@@ -234,9 +234,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     permissions.require(screen=True, accessibility=False)
     dry: Optional[DryRun] = None
     if args.dry_run:
-        from strategy import Analyzer
+        from analyzer import Analyzer
 
-        dry = DryRun(Analyzer(cfg).analyze, cfg.strategy.analyze_interval_s,
+        analyzer = Analyzer(cfg)
+        analyzer.reset_level()   # live: one level, keep its grid geometry
+        dry = DryRun(analyzer.analyze, cfg.strategy.analyze_interval_s,
                      cfg.stability.threshold, confirm_frames=cfg.strategy.confirm_frames)
 
     grabber = Grabber(cfg.screen.capture)

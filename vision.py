@@ -12,11 +12,11 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
-from cells import (Cell, Kind, cell_features, classify_cell, colour_distances, empty_fraction,
-                   icon_lab, path_playable)
+from cells import (CELL_LOCK_BY_NAME, Cell, Kind, cell_features, classify_cell,
+                   colour_distances, empty_fraction, icon_lab, path_playable)
 from config import VisionConfig
 from digits import DigitReader
-from hints import CellMemory, HintArrows, RecentUnlocks, clean, occlusion_mask
+from hints import CellMemory, HintArrows, LatticeLock, RecentUnlocks, clean, occlusion_mask
 from belt import Slot, read_conveyor
 from icons import IconMatcher
 from palette import Palette, bgr_to_lab, lab_distance
@@ -243,12 +243,16 @@ class GameView:
 def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
               reader: Optional[DigitReader] = None,
               icons: Optional[IconMatcher] = None, occluded: Optional[np.ndarray] = None,
-              memory: Optional[CellMemory] = None) -> Tuple[Lattice, Grid, List[Region]]:
+              memory: Optional[CellMemory] = None, lattices: Optional[LatticeLock] = None,
+              log: Callable[[str], None] = print) -> Tuple[Lattice, Grid, List[Region]]:
     """``occluded``: hint-arrow mask (``img`` already inpainted there). A cell partly under it is
     read through the inpainted pixels; if more than ``hint_cover_max`` of its crop is hidden, or
     it reads UNKNOWN through the mask, it is occluded: its last clean reading from ``memory`` if
-    there is one, else UNKNOWN; either way never tapped and never saved as unknown."""
+    there is one, else UNKNOWN; either way never tapped and never saved as unknown.
+    ``lattices``: the level's grid geometry across frames (hints.LatticeLock)."""
     lat = find_lattice(img, palette, v, occluded)
+    if lattices is not None:
+        lat = lattices.check(lat, log)
     regions = find_curtains(img, lat, palette, v, reader)
     grid: Grid = [[None] * lat.cols for _ in range(lat.rows)]
     for i, reg in enumerate(regions):
@@ -273,8 +277,13 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
                     f.icon_color = (None if f.icon_lab is None else
                                     palette.nearest(f.icon_lab, "keys", v.color_max_dist)[0])
             cell = classify_cell(r, c, f, palette, v)
-            if cell.kind is Kind.LOCK and reader is not None:
+            spec = CELL_LOCK_BY_NAME.get(cell.lock or "") if cell.kind is Kind.LOCK else None
+            if spec is not None and spec.counter != "none" and reader is not None:
                 cell.counter = reader.read_int(lock_digits_roi(img, lat, r, c, v), "light")
+                if cell.counter is None and spec.counter == "required":
+                    # no number, no chest: e.g. a yellow padlock still fading over a bucket
+                    f.wood_frac = 0.0
+                    cell = classify_cell(r, c, f, palette, v)
             if occluded is not None:
                 bx0, by0, bx1, by1 = cell_box(lat, r, c, v)
                 hidden = occluded[by0:by1, bx0:bx1]
@@ -292,17 +301,19 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
                   log: Callable[[str], None] = print,
                   icons: Optional[IconMatcher] = None, hints: Optional[HintArrows] = None,
                   memory: Optional[CellMemory] = None,
-                  unlocks: Optional[RecentUnlocks] = None, now: float = 0.0) -> GameView:
+                  unlocks: Optional[RecentUnlocks] = None, now: float = 0.0,
+                  lattices: Optional[LatticeLock] = None) -> GameView:
     """``hints``: game hint arrows to ignore (hints.py); ``memory``: last clean cell readings,
     used for cells the arrows hide and updated with this frame's clean cells; ``unlocks``: cells
     whose key lock opened recently (``now`` = frame time in s), where the path rule alone decides
-    (their face reads down under the padlock animation)."""
+    (their face reads down under the padlock animation); ``lattices``: the level's grid geometry
+    (an extra row from the boosters below must not shift every cell)."""
     arrows = hints.find(img, v) if hints is not None else []
     occ = occlusion_mask(img.shape, arrows) if arrows else None
     if arrows:
         log(f"hint arrows: {len(arrows)} masked out")
     lat, grid, regions = read_grid(img if occ is None else clean(img, occ), palette, v, reader,
-                                   icons, occ, memory)
+                                   icons, occ, memory, lattices, log)
     if memory is not None:
         memory.store(lat, grid)
     playable = path_playable(grid, lat.exits())

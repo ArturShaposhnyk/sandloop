@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 if TYPE_CHECKING:
     import numpy as np
 
-    from strategy import Analysis, Candidate
+    from analyzer import Analysis
+    from strategy import Candidate
 
 
 def _round(d: Dict[str, float], n: int = 4) -> Dict[str, float]:
