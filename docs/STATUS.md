@@ -11,8 +11,30 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 2 | `tools/collect.py`, 32 labeled screenshots in `dataset/screens/` (`LABELS.md`) | `385c523`, `015ab26` |
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
+| 5 | `bot.py` plays one level with real taps; live-tested once (L186, run 20261019-162703: 9 good taps, then a freeze, fixed) | `4b1883a`, `4f297f2`, `00daa0e` |
 
 Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 581 passed, 1 xfailed (screen 020, see below).
+
+## Current state and NEXT (2026-10-19)
+- Phase 5 (`bot.py`) is done and has been live-tested **once**, on L186 (run
+  `debug/runs/20261019-162703`): 9 good taps, then a freeze at 4/5. The cause (boosters pulsing
+  into the grid zone -> a phantom 7th lattice row) is fixed with `hints.LatticeLock`; a cell that
+  keeps disagreeing with no move now logs STUCK and saves the frame. Not live-tested since.
+- L186 mechanics added (user-confirmed, see GAME_RULES.md): **chest N** (opens when connected,
+  scatters N buckets; risk-priced, never forbidden), **mystery bucket** (revealed by tapping a
+  4-neighbour; small bonus), **wall** (panel-coloured hole = `x`, blocks paths).
+- Earlier the same day: buckets under a just-opened key lock are tappable at once
+  (`hints.RecentUnlocks`); a colour stalled on the belt = lost slot (wait while the belt
+  collects, else a penalised last resort; jitter-proof stall clock).
+- Phase 6 (outside gameplay: PLAY, revive -> Quit, Try Again, popups -> only ✕, win screen,
+  stop at 0 lives) is NOT started. The bot still stops on any non-gameplay screen, and needs to
+  be started inside a level (it does not press PLAY).
+- **NEXT**:
+  1. Live run on L186: open the level, then `python -m bot --max-taps 3`, then a longer run
+     (`python -m bot`), then `python -m tools.analyze_run`. Optionally first
+     `python -m tools.overlay --dry-run` to watch the chest-risk decisions (weights
+     `weight_chest_cut` / `weight_chest_free` are first guesses).
+  2. Then phase 6, after the user's OK.
 
 ## Key commands
 ```bash
@@ -54,6 +76,18 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   **stop at 0 lives**.
 - No hardcoded RGB: colours come from `dataset/palette.json`; tunables live in `config.yaml`.
   The k/5 counter is authoritative for conveyor fullness (edge slots may be `uncertain`).
+- **Key locks**: buckets under a lock are playable as soon as it opens; for
+  `vision.unlock_trust_s` the path rule alone decides there (padlock animation reads face-down).
+- **Stalled colour** = lost slot: rejected while another belt bucket collects, else a penalised
+  last resort (`weight_stalled_colour`; path steps cost `path_cost_stalled`).
+- **Chests / mystery / walls** (L186): `chestN` and `mystery` are single-cell locks
+  (`cells.CELL_LOCKS`, palette ui `chest_wood` / `mystery_grey`); walls are `x`. Opening a chest
+  is priced by `planner.scatter_risk`; after one opens the Analyzer waits `chest_settle_s` and
+  re-reads the whole grid.
+- **Grid geometry** is fixed per level (`hints.LatticeLock`, enabled by
+  `Analyzer.reset_level()` in bot.py / overlay; off for unrelated screenshots).
+- Frame -> decision lives in `analyzer.py` (Analysis, Analyzer, DecisionGate); `strategy.py`
+  is the greedy choice only.
 
 ## Open questions / known gaps
 - **Win screen (level_complete)**: not captured yet — user will grab one with `ctrl+alt+s`.
@@ -70,6 +104,11 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   are not counted as pending buckets in the capacity estimate.
 - Screen classification costs ~0.7 s per frame (template matching at 8 scales); the overlay runs
   the analysis on a worker thread. Phase 5 may want a cheap gameplay pre-check.
+- **L186 chest**: where exactly the scattered buckets land (can one land in the chest's own
+  cell?) and how the risk weights play out live are not known yet. The chest-opening flash reads
+  as an unknown yellow (`dataset/unknown_colours/20261019-*`, untracked): not a bucket colour.
+- No frame of the actual 7-row misread was saved (the run log saves frames on decision changes
+  only); its regression uses a synthetic booster bridge on shot 058.
 
 ## Phase 4 — greedy strategy (done, awaiting OK)
 - `state.LevelState.from_view(GameView)`: grid, tappable, locks (ice / curtain regions with
@@ -252,7 +291,9 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   r4c1 darkgreen) and 031 (L181, empty belt: tap r1c2 red tower). Shot 056 added
   (LABELS.md), tests for every rule.
 
-## Live dry-run after all of the above (2026-10-16 ~19:06, L183) — open issues, NEXT
+## Live dry-run after all of the above (2026-10-16 ~19:06, L183) — mostly superseded
+(The extra lattice row r7 below is the same symptom as the L186 freeze: `hints.LatticeLock` now
+ignores extra bottom rows within a level. The unknown sand colour item is still open.)
 - Good: ~20 confirmed moves, no pointless waits; path moves live (`tap r3c1 orange, path to
   key red: step 1/2`, `tap r4c1 darkgreen, path to r5c0 darkgreen: step 1/2`); open light
   green read right (`tap r4c0 green`); "hint arrows: 4 masked out" in 6 analyses. The waits
@@ -273,7 +314,7 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
 - Many single-frame "looks face-down but the path rule says playable" warnings right after
   moves: flip animation in progress, expected (never tapped; 2-frame confirmation).
 
-## Phase 5 — bot.py plays one level (2026-10-17) — done, awaiting OK (not live-tested yet)
+## Phase 5 — bot.py plays one level (2026-10-17) — done; live-tested once on L186 (2026-10-19)
 - `bot.py`: capture -> screen type -> analyse -> 2-frame `DecisionGate` -> `actions.Tapper`.
   Failsafe corner checked every loop + before every tap; ctrl+alt+p / ctrl+alt+q; rate limit;
   only inside the screen rect; geometry re-resolved right before tapping (frame size must match
