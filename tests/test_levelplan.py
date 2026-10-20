@@ -116,14 +116,14 @@ def test_picture_take_lets_the_sand_above_fall():
 def test_sim_jams_when_the_belt_is_full_of_buried_colours():
     st = make_state(["a b c d e"], k=0, sand={"a": .1})
     pic = Picture(["a", "b", "c", "d", "e"], [[0, 1, 2, 3, 4]] * 4, contact=1)
-    s = Sim.start(st, pic, SimConfig(slots=5, lap_take=10))
+    s = Sim.start(st, pic, SimConfig(slots=5))
     for p in [(0, 1), (0, 2), (0, 3), (0, 4)]:
         s = s.tap(p)
     s = s.tap((0, 0))                                         # a collects, the rest is buried
     assert len(s.belt) < 5
     full = Sim.start(make_state(["b c d e x"]), Picture(["a", "b", "c", "d", "e"],
                                                         [[0, 0, 1, 2, 3, 4]] * 4, 1),
-                     SimConfig(slots=4, lap_take=10))
+                     SimConfig(slots=4))
     for p in [(0, 0), (0, 1), (0, 2), (0, 3)]:
         full = full.tap(p)
     w = full.wait()

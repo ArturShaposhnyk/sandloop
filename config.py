@@ -41,6 +41,8 @@ class ClicksConfig:
     move_settle_s: float = 0.03
     max_taps_per_second: float = 4.0
     activate_before_tap: bool = True
+    focus_wait_s: float = 2.0         # after activating: wait this long for it to be frontmost
+    focus_settle_s: float = 0.5       # ... then this long before the first click (run 161536)
 
 
 @dataclass
@@ -208,7 +210,7 @@ class BotConfig:
     max_no_effect_taps: int = 2          # taps in a row that changed nothing -> stop
     screen_confirm_frames: int = 3       # leaving gameplay: non-gameplay this many in a row
     win_sand_max: float = 0.01           # level ends with less sand than this -> inferred win
-    window_lost_max_s: float = 10.0      # window missing / geometry check failing this long -> stop
+    window_lost_max_s: float = 30.0      # window missing / geometry check failing this long -> stop
     max_run_s: float = 900.0             # safety stop for one level (from its first frame)
     disagree_report_s: float = 10.0      # look != path rule this long with no move: log + frame
     loop_interval_s: float = 0.05        # min seconds between captures
@@ -257,13 +259,23 @@ class PlannerConfig:
     max_depth: int = 120              # actions (taps + waits) per plan
     budget_s: float = 3.0             # search time per plan
     cell_px: int = 8                  # picture block per simulated sand cell (frame px)
-    lap_take: int = 20                # cells a belt bucket takes per lap at most
-    laps_per_tap: int = 1             # laps that pass while the bot taps
-    max_wait_laps: int = 60
+    # belt speed, measured with tools/belt_speed.py on real runs (sim.SimConfig)
+    lap_s: float = 1.0                # belt seconds per simulated lap
+    fill_rate: float = 100.0          # % of a bucket per s per contact share above ...
+    fill_min_exposed: float = 0.08    # ... this share (below it a bucket gets ~nothing)
+    fill_max: float = 30.0            # % of a bucket per s at most
+    tap_s: float = 4.2                # belt seconds that pass per tap of the bot
+    max_wait_s: float = 60.0          # one simulated wait at most
+    # following the plan live: a wait for the belt is given up (re-plan, else the strategy
+    # decides until the board changes) when the belt is wait_grace_s behind the plan's
+    # predicted time, or no belt bucket gained sand for wait_stall_s
+    wait_grace_s: float = 5.0
+    wait_stall_s: float = 5.0
     replan_min_s: float = 2.0         # at most one re-plan this often
     weight_dead: float = 0.1          # score per belt bucket that can never fill (sand short)
     weight_stuck: float = 0.05        # ... per belt bucket whose colour is not exposed now
     weight_free: float = 0.02         # ... per free slot
+    weight_full: float = 0.05         # ... per tap that took the last free slot (5/5 belt)
 
 
 @dataclass
@@ -333,6 +345,8 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("clicks.backend must be 'quartz' or 'pyautogui'")
     if cfg.clicks.max_taps_per_second <= 0:
         raise ConfigError("clicks.max_taps_per_second must be > 0")
+    if min(cfg.clicks.focus_wait_s, cfg.clicks.focus_settle_s) < 0:
+        raise ConfigError("clicks.focus_wait_s / focus_settle_s must be >= 0")
     if cfg.screen.aspect <= 0 or cfg.screen.aspect_tolerance <= 0:
         raise ConfigError("screen.aspect and screen.aspect_tolerance must be > 0")
     if not 0 <= cfg.screen.auto_max_trim < 0.5:
@@ -361,10 +375,12 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("vision chest / mystery / unlock settings must be >= 0 and "
                           "lattice_lock_frames >= 1")
     pl = cfg.planner
-    if (min(pl.beam, pl.max_depth, pl.cell_px, pl.lap_take, pl.laps_per_tap, pl.max_wait_laps) < 1
-            or min(pl.budget_s, pl.replan_min_s) < 0):
-        raise ConfigError("planner: beam / max_depth / cell_px / lap_take / laps_per_tap / "
-                          "max_wait_laps must be >= 1, budget_s / replan_min_s >= 0")
+    if (min(pl.beam, pl.max_depth, pl.cell_px) < 1
+            or min(pl.lap_s, pl.fill_rate, pl.fill_max, pl.max_wait_s) <= 0
+            or min(pl.budget_s, pl.replan_min_s, pl.fill_min_exposed, pl.tap_s,
+                   pl.wait_grace_s, pl.wait_stall_s) < 0):
+        raise ConfigError("planner: beam / max_depth / cell_px must be >= 1, lap_s / fill_rate /"
+                          " fill_max / max_wait_s > 0, the other times and shares >= 0")
     st = cfg.strategy
     if st.conveyor_slots < 1 or st.confirm_frames < 1:
         raise ConfigError("strategy.conveyor_slots and confirm_frames must be >= 1")

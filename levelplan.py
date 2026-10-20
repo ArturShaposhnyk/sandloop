@@ -10,11 +10,16 @@ that never jams the belt:
   ``LevelMemory`` banned (the attempt that jammed last time on this board) are pruned. Stops at
   a win, when nothing can move, at ``max_depth`` or after ``budget_s``.
 * **Following it live** (``PlanRunner``): the plan records the board it expects before each
-  tap. A frame whose board matches step i taps that step's bucket once the live belt has no
-  more buckets than the plan had there (else it waits, as the plan did). A board that matches
-  no step (a bucket filled earlier / later, an opened lock showed its colours, a misread) is
-  re-planned from that frame. When the plan has no step left (unknown buckets ahead, horizon)
-  the greedy strategy decides.
+  tap, the belt (colours, fill %) and the belt time. A frame whose board matches step i taps
+  that step's bucket once the live belt has no more buckets than the plan had there (else it
+  waits, as the plan did). A board that matches no step (a bucket filled earlier / later, an
+  opened lock showed its colours, a misread) is re-planned from that frame. When the plan has
+  no step left (unknown buckets ahead, horizon) the greedy strategy decides.
+* **A wait never stalls** (run 161536: 32 s on "k 3 > 2" with nothing collecting): the wait
+  is given up when the belt is ``wait_grace_s`` behind the plan's predicted time or no belt
+  bucket gained sand for ``wait_stall_s``. Then the bot re-plans from the frame (the real
+  belt); if that plan waits as well, the greedy strategy decides until the board changes.
+  Every tap logs the plan's predicted belt and time next to the real ones ("plan check").
 * **Level memory** (``LevelMemory``, debug/levels.jsonl): attempts of the same board (same
   start signature) that did not win ban their tap sequence; their sand use calibrates the
   bucket capacity of the simulator.
@@ -45,6 +50,8 @@ class Step:
     colour: str
     belt_before: int                  # buckets on the belt in the plan right before the tap
     board: Sig                        # board the plan expects before the tap
+    t: float = 0.0                    # predicted belt seconds since the plan was made
+    belt: List[Tuple[str, int]] = field(default_factory=list)   # predicted (colour, fill %)
 
 
 @dataclass
@@ -68,7 +75,12 @@ class Plan:
 def _score(s: Sim, total: int, pc: Any) -> float:
     return (s.collected / max(1, total) + (10.0 if s.won else 0.0)
             - pc.weight_dead * s.dead_slots() - pc.weight_stuck * s.stuck_slots()
-            + pc.weight_free * s.free)
+            + pc.weight_free * s.free - pc.weight_full * s.full_taps)
+
+
+def sim_config(pc: Any, slots: int) -> SimConfig:
+    return SimConfig(slots, pc.lap_s, pc.fill_rate, pc.fill_min_exposed, pc.fill_max, pc.tap_s,
+                     pc.max_wait_s)
 
 
 def plan_level(state: LevelState, pic: Picture, pc: Any,
@@ -76,8 +88,7 @@ def plan_level(state: LevelState, pic: Picture, pc: Any,
                capacity: Optional[Dict[str, int]] = None) -> Plan:
     """Beam search from ``state`` (+ its picture); ``pc``: PlannerConfig."""
     t0 = time.monotonic()
-    root = Sim.start(state, pic, SimConfig(state.conveyor_slots, pc.lap_take, pc.laps_per_tap,
-                                           pc.max_wait_laps), capacity)
+    root = Sim.start(state, pic, sim_config(pc, state.conveyor_slots), capacity)
     root.grid.disagreements = []
     root.grid.tappable = root.grid.playable()
     total = max(1, pic.total())
@@ -113,17 +124,22 @@ def _plan_of(root: Sim, best: Sim, total: int, nodes: int, seconds: float, pc: A
     s, steps, lines = root, [], []
     for kind, pos, colour, belt in best.actions:
         if kind == "tap":
-            steps.append(Step(pos, colour, len(s.belt), s.signature()))
+            steps.append(Step(pos, colour, len(s.belt), s.signature(), s.t, s.belt_fills()))
+            at = s.t
             s = s.tap(pos)
-            lines.append(f"{len(steps):2d}. tap r{pos[0]}c{pos[1]} {colour}  (belt {belt} -> "
-                         f"{len(s.belt)}: {', '.join(sl.colour for sl in s.belt)})")
+            lines.append(f"{len(steps):2d}. {at:4.0f}s tap r{pos[0]}c{pos[1]} {colour}  (belt "
+                         f"{belt} -> {len(s.belt)}: {_belt_text(s.belt_fills())})")
         else:
             s = s.wait() or s
-            lines.append(f"    wait (belt {len(s.belt)}: {', '.join(sl.colour for sl in s.belt)};"
-                         f" sand left {s.pic.total() / total:.0%})")
+            lines.append(f"    {s.t:4.0f}s wait (belt {len(s.belt)}: "
+                         f"{_belt_text(s.belt_fills())}; sand left {s.pic.total() / total:.0%})")
     result = "win" if best.won else ("horizon" if best.unknown_left() else "open")
     return Plan(steps, result, _score(best, total, pc), best.collected / total, best.dead_slots(),
                 nodes, seconds, lines)
+
+
+def _belt_text(fills: Sequence[Tuple[str, Optional[int]]]) -> str:
+    return ", ".join(f"{c} {'?' if f is None else f}" for c, f in fills) or "empty"
 
 
 # --- level memory ------------------------------------------------------------------------------
@@ -212,6 +228,10 @@ class PlanRunner:
         self.replans = 0
         self.last_plan_t = -1e9
         self.log: List[Dict[str, Any]] = []     # plans made this level (levels.jsonl)
+        self.at: Optional[int] = None           # step whose board the frames show
+        self.at_since = 0.0                     # ... since
+        self.checked: Set[int] = set()          # steps whose tap was compared with the plan
+        self.given_up: Optional[Sig] = None     # board on which the strategy decides
 
     def decide(self, img, gv, state: LevelState, fallback, now: float, log=print):
         """The decision for this frame: the plan's step, a wait for it, or ``fallback``."""
@@ -220,22 +240,31 @@ class PlanRunner:
         if self.signature is None:
             self.signature = level_signature(gv.labels())
         board = grid_signature(state.grid)
+        if board == self.given_up:
+            return fallback
+        self.given_up = None
         step_i = self._step(board)
         if step_i is None and now - self.last_plan_t >= self.pc.replan_min_s:
             self._replan(img, state, now, log, "start" if self.plan is None else "board differs")
             step_i = self._step(board)
         if step_i is None:
             return fallback
+        if step_i != self.at:
+            self.at, self.at_since = step_i, now
         step = self.plan.steps[step_i]
         n = len(self.plan.steps)
         k = state.conveyor_k
         if k is None or state.free_slots == 0 or k > step.belt_before:
-            return Decision(None, f"wait: level plan step {step_i + 1}/{n} (tap r{step.pos[0]}"
-                                  f"c{step.pos[1]} {step.colour}) waits for the belt (k {k} > "
-                                  f"{step.belt_before})", fallback.candidates)
+            why = self._stalled(state, step_i, now)
+            if why is None:
+                return Decision(None, f"wait: level plan step {step_i + 1}/{n} (tap r{step.pos[0]}"
+                                      f"c{step.pos[1]} {step.colour}) waits for the belt (k {k} > "
+                                      f"{step.belt_before})", fallback.candidates)
+            return self._give_up(img, state, board, fallback, now, log, why)
         if step.pos not in state.tappable:
             return Decision(None, f"wait: level plan step {step_i + 1}/{n}: r{step.pos[0]}"
                                   f"c{step.pos[1]} not tappable yet", fallback.candidates)
+        self._check(state, step_i, now, log)
         cand = evaluate(state, step.pos, self.cfg.strategy, gamble=True)
         cand.rejected = None
         score_cand(state, cand, self.cfg.strategy)
@@ -251,6 +280,60 @@ class PlanRunner:
                 return i
         return None
 
+    def predicted_wait(self, i: int) -> float:
+        """Belt seconds the plan expects between the board of step ``i`` and its tap."""
+        steps = self.plan.steps
+        before = steps[i - 1].t + self.pc.tap_s if i > 0 else 0.0
+        return max(0.0, steps[i].t - before)
+
+    def _stalled(self, state: LevelState, i: int, now: float) -> Optional[str]:
+        """Why the wait for step ``i`` is given up, or None (keep waiting)."""
+        waited = now - self.at_since
+        expect = self.predicted_wait(i)
+        clocks = [state.belt_stalled[b.color] for b in state.conveyor
+                  if b.color in state.belt_stalled and (b.fill is None or b.fill < 100)]
+        idle = min(clocks) if clocks else None
+        if idle is not None and idle >= self.pc.wait_stall_s and waited >= self.pc.wait_stall_s:
+            return (f"no belt bucket gained sand for {idle:.0f}s (waited {waited:.0f}s, plan "
+                    f"{expect:.0f}s)")
+        if waited > expect + self.pc.wait_grace_s:
+            return f"the belt is behind the plan (waited {waited:.0f}s, plan {expect:.0f}s)"
+        return None
+
+    def _give_up(self, img, state: LevelState, board: Sig, fallback, now: float, log, why: str):
+        """Leave a stalled wait: re-plan from the real belt; if that plan waits too, the
+        strategy decides until the board changes."""
+        i, n = self.at, len(self.plan.steps)
+        self._check(state, i, now, log, gave_up=why)
+        log(f"level plan step {i + 1}/{n} gives up waiting: {why} - re-planning")
+        self._replan(img, state, now, log, "wait stalled")
+        j = self._step(board)
+        k = state.conveyor_k
+        if j is None or k is None or k > self.plan.steps[j].belt_before:
+            self.given_up = board
+            log("level plan: the new plan waits as well - the strategy decides until the board "
+                "changes")
+            return fallback
+        self.at, self.at_since = j, now
+        return self.decide(img, None, state, fallback, now, log)
+
+    def _check(self, state: LevelState, i: int, now: float, log, gave_up: str = "") -> None:
+        """Log the plan's belt / time before step ``i`` next to the real ones (once per step)."""
+        if i in self.checked or not self.log:
+            return
+        self.checked.add(i)
+        step, rec = self.plan.steps[i], self.log[-1]
+        real = [(b.color or "?", b.fill) for b in state.conveyor]
+        t_real = now - rec["t"]
+        log(f"plan check step {i + 1}/{len(self.plan.steps)}: t {t_real:.0f}s (plan "
+            f"{step.t:.0f}s), belt k {state.conveyor_k} (plan {step.belt_before}): plan "
+            f"{_belt_text(step.belt)} | real {_belt_text(real)}")
+        rec.setdefault("checks", []).append(
+            {"step": i + 1, "t": round(t_real, 1), "t_plan": round(step.t, 1),
+             "k": state.conveyor_k, "k_plan": step.belt_before,
+             "belt": [[c, f] for c, f in real], "belt_plan": [[c, f] for c, f in step.belt],
+             **({"gave_up": gave_up} if gave_up else {})})
+
     def _replan(self, img, state: LevelState, now: float, log, why: str) -> None:
         mem = LevelMemory(self.memory_path) if self.memory_path else None
         banned = mem.banned(self.signature) if mem else set()
@@ -262,11 +345,12 @@ class PlanRunner:
             cap = {c: max(1, round(v * pic.total() / sand)) for c, v in shares.items()}
         self.plan = plan_level(state, pic, self.pc, banned, cap)
         self.last_plan_t = now
+        self.at, self.checked = None, set()
         self.replans += why != "start"
         self.log.append({"t": round(now, 2), "why": why, "taps": len(self.plan.steps),
                          "result": self.plan.result, "collected": round(self.plan.collected, 3),
                          "banned": len(banned), "capacity": cap,
-                         "steps": [[*s.pos, s.colour] for s in self.plan.steps]})
+                         "steps": [[*s.pos, s.colour, round(s.t, 1)] for s in self.plan.steps]})
         log(f"level plan ({why}{', ' + str(len(banned)) + ' failed sequence(s) avoided' if banned else ''}"
             f"{', capacity from earlier attempts' if cap else ''}):")
         for line in self.plan.describe():

@@ -33,6 +33,10 @@ clicks:
   move_settle_s: 0.03        # pause after moving the cursor, before pressing
   max_taps_per_second: 4.0
   activate_before_tap: true  # bring the mirroring window to front if it lost focus
+  # live runs activate the window once before the first tap too (run 161536: TAP #1 right
+  # after activation "had no visible effect"): wait until it is frontmost, then settle
+  focus_wait_s: 2.0
+  focus_settle_s: 0.5
 
 safety:
   failsafe_corner_pt: 5      # cursor within this many points of any display corner = stop
@@ -222,7 +226,8 @@ bot:                         # python -m bot: plays one level (docs/GAME_RULES.m
   max_no_effect_taps: 2      # taps in a row that changed nothing -> stop
   screen_confirm_frames: 3   # leaving gameplay: non-gameplay this many analyses in a row (then flow: takes over)
   win_sand_max: 0.01         # no level_complete template yet: level left with less sand = win
-  window_lost_max_s: 10.0    # no window / failed geometry check this long -> stop
+  window_lost_max_s: 30.0    # no window / failed geometry check this long -> stop (run 161536:
+                             # Mirroring vanished at 76 s; the bot waits for it to come back)
   max_run_s: 900.0           # one level, from its first gameplay frame
   disagree_report_s: 10.0    # a cell's look and the path rule disagree this long while there is no move: log STUCK + save the frame
   loop_interval_s: 0.05
@@ -234,15 +239,27 @@ planner:                     # levelplan.py + sim.py: whole-level plan (docs/GAM
   max_depth: 120             # actions (taps + waits) per plan
   budget_s: 3.0              # search time per plan (the bot waits meanwhile)
   cell_px: 8                 # sand cell of the simulated picture = this many frame px
-  lap_take: 20               # cells a belt bucket takes per lap at most
-  laps_per_tap: 1            # laps that pass while the bot taps
-  max_wait_laps: 60
+  # belt speed of the simulator, measured on real runs: python -m tools.belt_speed
+  # (fill %/s of a belt bucket = fill_rate x (its colour's contact-layer share - fill_min_exposed),
+  # at most fill_max; runs 142035 / 145310 / 161536: ~1 %/s below 15 %, ~25 %/s at 30 %)
+  lap_s: 1.0                 # belt seconds per simulated lap
+  fill_rate: 100.0
+  fill_min_exposed: 0.08
+  fill_max: 30.0
+  tap_s: 4.2                 # belt seconds per tap of the bot (decision + settle; lower quartile live)
+  max_wait_s: 60.0           # one simulated wait at most
+  # live: a plan step waiting for the belt is given up (re-plan; if the new plan waits too, the
+  # strategy decides until the board changes) when the belt is wait_grace_s behind the plan's
+  # predicted time or no belt bucket gained sand for wait_stall_s (run 161536: 32 s stall)
+  wait_grace_s: 5.0
+  wait_stall_s: 5.0
   replan_min_s: 2.0          # the board differs from the plan: re-plan at most this often
   # beam score = share of the sand collected (+10 for a win) - weight_dead x belt buckets that
   # can never fill - weight_stuck x belt buckets whose colour is not exposed + weight_free x free
   weight_dead: 0.1
   weight_stuck: 0.05
   weight_free: 0.02
+  weight_full: 0.05          # per planned tap that takes the last free slot: only for >= 5 % more sand
 
 flow:                        # flow.py: screens outside gameplay (docs/GAME_RULES.md "Bot behaviour outside gameplay")
   # win -> NEXT, menu -> PLAY (popups -> red ✕ first), revive -> Quit (else the popup's ✕),

@@ -139,10 +139,40 @@ class Tapper:
         win = self.tracker.window
         if win is not None and frontmost_pid() == win.pid:
             return
-        if activate_app(self.cfg.window.app_bundle_id, self.cfg.window.owner_name):
-            time.sleep(0.3)
-        else:
+        self.activate()
+
+    def activate(self) -> bool:
+        """Bring iPhone Mirroring to the front and wait until it is frontmost (clicks.focus_*):
+        a click right after the activation may only focus the window (run 161536, TAP #1)."""
+        if not activate_app(self.cfg.window.app_bundle_id, self.cfg.window.owner_name):
             self.log("warning: could not activate the iPhone Mirroring app via osascript")
+            return False
+        win = self.tracker.window
+        end = time.monotonic() + self.cfg.clicks.focus_wait_s
+        front = False
+        while win is not None and not front and time.monotonic() < end:
+            time.sleep(0.05)
+            front = frontmost_pid() == win.pid
+        if win is not None and not front:
+            self.log(f"warning: iPhone Mirroring is not frontmost {self.cfg.clicks.focus_wait_s:.1f}s"
+                     " after activating it")
+        time.sleep(self.cfg.clicks.focus_settle_s)
+        return front
+
+    def prepare(self) -> None:
+        """Before the first live tap: the window is frontmost and has settled."""
+        if self.dry_run or not self.cfg.clicks.activate_before_tap:
+            return
+        try:
+            self.tracker.get(force=True)
+        except Exception as e:   # noqa: BLE001 - no window yet: the bot loop waits for it
+            self.log(f"focus before the first tap: {e}")
+            return
+        win = self.tracker.window
+        if win is not None and frontmost_pid() == win.pid:
+            self.log("iPhone Mirroring is frontmost")
+        elif self.activate():
+            self.log("iPhone Mirroring activated before the first tap")
 
     def tap(self, rx: float, ry: float) -> TapResult:
         geo = self.tracker.get()

@@ -343,24 +343,29 @@ class BeltTracker:
     """Remembers the belt across frames: for every colour on the belt, how long its buckets'
     fill has not grown (a starving bucket = that colour's sand is not reachable right now).
 
-    Per colour the key is (number of buckets with a read fill < 100%, sum of their fills). The
-    clock restarts when that number changes (a bucket left at 100% or a new one arrived) or the
-    sum grows by ``min_growth`` points since the last restart: the % labels jitter by one (99,
-    98, 99), which is no growth. A colour that is not read in a frame (passing an edge, label
-    unread) keeps its clock and stays reported for ``forget_s``; one seen with only finished
-    buckets is dropped.
+    Per colour the reference is (number of buckets with a read fill < 100%, sum and max of their
+    fills) at the last restart. The clock restarts when more buckets of the colour are read than
+    the reference had (a new one arrived), when one is seen at 100% while others stay, or when
+    the fills grew by ``min_growth`` points: the sum with as many buckets read, the max with
+    fewer (run 161536: orange 0 % and orange/cream 38 % were read alternately one or both - the
+    clock restarted every other frame and the stall never showed). The % labels jitter by one
+    (99, 98, 99), which is no growth. Fewer buckets read for ``forget_s`` = one left unseen: the
+    reference follows, the clock runs on. A colour that is not read in a frame (passing an edge,
+    label unread) keeps its clock and stays reported for ``forget_s``; one seen with only
+    finished buckets is dropped.
     """
 
     def __init__(self, min_growth: int = 2, forget_s: float = 3.0) -> None:
         self.min_growth, self.forget_s = min_growth, forget_s
-        self._key: Dict[str, Tuple[int, int]] = {}
+        self._key: Dict[str, Tuple[int, int, int]] = {}    # colour -> (n, sum, max) reference
         self._since: Dict[str, float] = {}
         self._seen: Dict[str, float] = {}
+        self._fewer: Dict[str, float] = {}                 # fewer buckets read than ref since
 
     def update(self, conveyor: List[ConveyorBucket], now: float) -> Dict[str, float]:
         """Feed one frame's belt; returns colour -> seconds without fill growth (colours on the
         belt now, or out of sight for less than ``forget_s``)."""
-        keys: Dict[str, Tuple[int, int]] = {}
+        keys: Dict[str, Tuple[int, int, int]] = {}
         done = set()
         for b in conveyor:
             if b.color is None or b.fill is None:
@@ -368,15 +373,26 @@ class BeltTracker:
             if b.fill >= 100:
                 done.add(b.color)
                 continue
-            n, total = keys.get(b.color, (0, 0))
-            keys[b.color] = (n + 1, total + b.fill)
-        for color, (n, total) in keys.items():
+            n, total, top = keys.get(b.color, (0, 0, 0))
+            keys[b.color] = (n + 1, total + b.fill, max(top, b.fill))
+        g = self.min_growth
+        for color, (n, total, top) in keys.items():
             old = self._key.get(color)
-            if old is None or old[0] != n or total >= old[1] + self.min_growth:
-                self._key[color] = (n, total)
+            if (old is None or n > old[0] or color in done
+                    or (n == old[0] and total >= old[1] + g) or (n < old[0] and top >= old[2] + g)):
+                self._key[color] = (n, total, top)
                 self._since[color] = now
+                self._fewer.pop(color, None)
+            elif n < old[0]:
+                since = self._fewer.setdefault(color, now)
+                if now - since > self.forget_s:      # one left unseen: follow, clock runs on
+                    self._key[color] = (n, total, top)
+                    del self._fewer[color]
+            else:
+                self._fewer.pop(color, None)
             self._seen[color] = now
         for color in list(self._key):
             if color not in keys and (color in done or now - self._seen[color] > self.forget_s):
                 del self._key[color], self._since[color], self._seen[color]
+                self._fewer.pop(color, None)
         return {c: now - self._since[c] for c in self._key}

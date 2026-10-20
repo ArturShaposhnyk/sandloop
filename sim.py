@@ -12,16 +12,21 @@ Simplified, deterministic model of one level from one frame:
   balanced per colour; the picture reading under-counts some colours - L187 cream 102 cells for
   5 stages vs orange 756 for 8 - so one capacity for all would starve them). ``LevelMemory``
   corrects it per colour from what earlier attempts of the board used.
-* **Belt**: up to ``slots`` buckets; one lap = every belt bucket, in order, takes up to
-  ``lap_take`` cells of its colour from the contact layer. A full stage leaves (a tower's next
-  stage starts); a curtain counts the fills.
+* **Belt**: up to ``slots`` buckets; one lap = ``lap_s`` seconds. Per lap every belt bucket,
+  in order, takes its colour from the contact layer at the speed measured on real runs
+  (tools/belt_speed.py on belt.csv of runs 142035, 145310, 161536): ``fill_rate`` % of a
+  bucket per second per contact-layer share above ``fill_min_exposed``, at most ``fill_max``
+  %/s. Below that share a bucket gets (almost) nothing: L187 orange at 7 % of the contact layer
+  did not fill in 30 s. A full stage leaves (a tower's next stage starts); a curtain counts the
+  fills.
 * **Grid**: ``LevelState.after_tap`` (path rule, keys -> locks, ice counts down by taps,
   chests, mystery buckets). Ice at 0 and curtains at 0 open to buckets of unknown colour
   (UNKNOWN cells): the plan cannot use them until they are seen (re-plan).
 
-Actions: tap a tappable bucket of known colour (needs a free slot; ``laps_per_tap`` laps pass
-while the bot acts) or wait (laps until a bucket leaves the belt or nothing moves). Jam = belt
-full and a lap moves nothing.
+Actions: tap a tappable bucket of known colour (needs a free slot; ``tap_s`` seconds of belt
+pass while the bot acts) or wait (laps until a bucket leaves the belt or nothing moves, at most
+``max_wait_s``). Jam = belt full and nothing collects. ``Sim.t`` = belt seconds since the start
+(the plan's predicted timing, compared with the real belt live).
 """
 from __future__ import annotations
 
@@ -61,6 +66,11 @@ class Picture:
         i = self.names.index(colour)
         return sum(c[:self.contact].count(i) for c in self.cols)
 
+    def share(self, colour: str) -> float:
+        """The colour's share of the contact layer (as vision's ``exposed``)."""
+        n = sum(min(self.contact, len(c)) for c in self.cols)
+        return self.exposed(colour) / n if n else 0.0
+
     def take(self, colour: str, n: int) -> int:
         """Remove up to ``n`` cells of ``colour`` from the contact layer, lowest first."""
         if n <= 0 or colour not in self.names:
@@ -80,18 +90,28 @@ class Picture:
 
 
 def picture_from_frame(img: np.ndarray, palette, v, cell_px: int = 8) -> Picture:
-    """Stacks from the picture zone of a gameplay frame (block centres, nearest sand colour)."""
+    """Stacks from the picture of a gameplay frame, cut at its real bottom edge (as vision's
+    contact layer): per ``cell_px`` block the most frequent sand colour of its pixels (empty
+    picture when most pixels are empty / not sand)."""
     from palette import bgr_to_lab, lab_distance
-    from zones import crop_rel
+    from sand import _bottom_edge
 
-    pic = crop_rel(img, v.picture)
     h, w = img.shape[:2]
-    half = cell_px // 2
-    lab = bgr_to_lab(pic[half::cell_px, half::cell_px])
+    x0, y0, x1, y1 = (int(v.picture[0] * w), int(v.picture[1] * h), int(v.picture[2] * w),
+                      int(v.picture[3] * h))
+    edge = _bottom_edge(img, palette, v)
+    pic = img[y0:edge if edge is not None else y1, x0:x1]
+    rows, ncols = pic.shape[0] // cell_px, pic.shape[1] // cell_px
+    pic = pic[pic.shape[0] - rows * cell_px:, :ncols * cell_px]     # whole blocks, bottom kept
+    lab = bgr_to_lab(pic)
     idx, names = palette.classify_pixels(lab, "sand", v.sand_max_dist)
     if "picture_empty" in palette.ui:
         idx[lab_distance(lab, palette.ui["picture_empty"]) < 10] = -1
-    cols = [[int(x) for x in idx[::-1, j] if x >= 0] for j in range(idx.shape[1])]
+    blocks = idx.reshape(rows, cell_px, ncols, cell_px).transpose(0, 2, 1, 3)
+    blocks = blocks.reshape(rows, ncols, cell_px * cell_px) + 1          # 0 = empty
+    counts = np.stack([(blocks == i).sum(axis=2) for i in range(len(names) + 1)], axis=2)
+    cell = counts.argmax(axis=2) - 1
+    cols = [[int(x) for x in cell[::-1, j] if x >= 0] for j in range(ncols)]
     contact = max(1, round(v.contact_layer * h / cell_px))
     return Picture(list(names), cols, contact)
 
@@ -101,6 +121,7 @@ class Slot:
     stages: Tuple[str, ...]           # colours top first
     left: int                         # cells the current stage still needs
     stage: int = 0
+    credit: float = 0.0               # cells collected but not yet whole
 
     @property
     def colour(self) -> str:
@@ -110,9 +131,20 @@ class Slot:
 @dataclass
 class SimConfig:
     slots: int = 5
-    lap_take: int = 20                # cells a bucket takes per lap at most
-    laps_per_tap: int = 1
-    max_wait_laps: int = 60
+    lap_s: float = 1.0                # belt seconds per lap
+    fill_rate: float = 100.0          # % of a bucket per s per contact share above ...
+    fill_min_exposed: float = 0.08    # ... this share (below: no fill)
+    fill_max: float = 30.0            # % of a bucket per s at most
+    tap_s: float = 4.2                # belt seconds that pass per tap of the bot
+    max_wait_s: float = 60.0
+
+    @property
+    def laps_per_tap(self) -> int:
+        return max(0, round(self.tap_s / self.lap_s))
+
+    def rate(self, share: float) -> float:
+        """% of a bucket per second at this contact-layer share."""
+        return max(0.0, min(self.fill_max, self.fill_rate * (share - self.fill_min_exposed)))
 
 
 @dataclass
@@ -128,6 +160,8 @@ class Sim:
     fills: int = 0                    # bucket stages completed
     collected: int = 0
     jam: bool = False
+    t: float = 0.0                    # belt seconds since the start
+    full_taps: int = 0                # taps that took the last free slot
 
     # -- construction ---------------------------------------------------------------------
 
@@ -161,9 +195,10 @@ class Sim:
         return cls(grid, belt, pic, cap, sc)
 
     def clone(self) -> "Sim":
-        return Sim(self.grid, [Slot(s.stages, s.left, s.stage) for s in self.belt],
+        return Sim(self.grid, [Slot(s.stages, s.left, s.stage, s.credit) for s in self.belt],
                    self.pic.copy(), self.capacity, self.sc, list(self.taps),
-                   list(self.actions), self.fills, self.collected, self.jam)
+                   list(self.actions), self.fills, self.collected, self.jam, self.t,
+                   self.full_taps)
 
     # -- queries --------------------------------------------------------------------------
 
@@ -185,8 +220,13 @@ class Sim:
         return sum(1 for s in self.belt if self.pic.count(s.colour) < need[s.colour])
 
     def stuck_slots(self) -> int:
-        """Belt buckets whose colour is not in the contact layer now (they wait for sand)."""
-        return sum(1 for s in self.belt if self.pic.exposed(s.colour) == 0)
+        """Belt buckets that collect nothing now (their colour too little in the contact layer)."""
+        return sum(1 for s in self.belt if self.sc.rate(self.pic.share(s.colour)) <= 0)
+
+    def belt_fills(self) -> List[Tuple[str, int]]:
+        """(colour, fill %) of the belt buckets, as the live belt reader shows them."""
+        return [(s.colour, int(100 * (1 - s.left / max(1, self.capacity.get(s.colour, 1)))))
+                for s in self.belt]
 
     @property
     def won(self) -> bool:
@@ -214,6 +254,7 @@ class Sim:
         nxt.belt.append(Slot((cell.color,) + ((cell.body,) if cell.body else ()),
                              nxt.capacity.get(cell.color, 1)))
         nxt.taps.append(pos)
+        nxt.full_taps += nxt.free == 0
         for _ in range(self.sc.laps_per_tap):
             nxt.lap()
         return nxt
@@ -223,11 +264,11 @@ class Sim:
         A full belt that stops moving is a jam."""
         nxt = self.clone()
         nxt.actions.append(("wait", None, None, len(self.belt)))
-        n0, moved = len(nxt.belt), 0
-        for _ in range(self.sc.max_wait_laps):
+        n0, moved = len(nxt.belt), 0.0
+        for _ in range(max(1, round(self.sc.max_wait_s / self.sc.lap_s))):
             got = nxt.lap()
             moved += got
-            if len(nxt.belt) < n0 or got == 0:
+            if len(nxt.belt) < n0 or got <= 0:
                 break
         if moved == 0:
             if nxt.free == 0:
@@ -236,21 +277,33 @@ class Sim:
             return None
         return nxt
 
-    def lap(self) -> int:
-        got = 0
+    def lap(self) -> float:
+        """One lap; returns the cells the belt earned (0: nothing collects)."""
+        got = 0.0
+        self.t += self.sc.lap_s
         for s in list(self.belt):
-            n = self.pic.take(s.colour, min(s.left, self.sc.lap_take))
+            rate = self.sc.rate(self.pic.share(s.colour))
+            if rate <= 0:
+                continue
+            s.credit += rate / 100 * self.capacity.get(s.colour, 1) * self.sc.lap_s
+            want = min(s.left, int(s.credit))
+            n = self.pic.take(s.colour, want)
+            if n < want:                  # the contact layer ran out of the colour
+                s.credit = 0.0
+                got += n
+            else:
+                s.credit -= n
+                got += max(n, 1e-3)       # collecting (a fraction of a cell this lap)
             s.left -= n
-            got += n
+            self.collected += n
             if s.left <= 0:
                 self.fills += 1
                 self._fill_curtains()
                 if s.stage + 1 < len(s.stages):
                     s.stage += 1
-                    s.left = self.capacity.get(s.colour, 1)
+                    s.left, s.credit = self.capacity.get(s.colour, 1), 0.0
                 else:
                     self.belt.remove(s)
-        self.collected += got
         return got
 
     def _open_ice(self) -> None:

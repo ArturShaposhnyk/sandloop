@@ -267,6 +267,24 @@ def pick_window(windows: Sequence[WindowInfo], owner_name: str,
     return max(cands, key=lambda w: w.bounds.w * w.bounds.h)
 
 
+def describe_windows(owner_name: str) -> str:
+    """Every window of ``owner_name`` (off-screen too) + the frontmost app (window lost)."""
+    on = {w.window_id for w in list_windows(True)}
+    owner_l = owner_name.casefold()
+    mine = [w for w in list_windows(False) if w.owner.casefold() == owner_l]
+    parts = [f"#{w.window_id} layer {w.layer} {_fmt_rect(w.bounds)} "
+             f"{'on-screen' if w.window_id in on else 'off-screen'}"
+             + (f" {w.title!r}" if w.title else "") for w in mine]
+    try:
+        from AppKit import NSWorkspace
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        front = str(app.localizedName()) if app is not None else "?"
+    except ImportError:
+        front = "?"
+    return (f"{len(mine)} window(s) of {owner_name!r}: " + ("; ".join(parts) or "none")
+            + f"; frontmost app: {front}")
+
+
 # ---------------------------------------------------------------------------------------------
 # Grabbing (mss)
 # ---------------------------------------------------------------------------------------------

@@ -16,12 +16,40 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 6 | screens outside gameplay (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `--levels N`, session limits | `a07c297`, `c1b1423` |
 | 7 (started) | lookahead 2-3 taps (`lookahead.py`), sand above the contact layer (`sand.contact_layers`), every level -> `debug/levels.jsonl` | `ebd0c2a` |
 | 7 | whole-level plan (`sim.py`, `levelplan.py`), level memory, per-colour capacity, endgame reserve, sacrifice | `ee2c1c8` |
+| 7 | run 161536: measured belt speed in the simulator, plan waits never stall, plan checks, focus / window fixes | (this commit) |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 710 pass.
+Tests: `python -m pytest -q` - all 721 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-20)
+- **L187 run `20261020-161536`** (planner on, `d550e5a`): the plan worked for 6 taps and
+  re-planned twice, then step 3 "tap r4c4 purple" waited for the belt (k 3 > 2) 32 s: yellow
+  37 % and orange 0 % could not fill. Causes: (1) the simulator filled buckets from any sand in
+  the contact layer, but real buckets get ~nothing below ~10 % of it (orange was at 7 %);
+  (2) the simulator's picture was cut at the zone bottom, not the real picture edge (orange
+  26 % instead of vision's 7 %); (3) a plan wait had no limit; (4) the orange stall clock
+  restarted every other frame (one or both orange buckets read). Then iPhone Mirroring vanished
+  at 76 s (no frame of it saved) and the bot stopped after 10 s.
+- **Fixes**: belt speed measured (`python -m tools.belt_speed`: ~100 %/s x (contact share -
+  8 %), max 30 %/s, ~4.2 s per tap) and used by `sim.py` (`planner.fill_rate`,
+  `fill_min_exposed`, `fill_max`, `tap_s`, `lap_s`, `max_wait_s` replace `lap_take` /
+  `laps_per_tap`); the simulated picture is cut at the real bottom edge, block = most frequent
+  colour (contact shares now within 5 % of vision); a planned tap into the last free slot costs
+  `planner.weight_full`; **a plan wait is given up** after `wait_stall_s` (5 s) without sand gain
+  or `wait_grace_s` (5 s) behind the plan's predicted time -> re-plan from the real belt, and if
+  that plan waits too the greedy strategy decides until the board changes. Every planned tap
+  logs `plan check step i/n: t ..s (plan ..s), belt k .. (plan ..): plan ... | real ...` (also
+  in `levels.jsonl` "plans" -> "checks"; `python -m tools.belt_speed` lists them).
+  `BeltTracker` no longer restarts a stall clock when fewer buckets of the colour are read.
+  From the stalled board (frame 00060) the planner now taps darkred at once (no wait).
+- **Focus / window**: live runs activate iPhone Mirroring before the first tap and wait until it
+  is frontmost (`clicks.focus_wait_s`, `focus_settle_s`); a tap without visible effect is
+  checked on one more frame before it counts. Window lost: the bot waits up to
+  `bot.window_lost_max_s` 30 s, saves the last frame (`frames/*-before-window-lost.png`) and
+  logs the window list (`window list: ... off-screen ...; frontmost app: ...`). TAP #1 in the
+  run did work (the orange bucket flew; frame 00008), the effect check ran on a frame where it
+  still showed.
 - **L187 run `20261020-145310`** (uncommitted gamble/lookahead code, `bfaad21` + work tree): the
   cream last-slot gamble (#22) opened purple and the sky drained; LOST with the belt 5/5 (green,
   orange, yellow, purple, blue almost done, stuck) while 2 darkred buckets (39 % of the contact
@@ -95,11 +123,10 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
-1. `python -m levelplan <L187 start frame>` (no taps) - the user checks the sequence; then
-   `python -m bot --dry-run` on L187 (plan logged, nothing tapped); then live `--levels 1`.
-2. Watch live: re-plans per level (`levels.jsonl` "plans"), how often the board differs from the
-   plan (timing of fills); the simulator's belt speed (`planner.lap_take`, `laps_per_tap`) is a
-   guess - compare predicted vs real fills and tune.
+1. Live L187 `--levels 1` with the measured belt speed; after it `python -m tools.belt_speed`
+   (adds the new run's samples if passed, and lists the plan checks) and re-tune `planner.fill_*`.
+2. If Mirroring vanishes again: the `window list:` line says whether its window went
+   off-screen (another Space / hidden) or was closed.
 3. Hidden colours (under locks / curtains / ice) end the plan; with Try Again the colours seen in
    the last attempt could be filled in from memory (not done).
 4. Belt reader: a cream lower stage on darkgreen (`darkgreen/cream`) may be a misread.
@@ -187,6 +214,14 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L187 live run 20261020-161536 (2026-10-20): plan wait stalled 32 s, window lost
+- 8 taps (6 by the start plan, 2 by the second re-plan), then 32 s "waits for the belt (k 3 > 2)"
+  with yellow 36-37 % / orange 0 % / orange-cream 38 % unchanged (sand total 0.7516 constant from
+  45 s on), then "no on-screen window owned by 'iPhone Mirroring'" at 76 s, stop at 86 s.
+- Belt-speed data (3 runs): contact share < 5 %: median 0 %/s; 5-15 %: ~1 %/s; 20-25 %:
+  14 %/s; 25-35 %: 26-30 %/s. The old simulator took up to 20 cells / lap from any exposed sand.
+- Regression tests: `tests/test_run_20261020_161536.py` (frame 00060 + the belt per frame).
 
 ## L187 live run 20261020-145310 (2026-10-20): gamble worked, lost in the endgame
 - 26 taps; #22 last-slot gamble cream r1c6 -> #23 purple r3c6: the sky drained. Then #24 orange

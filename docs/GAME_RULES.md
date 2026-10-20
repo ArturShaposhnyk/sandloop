@@ -239,6 +239,15 @@
 - Level memory (`debug/levels.jsonl`): on Try Again (same board signature) the sequences of
   attempts that did not win are banned (the plan must deviate) and the capacity per colour is
   corrected from what those attempts really used.
+- Belt speed (measured, not a game rule: `python -m tools.belt_speed` on belt.csv of runs
+  142035 / 145310 / 161536, 458 samples): a belt bucket fills ~100 %/s x (its colour's share of
+  the contact layer - 8 %), at most ~30 %/s; below ~10 % it gets almost nothing (L187 run
+  161536: orange at 7 % of the contact layer stayed 0 % for 30 s). The simulator uses this
+  (`planner.fill_*`); the bot needs ~4 s per tap (`planner.tap_s`).
+- A plan's wait for the belt never stalls: given up when the belt is `planner.wait_grace_s`
+  behind the plan's predicted time or no belt bucket gained sand for `planner.wait_stall_s`
+  -> re-plan from the real belt; if that plan waits too, the greedy strategy decides until the
+  board changes. Every planned tap logs "plan check": predicted vs real belt and time.
 
 ## Chests and mystery buckets (user, 2026-10-19, L186; weights in `config.yaml` `strategy:`)
 - A move that opens a path to a chest is risky: its N buckets fill up to N free cells and can

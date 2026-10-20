@@ -55,7 +55,8 @@ class Bot(LevelMixin):
                  geometry: Callable[..., Any], log: RunLog, controls: Any, failsafe: Any,
                  dry_run: bool = False, max_taps: Optional[int] = None, levels: int = 1,
                  clock: Callable[[], float] = time.monotonic,
-                 sleep: Callable[[float], None] = time.sleep) -> None:
+                 sleep: Callable[[float], None] = time.sleep,
+                 diagnose: Optional[Callable[[], str]] = None) -> None:
         from analyzer import DecisionGate
 
         self.cfg, self.bc = cfg, cfg.bot
@@ -63,6 +64,7 @@ class Bot(LevelMixin):
         self.log, self.controls, self.failsafe = log, controls, failsafe
         self.dry_run, self.max_taps = dry_run, max_taps
         self.clock, self.sleep = clock, sleep
+        self.diagnose = diagnose              # window lost: what the window list shows
         self.gate = DecisionGate(cfg.strategy.confirm_frames)
         self.flow = ScreenFlow(cfg.flow, dry_run)
         self.session = Session(levels, cfg.session)
@@ -85,6 +87,8 @@ class Bot(LevelMixin):
         self.non_game = 0
         self.last_reason: Optional[str] = None
         self.lost_since: Optional[float] = None
+        self.last_frame: Optional[np.ndarray] = None
+        self.effect_retry = False             # the tap effect check waits one more frame
         self.was_paused = False
         self._reset_level()
 
@@ -172,8 +176,10 @@ class Bot(LevelMixin):
             now = self.clock()
             if self.lost_since is None:
                 self.lost_since = now
-                self.log.log(f"window / geometry problem: {e} - waiting")
+                self.log.log(f"window / geometry problem: {e} - waiting up to "
+                             f"{self.bc.window_lost_max_s:.0f}s for it")
                 self.log.event("log", msg=f"window lost: {e}")
+                self._lost_report()
             if now - self.lost_since > self.bc.window_lost_max_s:
                 raise Stop("stopped", f"window lost for {self.bc.window_lost_max_s:.0f}s: {e}")
             self.gate.reset()
@@ -181,10 +187,26 @@ class Bot(LevelMixin):
             self.sleep(0.5)
             return None
         if self.lost_since is not None:
-            self.log.log("window back")
+            self.log.log(f"window back after {self.clock() - self.lost_since:.1f}s")
+            self.log.event("log", msg="window back")
             self.lost_since = None
         self.frame_no += 1
+        self.last_frame = frame
         return frame
+
+    def _lost_report(self) -> None:
+        """Window lost: save the last frame before it and the window list (run 161536:
+        Mirroring vanished at 76 s with no frame of what happened)."""
+        if self.last_frame is not None:
+            path = self.log.frame(f"{self.frame_no:05d}-before-window-lost", self.last_frame)
+            self.log.log(f"last frame before the window was lost: {path}")
+        if self.diagnose is not None:
+            try:
+                info = self.diagnose()
+            except Exception as e:   # noqa: BLE001 - diagnostics only
+                info = f"window list failed: {e!r}"
+            self.log.log(f"window list: {info}")
+            self.log.event("log", msg=f"window list: {info}")
 
     def _settling(self, frame: np.ndarray) -> bool:
         """After a tap: True (skip this frame) until the grid / counter calmed down."""
@@ -293,6 +315,12 @@ class Bot(LevelMixin):
                 changed += 1
         k_up = (st.conveyor_k is not None and k_before is not None and st.conveyor_k > k_before)
         ok = changed > 0 or k_up
+        if not ok and not self.effect_retry:   # the frame may be stale (run 161536, TAP #1)
+            self.effect_retry = True
+            self.pending = (tapped, k_before)
+            self.log.log("tap effect not visible yet - checking the next frame")
+            return
+        self.effect_retry = False
         self.log.event("effect", ok=ok, changed=changed, taps=len(tapped), k_before=k_before,
                        k_after=st.conveyor_k)
         if ok:
@@ -322,7 +350,9 @@ class Bot(LevelMixin):
         moves = ([(move, f"confirmed, level plan step {move.level_plan}")] if move.level_plan
                  else burst(st, move, both, self.cfg.strategy, self.bc, covering))
         if self.max_taps is not None:
-            moves = moves[:max(1, self.max_taps - self.taps)]
+            if self.taps >= self.max_taps:
+                return   # --max-taps reached: the loop stops once the last tap is checked
+            moves = moves[:self.max_taps - self.taps]
         geo = self.geometry(force=True)   # geometry check right before tapping
         if tuple(geo.frame_size) != (frame.shape[1], frame.shape[0]):
             self.log.log(f"geometry changed since the frame ({geo.frame_size} vs "
@@ -373,6 +403,7 @@ class Bot(LevelMixin):
             self.level_taps.append({**evt, "decision": self.level_last} if i == 0 else evt)
         if tapped:
             self.pending = (tapped, st.conveyor_k)
+            self.effect_retry = False
             self.settle_from = self.clock()
             self.prev_game = None
 
@@ -395,7 +426,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     import permissions
     from actions import Tapper
-    from capture import Grabber, WindowTracker
+    from capture import Grabber, WindowTracker, describe_windows
     from safety import Failsafe, Hotkeys
     from analyzer import Analyzer
 
@@ -414,11 +445,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         analyzer = Analyzer(cfg)
         tapper = Tapper(cfg, tracker, dry_run=args.dry_run, failsafe=failsafe, log=log.log)
         bot = Bot(cfg, analyzer, tapper, tracker.grab, tracker.get, log, hotkeys, failsafe,
-                  dry_run=args.dry_run, max_taps=args.max_taps, levels=args.levels)
+                  dry_run=args.dry_run, max_taps=args.max_taps, levels=args.levels,
+                  diagnose=lambda: describe_windows(cfg.window.owner_name))
         end = time.monotonic() + args.countdown
         while time.monotonic() < end and not hotkeys.quit.is_set():
             failsafe.check()
             time.sleep(0.1)
+        if not hotkeys.quit.is_set():
+            tapper.prepare()   # iPhone Mirroring frontmost before the first tap
         result = bot.run()
     except Exception as e:   # noqa: BLE001 - record any crash in the run log, then re-raise
         if type(e).__name__ != "FailsafeTriggered":
