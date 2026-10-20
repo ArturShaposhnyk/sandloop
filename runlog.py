@@ -92,7 +92,7 @@ class RunLog:
         self._log = (self.dir / "bot.log").open("a", encoding="utf-8")
         self._belt_fh = (self.dir / "belt.csv").open("a", newline="", encoding="utf-8")
         self._belt = csv.writer(self._belt_fh)
-        self._belt.writerow(["t", "frame", "k", "slots", "mean_fill"])
+        self._belt.writerow(["t", "frame", "k", "slots", "mean_fill", "speed"])
         cfg_data = dataclasses.asdict(cfg) if dataclasses.is_dataclass(cfg) else None
         self.commit = git_commit()
         self.strategy = cfg_data.get("strategy") if cfg_data else None
@@ -135,8 +135,9 @@ class RunLog:
                          f" {'?' if b.fill is None else b.fill}" for b in st.conveyor)
         fills = [b.fill for b in st.conveyor if b.fill is not None]
         mean = round(sum(fills) / len(fills), 1) if fills else ""
+        speed = getattr(res, "speed_x2", None)   # belt speed (tools.belt_speed: 1x / 2x fits)
         self._belt.writerow([self.t(), frame, "" if st.conveyor_k is None else st.conveyor_k,
-                             slots, mean])
+                             slots, mean, "" if speed is None else (2 if speed else 1)])
         self._belt_fh.flush()
 
     def frame(self, name: str, img: "np.ndarray") -> Optional[str]:

@@ -238,6 +238,18 @@ bot:                         # python -m bot: plays one level (docs/GAME_RULES.m
                              # Mirroring vanished at 76 s; the bot waits for it to come back)
   max_run_s: 900.0           # one level, from its first gameplay frame
   disagree_report_s: 10.0    # a cell's look and the path rule disagree this long while there is no move: log STUCK + save the frame
+  # belt speed 2x (user, 2026-10-20: the ▶▶2x button under the k/5 counter is free and resets
+  # every level). Green = on, grey = off (hud.read_speed); while it reads off at level start
+  # the bot taps it (only it), then the planner re-plans with the 2x belt (planner.speed_x2_*)
+  speed_x2: true
+  speed_zone: [0.43, 0.54, 0.57, 0.57]
+  speed_hue: [35, 85]        # OpenCV hue of the green "on" button
+  speed_min_sv: 100          # ... min saturation / value of its pixels
+  speed_on_share: 0.25       # green share of speed_zone -> on (live gameplay frames 0.34-0.57)
+  speed_off_grey: 0.3        # grey share and no green -> off (live ~0.4)
+  speed_confirm_frames: 2    # same reading this many gameplay frames in a row
+  speed_max_taps: 2          # taps per level while it still reads off, then play at 1x
+  speed_retap_s: 3.0
   loop_interval_s: 0.05
   max_saved_frames: 1500     # PNGs per run in debug/runs/<stamp>/frames/
 
@@ -255,6 +267,13 @@ planner:                     # levelplan.py + sim.py: whole-level plan (docs/GAM
   fill_min_exposed: 0.08
   fill_max: 30.0
   tap_s: 4.2                 # belt seconds per tap of the bot (decision + settle; lower quartile live)
+  # belt speed 2x (bot.speed_x2): planner times are real seconds, so 2x scales the fill speeds;
+  # tap_s is the bot's own cycle and stays. null = 1x value x speed_x2_factor (rate / max) or
+  # the 1x value (min exposed) - set them from python -m tools.belt_speed once 2x runs exist
+  speed_x2_factor: 2.0
+  speed_x2_fill_rate: null
+  speed_x2_fill_max: null
+  speed_x2_fill_min_exposed: null
   max_wait_s: 60.0           # one simulated wait at most
   # live: a plan step waiting for the belt is given up (re-plan; if the new plan waits too, the
   # strategy decides until the board changes) when the belt is wait_grace_s behind the plan's
@@ -285,6 +304,10 @@ flow:                        # flow.py: screens outside gameplay (docs/GAME_RULE
   unknown_frame_s: 10.0      # on an unknown / ad screen: save a frame this often (frames/*-screen-*-wait)
   stuck_max_s: 90.0          # a known screen with nothing allowed to tap this long -> stop
   ad_context_s: 60.0         # an unknown screen this soon after an ad (end card) is searched for a ✕ too
+  # ad chains (user, run 224631): ✕ / skip taps are unlimited and do not count towards
+  # same_button_max / max_taps_between_levels; repeated every ad_retap_s until a known screen
+  ad_retap_s: 3.0
+  ad_chain_max_s: 600.0      # no known screen this long since the chain's first ad tap -> stop
   require_lives: true        # PLAY / Try Again only when the heart reads >= 1 life
   lives_zone: [0.60, 0.075, 0.70, 0.112]   # HUD heart with the lives digit
   heart_tol: 14.0            # LAB distance to palette ui heart_red

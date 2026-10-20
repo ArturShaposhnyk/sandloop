@@ -18,12 +18,39 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | whole-level plan (`sim.py`, `levelplan.py`), level memory, per-colour capacity, endgame reserve, sacrifice | `ee2c1c8` |
 | 7 | run 161536: measured belt speed in the simulator, plan waits never stall, plan checks, focus / window fixes | `b5d5a7e` |
 | 7 | run 171133: sand read to the picture's bottom edge, key-colour reserve, plans ranked by dead buckets, ad skip | `6198f3b` |
+| 7 | run 224631: ✕ on an ad disc, frontmost check; gamble / plan / tower sand rules | `8f29be2`, `819daac` |
+| 7 | belt speed 2x (▶▶2x tapped at level start, planner 2x fill speeds, 1x / 2x calibration), ad chains, key colour on the last slot | (this commit) |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 740 pass.
+Tests: `python -m pytest -q` - all 752 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-20)
+- **Belt speed 2x** (user: the ▶▶2x button is free and resets every level): `hud.read_speed`
+  (green share of `bot.speed_zone` -> on, grey -> off; live gameplay frames: on 0.34-0.57 green,
+  off ~0.4 grey; dataset shots 006-056 / run 103804 were played at 2x, every bot run so far at
+  1x), `hud.SpeedTracker` (2 equal readings). Log "belt speed 2x: on / off"; level record
+  `speed_x2`; belt.csv column `speed`. `bot.speed_x2` (true): while it reads off at level start
+  the bot taps the button centre (only it; "SPEED TAP ▶▶2x", frame `*-speed-tap`), at most
+  `speed_max_taps` (2) per level `speed_retap_s` (3 s) apart, no bucket move meanwhile; still
+  off -> "belt speed 2x still off after 2 tap(s) - playing at 1x". Planner: a speed change
+  re-plans ("level plan: belt speed 2x - re-planning"); `sim_config(x2)` scales fill_rate /
+  fill_max by `planner.speed_x2_factor` (2) until `speed_x2_fill_*` are calibrated. **tap_s is
+  not scaled**: the simulator's times are real seconds and tap_s is the bot's own cycle
+  (~4.2 s); scaling both would count 2x twice. `python -m tools.belt_speed` fits 1x and 2x
+  separately (older runs = 1x).
+- **Ad chains** (user): ✕ / skip taps are unlimited (not counted towards `same_button_max` /
+  `max_taps_between_levels`), repeated every `flow.ad_retap_s` (3 s) until a known screen;
+  `flow.ad_chain_max_s` (600 s) without one stops the bot. Taps stay on corner ✕ / skip glyphs
+  only (never INSTALL / Download / Get).
+- **Key-colour reserve, run 224631 (user asked why no slot was kept for yellow)**: before #26
+  (2 free) yellow was no key - 18.5 % of the contact layer < `key_min_exposed` 20 % and it
+  covered only 0.2 % of the buried blue; as a key it needs 1 slot (nothing in front), which
+  cream left anyway. At #27 (1 free) yellow was a key (22.9 %) and the reserve did keep the last
+  slot, but the last-slot minimum (25 %) rejected yellow itself. Fixed: a key colour's own
+  bucket takes the last slot at `key_min_exposed` (20 %). At #27 the lookahead then still
+  calls the belt jammed (yellow 3.82 % left < a 4.07 % bucket at `look_sand_margin` 1.0);
+  at 0.9 the bot taps yellow. Lookahead-jam moves now count for the last-slot gamble too.
 ### Handoff summary (before /clear, `d1cd250`)
 - **Planner** (`levelplan.py`, `sim.py`, `planner:` in config.yaml): beam search over tap / wait
   sequences at level start and on every unmatched board; ranked win > fewer dead belt buckets >
@@ -187,7 +214,10 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
 
 ## NEXT
 0. Live L187 `--levels 3` with the run-224631 fixes (ad end card ✕, frontmost check, gamble /
-   plan / tower sand rules). Watch for "skipped: ... re-planning without it", "tower: ... cannot
+   plan / tower sand rules) and 2x: check "belt speed 2x: on" after the SPEED TAP on every
+   level start and Try Again; then `python -m tools.belt_speed debug/runs/<new run>` (2x
+   samples) and set `planner.speed_x2_fill_*`. Open: `look_sand_margin` / `gamble_fill_margin`
+   1.0 vs 0.9 (#27 yellow). Watch for "skipped: ... re-planning without it", "tower: ... cannot
    fill", "last-slot gamble: ... fills itself / opens ...", and whether the Kingshot-style end
    card is closed ("ad ✕ on a disc"). Open: `gamble_fill_margin` 1.0 vs 0.9 (#27 yellow).
 1. Live L187 `--levels 3` (sand to the bottom edge changes every sand share: watch "not enough

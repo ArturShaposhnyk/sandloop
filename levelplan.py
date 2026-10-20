@@ -86,9 +86,17 @@ def _score(s: Sim, total: int, pc: Any) -> float:
             + pc.weight_free * s.free - pc.weight_full * s.full_taps)
 
 
-def sim_config(pc: Any, slots: int) -> SimConfig:
-    return SimConfig(slots, pc.lap_s, pc.fill_rate, pc.fill_min_exposed, pc.fill_max, pc.tap_s,
-                     pc.max_wait_s)
+def sim_config(pc: Any, slots: int, x2: bool = False) -> SimConfig:
+    """``x2``: belt speed 2x (bot.speed_x2). Times are real seconds, so only the fill speeds
+    change (measured 2x values if set, else the 1x ones x ``speed_x2_factor``); ``tap_s`` is
+    the bot's own cycle and stays."""
+    rate, e0, cap = pc.fill_rate, pc.fill_min_exposed, pc.fill_max
+    if x2:
+        f = pc.speed_x2_factor
+        rate = pc.speed_x2_fill_rate if pc.speed_x2_fill_rate is not None else rate * f
+        cap = pc.speed_x2_fill_max if pc.speed_x2_fill_max is not None else cap * f
+        e0 = pc.speed_x2_fill_min_exposed if pc.speed_x2_fill_min_exposed is not None else e0
+    return SimConfig(slots, pc.lap_s, rate, e0, cap, pc.tap_s, pc.max_wait_s)
 
 
 def _lost(s: Sim) -> bool:
@@ -106,11 +114,12 @@ def _rank(s: Sim, total: int, pc: Any) -> Tuple[bool, int, float]:
 def plan_level(state: LevelState, pic: Picture, pc: Any,
                banned: Set[Tuple[Pos, ...]] = frozenset(),
                capacity: Optional[Dict[str, int]] = None,
-               forbid: Set[Pos] = frozenset()) -> Plan:
+               forbid: Set[Pos] = frozenset(), x2: bool = False) -> Plan:
     """Beam search from ``state`` (+ its picture); ``pc``: PlannerConfig. ``forbid``: taps not
-    allowed before the first tap (the live rules reject them on this board)."""
+    allowed before the first tap (the live rules reject them on this board). ``x2``: belt
+    speed 2x."""
     t0 = time.monotonic()
-    root = Sim.start(state, pic, sim_config(pc, state.conveyor_slots), capacity)
+    root = Sim.start(state, pic, sim_config(pc, state.conveyor_slots, x2), capacity)
     root.grid.disagreements = []
     root.grid.tappable = root.grid.playable()
     total = max(1, pic.total())
@@ -256,7 +265,17 @@ class PlanRunner:
         self.checked: Set[int] = set()          # steps whose tap was compared with the plan
         self.given_up: Optional[Sig] = None     # board on which the strategy decides
         self.forbid: Dict[Sig, Set[Pos]] = {}   # per board: plan taps the sand rules rejected
+        self.x2 = False                         # belt speed 2x (hud.SpeedTracker)
 
+    def set_speed(self, x2: bool, log=print) -> None:
+        """The belt speed changed (▶▶2x read on / off): the plan's timing is wrong now -
+        re-plan on the next frame."""
+        if x2 == self.x2:
+            return
+        self.x2 = x2
+        if self.plan is not None:
+            self.plan, self.last_plan_t, self.at = None, -1e9, None
+            log(f"level plan: belt speed {'2x' if x2 else '1x'} - re-planning")
     def decide(self, img, gv, state: LevelState, fallback, now: float, log=print):
         """The decision for this frame: the plan's step, a wait for it, or ``fallback``."""
         from strategy import Decision, _score as score_cand, evaluate
@@ -396,16 +415,18 @@ class PlanRunner:
         if shares and sand > 0:   # picture share -> cells, at this frame's cells per share
             cap = {c: max(1, round(v * pic.total() / sand)) for c, v in shares.items()}
         self.plan = plan_level(state, pic, self.pc, banned, cap,
-                               forbid or self.forbid.get(grid_signature(state.grid), set()))
+                               forbid or self.forbid.get(grid_signature(state.grid), set()),
+                               self.x2)
         self.last_plan_t = now
         self.at, self.checked = None, set()
         self.replans += why != "start"
-        self.log.append({"t": round(now, 2), "why": why, "taps": len(self.plan.steps),
+        self.log.append({"t": round(now, 2), "why": why, "x2": self.x2,
+                         "taps": len(self.plan.steps),
                          "result": self.plan.result, "collected": round(self.plan.collected, 3),
                          "banned": len(banned), "capacity": cap,
                          "steps": [[*s.pos, s.colour, round(s.t, 1)] for s in self.plan.steps]})
         log(f"level plan ({why}{', ' + str(len(banned)) + ' failed sequence(s) avoided' if banned else ''}"
-            f"{', capacity from earlier attempts' if cap else ''}):")
+            f"{', capacity from earlier attempts' if cap else ''}, belt {'2x' if self.x2 else '1x'}):")
         for line in self.plan.describe():
             log(line)
 

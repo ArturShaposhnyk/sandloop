@@ -30,6 +30,7 @@ class LevelMixin:
         self.level_no += 1
         self.level_taps, self.level_last, self.level_t0 = [], None, self.log.t()
         self.level_first, self.level_sig = None, None
+        self.speed_taps, self.speed_tap_t, self.speed_gave_up = 0, -1e9, False
         lives = "?" if self.lives is None else self.lives
         self.log.log(f"LEVEL {self.level_no} started (lives {lives})")
         self.log.event("level_start", level=self.level_no, frame=self.frame_no, lives=self.lives)
@@ -69,7 +70,8 @@ class LevelMixin:
                        taps=len(self.level_taps), tap_log=self.level_taps,
                        start=self.level_first, end=self.level_last,
                        plans=planner.log if planner is not None else [],
-                       chests=list(getattr(an, "chest_log", [])))
+                       chests=list(getattr(an, "chest_log", [])),
+                       speed_x2=getattr(getattr(an, "speed", None), "state", None))
 
     def _non_gameplay(self, res: Any, frame: np.ndarray, now: float) -> None:
         from hud import read_lives
@@ -106,6 +108,45 @@ class LevelMixin:
             self.screen_frame_t = now   # unknown / ad screens: a frame every unknown_frame_s
             self.log.frame(f"{self.frame_no:05d}-screen-{res.screen}-wait", frame)
         self.last_screen_reason = act.reason
+
+    def _speed_up(self, res: Any, frame: np.ndarray, now: float) -> bool:
+        """User (2026-10-20): the ▶▶2x belt speed button is free and resets every level. While
+        it reads off (hud.SpeedTracker, confirmed), tap it - only it - at most
+        ``bot.speed_max_taps`` times per level, ``speed_retap_s`` apart. True = this frame was
+        spent on it (no bucket move)."""
+        from actions import OutOfBounds
+
+        bc = self.bc
+        if not bc.speed_x2 or getattr(res, "speed_x2", None) is not False:
+            return False
+        if now - self.speed_tap_t < bc.speed_retap_s:
+            return True                    # just tapped: wait for the button to turn green
+        if self.speed_taps >= bc.speed_max_taps:
+            if not self.speed_gave_up:
+                self.speed_gave_up = True
+                png = self.log.frame(f"{self.frame_no:05d}-speed-still-off", frame)
+                self.log.log(f"belt speed 2x still off after {self.speed_taps} tap(s) - playing "
+                             f"at 1x (frame {png})")
+            return False
+        geo = self.geometry(force=True)
+        if tuple(geo.frame_size) != (frame.shape[1], frame.shape[0]):
+            return True
+        z = bc.speed_zone
+        rel = ((z[0] + z[2]) / 2, (z[1] + z[3]) / 2)
+        try:
+            tr = self.tapper.tap(*rel)
+        except OutOfBounds as e:
+            self.log.log(f"speed tap refused: {e}")
+            self.speed_taps = bc.speed_max_taps
+            return False
+        self.speed_taps += 1
+        self.speed_tap_t = now
+        self.log.log(f"SPEED TAP ▶▶2x ({self.speed_taps}/{bc.speed_max_taps}): belt speed reads "
+                     f"1x{' [dry-run]' if self.dry_run else ''}")
+        self.log.event("speed_tap", n=self.speed_taps, frame=self.frame_no,
+                       rel=[round(rel[0], 4), round(rel[1], 4)], executed=tr.executed,
+                       frame_png=self.log.frame(f"{self.frame_no:05d}-speed-tap", frame))
+        return True
 
     def _screen_tap(self, act: Any, res: Any, frame: np.ndarray, lives: Optional[int]) -> None:
         """One confirmed tap on a non-gameplay screen (flow.py chose the button)."""

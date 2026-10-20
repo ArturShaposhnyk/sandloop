@@ -10,6 +10,11 @@ sand the belt can really reach). Prints the median / mean rate per share band, t
 ``rate = fill_rate x (share - fill_min_exposed)`` capped at ``fill_max`` (planner: in
 config.yaml), the bot's seconds per tap (``tap_s``) and, from levels.jsonl, how the
 level plans' predicted belt compared with the real one ("plan check" records).
+
+Belt speed 1x and 2x are calibrated separately (belt.csv column ``speed``, from the ▶▶2x
+button; runs before it have no column and were all played at 1x): the 1x fit goes to
+``planner.fill_*``, the 2x fit to ``planner.speed_x2_fill_*``. Frames with an unread speed
+are left out.
 """
 from __future__ import annotations
 
@@ -35,8 +40,15 @@ def parse_slots(text: str) -> Dict[str, List[Optional[int]]]:
     return out
 
 
-def samples(run: Path) -> List[Tuple[float, float, str]]:
-    """(rate %/s, contact share, colour) of one run."""
+def row_speed(row: Dict[str, str]) -> Optional[int]:
+    """Belt speed of a belt.csv row: 1 / 2, None = not read; no column (older runs) = 1x."""
+    if "speed" not in row or row["speed"] is None:
+        return 1
+    return int(row["speed"]) if row["speed"] else None
+
+
+def samples(run: Path, speed: int = 1) -> List[Tuple[float, float, str]]:
+    """(rate %/s, contact share, colour) of one run, rows at belt speed ``speed`` only."""
     shares = {}
     for line in open(run / "events.jsonl"):
         e = json.loads(line)
@@ -47,6 +59,8 @@ def samples(run: Path) -> List[Tuple[float, float, str]]:
     for a, b in zip(rows, rows[1:]):
         dt = float(b["t"]) - float(a["t"])
         if not 0 < dt <= MAX_DT or int(a["frame"]) not in shares:
+            continue
+        if row_speed(a) != speed or row_speed(b) != speed:
             continue
         sa, sb = parse_slots(a["slots"]), parse_slots(b["slots"])
         for colour, fa in sa.items():
@@ -95,14 +109,8 @@ def plan_checks(levels: Path) -> List[str]:
     return lines
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("runs", nargs="*", default=RUNS)
-    ap.add_argument("--levels", default="debug/levels.jsonl")
-    args = ap.parse_args(argv)
-    runs = [Path(r) for r in args.runs if (Path(r) / "belt.csv").exists()]
-    points = [p for r in runs for p in samples(r)]
-    print(f"{len(points)} samples from {len(runs)} run(s)")
+def report(speed: int, points: Sequence[Tuple[float, float, str]], runs: int, keys: str) -> None:
+    print(f"belt speed {speed}x: {len(points)} samples from {runs} run(s)")
     bands: Dict[float, List[float]] = defaultdict(list)
     for r, x, _ in points:
         bands[min(0.5, int(x * 20) / 20)].append(r)
@@ -112,8 +120,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               f"{statistics.median(v):5.1f} %/s, mean {statistics.mean(v):5.1f} %/s")
     if points:
         rate, e0, cap = fit(points)
-        print(f"fit: fill_rate {rate}  fill_min_exposed {e0:.2f}  fill_max {cap}  (planner: "
-              "in config.yaml)")
+        print(f"  fit: rate {rate}  min_exposed {e0:.2f}  max {cap}  (config.yaml planner: "
+              f"{keys})")
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("runs", nargs="*", default=RUNS)
+    ap.add_argument("--levels", default="debug/levels.jsonl")
+    args = ap.parse_args(argv)
+    runs = [Path(r) for r in args.runs if (Path(r) / "belt.csv").exists()]
+    for speed, keys in ((1, "fill_rate / fill_min_exposed / fill_max"),
+                        (2, "speed_x2_fill_rate / speed_x2_fill_min_exposed / speed_x2_fill_max")):
+        report(speed, [p for r in runs for p in samples(r, speed)], len(runs), keys)
     print(f"tap_s (s per tap when the bot does not wait): {tap_seconds(runs)}")
     checks = plan_checks(Path(args.levels))
     if checks:

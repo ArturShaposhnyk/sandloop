@@ -13,7 +13,7 @@ end card held the session until the quit hotkey).
   step the sand rules reject is skipped and re-planned; a tower only when its top can fill.
 
 tests/data/run-20261020-224631/: 00427 (the end card), 00313 (the App Store sheet), 00228 (tap
-#24), 00262 (tap #27, k 4).
+#24), 00236 / 00243 (taps #25 / #26), 00262 (tap #27, k 4).
 """
 import dataclasses
 from pathlib import Path
@@ -24,6 +24,7 @@ cv2 = pytest.importorskip("cv2")
 
 from adclose import find_close, find_skip  # noqa: E402
 from flow import AD_SKIP, ScreenFlow  # noqa: E402
+from endgame import key_reserve  # noqa: E402
 from levelplan import Plan, PlanRunner, Step  # noqa: E402
 from screens import ScreenResult  # noqa: E402
 from sim import grid_signature  # noqa: E402
@@ -125,3 +126,77 @@ def test_tower_goes_only_when_its_top_can_fill(analyzer):  # noqa: F811
     assert cand.sand_short and cand.rejected.startswith("tower: orange cannot fill")
     st.sand["orange"] = 0.08
     assert evaluate(st, (3, 4), sc).rejected is None
+
+
+def test_tap_27_key_colour_takes_the_reserved_last_slot(analyzer):  # noqa: F811
+    """The key reserve kept the last slot for yellow (22.9 % of the contact layer, covers blue /
+    cream on the belt), then the last-slot minimum (25 %) rejected yellow itself. A key colour's
+    own bucket now needs only the normal minimum there. The lookahead still calls it dead at
+    look_sand_margin 1.0 (3.8 % yellow left, a bucket 4.07 %); at 0.9 it is tapped."""
+    sc = analyzer.cfg.strategy
+    st = run_state(analyzer, "00262-tap", END_STALLED)
+    assert "keep 1 slot(s) to reach yellow r2c2" in key_reserve(st, (0, 4), sc)
+    assert evaluate(st, (2, 2), sc).rejected is None
+    # purple (21.7 %) is a key colour too; the endgame reserve keeps its slot for yellow
+    assert evaluate(st, (5, 6), sc).rejected.startswith("endgame: keep a slot for yellow")
+    yellow = next(c for c in choose(st, sc).candidates if c.pos == (2, 2))
+    assert yellow.rejected.startswith("lookahead: the belt jams")
+    d = choose(st, dataclasses.replace(sc, look_sand_margin=0.9))
+    assert d.move is not None and (d.move.pos, d.move.color) == ((2, 2), "yellow")
+
+
+def test_tap_26_yellow_was_not_a_key_yet(analyzer):  # noqa: F811
+    """Before #26 (2 free): yellow 18.5 % < key_min_exposed 20 % and it covers only 0.2 % of
+    the buried blue - no key; as a key it needs 1 slot, which cream would have left anyway."""
+    from endgame import key_colours
+    st = run_state(analyzer, "00243-tap", {"blue": 25.0})
+    assert "yellow" not in key_colours(st, analyzer.cfg.strategy)
+
+
+# --- ad chains --------------------------------------------------------------------------------
+
+def _chain_flow(analyzer):  # noqa: F811
+    fc = dataclasses.replace(analyzer.cfg.flow, confirm_frames=1, tap_cooldown_s=0.0)
+    fl = ScreenFlow(fc)
+    fl.last_tap = -10.0                                      # Try Again
+    return fc, fl
+
+
+def test_ad_chain_taps_as_many_ads_as_come(analyzer):  # noqa: F811
+    """User: keep tapping ▶| / ✕ every few seconds until a known screen is back - more than
+    same_button_max / max_taps_between_levels times."""
+    fc, fl = _chain_flow(analyzer)
+    other = ScreenResult("other", {})
+    skip, card = cv2.imread(str(TRADE_REPUBLIC)), frame("00427-screen-other-wait")
+    t, taps = 1.0, 0
+    for i in range(int(3 * fc.max_taps_between_levels * fc.ad_retap_s)):
+        act = fl.feed(other, skip if i % 2 else card, 5, t)
+        assert act.kind != "stop", act.reason
+        if act.kind == "tap":
+            assert act.button == AD_SKIP
+            fl.tapped(act, t)
+            taps += 1
+        t += 1.0
+    assert taps > fc.max_taps_between_levels
+    assert fl.taps_between == 0 and not fl.same               # ad taps are not counted
+
+
+def test_ad_chain_retaps_every_few_seconds(analyzer):  # noqa: F811
+    fc, fl = _chain_flow(analyzer)
+    other, card = ScreenResult("other", {}), frame("00427-screen-other-wait")
+    act = fl.feed(other, card, 5, 1.0)
+    fl.tapped(act, 1.0)
+    assert fl.feed(other, card, 5, 1.0 + fc.ad_retap_s / 2).kind == "wait"
+    assert fl.feed(other, card, 5, 1.0 + fc.ad_retap_s + 0.1).kind == "tap"
+
+
+def test_ad_chain_ends_on_a_known_screen_and_has_a_cap(analyzer):  # noqa: F811
+    fc, fl = _chain_flow(analyzer)
+    other, card = ScreenResult("other", {}), frame("00427-screen-other-wait")
+    fl.tapped(fl.feed(other, card, 5, 1.0), 1.0)
+    assert fl.chain_start == 1.0
+    fl.feed(ScreenResult("fail", {}), card, 5, 5.0)          # LEVEL FAILED is back
+    assert fl.chain_start is None
+    fl.tapped(fl.feed(other, card, 5, 10.0), 10.0)
+    act = fl.feed(other, card, 5, 10.0 + fc.ad_chain_max_s + 1)
+    assert act.kind == "stop" and "ad chain" in act.reason

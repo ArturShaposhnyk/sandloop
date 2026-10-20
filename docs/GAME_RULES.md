@@ -96,7 +96,11 @@
 ## Conveyor
 - Max 5 buckets on the conveyor at once (HUD shows "k/5").
 - A bucket rides the conveyor until it is 100% full, then disappears and frees its slot.
-- "2x" toggle speeds up the conveyor — the bot may turn it on.
+- "2x" toggle speeds up the conveyor — the bot may turn it on. The **▶▶2x** button under the
+  k/5 counter is **free** (no ad, no coins) and **resets every level** (user, 2026-10-20):
+  green = 2x on, grey = off. With `bot.speed_x2` the bot taps it (only it) at level start while
+  it reads off (`bot.speed_max_taps` per level), logs "belt speed 2x: on / off" and the planner
+  uses the 2x fill speeds (`planner.speed_x2_*`).
 
 ## Sand
 - A bucket collects only sand of exactly its color (same shade).
@@ -219,7 +223,9 @@
   fills `strategy.key_min_exposed` of the contact layer then) must stay reachable: keep the slots
   its nearest bucket needs (1 + the buckets in front of it on the path). Taps of key buckets or
   of buckets on that path are allowed; a key out of reach with today's free slots reserves
-  nothing (`endgame.key_reserve`).
+  nothing (`endgame.key_reserve`). The key colour's own bucket may take the reserved last slot
+  at `key_min_exposed` (20 %) instead of the last-slot 25 % (run 20261020-224631 #27: the
+  reserve kept the slot for yellow at 22.9 %, then the 25 % rule refused yellow itself).
 - A level plan that ends with dead belt buckets is worse than any with fewer (a dead bucket never
   leaves); a full belt of dead buckets = lost, never planned. A plan step that breaks the slot
   reserves above is not tapped (the strategy decides).
@@ -342,6 +348,10 @@ must be extensible:
   is not visible, the popup's red ✕ (shot 038): it does the same as Quit, LEVEL FAILED
   follows (user, 2026-10-20). Then **Try Again** on LEVEL
   FAILED. A revive / fail screen = the level is lost (counted once).
+- **Ad chains** (user, run 20261020-224631: skip -> App Store sheet -> end card): keep tapping
+  the skip ▶| / ✕ every few seconds (`flow.ad_retap_s`) for as many ads as come, until
+  gameplay, the fail screen or the menu is back; never INSTALL / Download / Get. Only
+  `flow.ad_chain_max_s` without a known screen stops the bot.
 - Ads / popups: only tap ✕, and wait for it to appear. Never tap "Get App", purchases or
   "Activate". If an App Store sheet opens, close it (its ✕). "Take a break!" = wait.
   Ads are recognised by their anchors or the iOS status bar (the game hides it).

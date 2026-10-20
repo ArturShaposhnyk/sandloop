@@ -37,8 +37,8 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from cells import Kind
 from config import StrategyConfig
-from endgame import (belt_stuck, can_fill, endgame_reserve, key_reserve, last_slot_gamble,
-                     sacrifice)
+from endgame import (belt_stuck, can_fill, endgame_reserve, key_colours, key_reserve,
+                     last_slot_gamble, sacrifice)
 from lookahead import Outlook, belt_outlook, outlook
 from planner import Opened, Plan, ScatterRisk, opened_value, plan, scatter_risk
 from state import LevelState, Pos
@@ -78,6 +78,7 @@ class Candidate:
     gamble: bool = False                       # last-slot gamble on a stuck belt
     uncovers: float = 0.0                      # ... contact share it uncovers for the belt
     fills: Optional[str] = None                # ... why it can fill ("fills itself" / "opens ...")
+    jam: bool = False                          # rejected only by the lookahead (belt jams)
     level_plan: Optional[str] = None           # "i/n": a step of the level plan (levelplan.py)
     sacrifice: bool = False                    # can't fill now, opens what unblocks the belt
     sand_short: bool = False                   # rejected only for "not enough sand"
@@ -148,12 +149,15 @@ def belt_idle(state: LevelState, sc: StrategyConfig) -> bool:
                for b in state.conveyor if b.fill is None or b.fill < 100)
 
 
-def min_exposure(free: int, idle: bool, opener: bool, sc: StrategyConfig) -> Tuple[float, str]:
+def min_exposure(free: int, idle: bool, opener: bool, sc: StrategyConfig,
+                 key: bool = False) -> Tuple[float, str]:
     """Minimum avail to release a bucket, and why that minimum. Waiting only helps while the
     belt collects and slots are scarce: the strict threshold is for the last slot; with many
     free slots, an idle belt or a tap that opens a path, ~0 (the colour just has to exist and
     enough of it remain: the sufficiency rule)."""
     if free == 1:
+        if key and not idle:    # the slot the key reserve kept (endgame.key_colours)
+            return min(sc.key_min_exposed, sc.last_slot_min_exposed), "last slot, key colour"
         return ((sc.min_exposed, "last slot, belt idle") if idle
                 else (sc.last_slot_min_exposed, "last slot"))
     if idle:
@@ -181,7 +185,8 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig, opener: bool = Fal
     cand.on_belt = state.on_belt(cand.color)
     stalled = state.belt_stalled.get(cand.color)
     cand.stalled = stalled if stalled is not None and stalled >= sc.stall_s else None
-    min_exp, why = min_exposure(free or 0, belt_idle(state, sc), opener, sc)
+    key = free == 1 and cand.color in key_colours(state, sc)
+    min_exp, why = min_exposure(free or 0, belt_idle(state, sc), opener, sc, key)
     need = (state.conveyor_need(cand.color) + 1) * cap * sc.sufficiency_margin if cap else 0.0
     have = state.sand.get(cand.color, 0.0)
     if free is None:
@@ -273,6 +278,7 @@ def _look(state: LevelState, cand: Candidate, now, check, sc: StrategyConfig) ->
     cand.outlook = outlook(state, cand.pos, check, sc)
     if cand.outlook.belt.jam and not now.jam and not belt_idle(state, sc):
         cand.rejected = f"lookahead: the belt jams ({cand.outlook.describe()})"
+        cand.jam = True
         return
     cand.look_bonus = sc.weight_lookahead * (cand.outlook.value - now.value)
     cand.score += cand.look_bonus

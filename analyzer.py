@@ -29,6 +29,8 @@ class Analysis:
     reads: int = 0                     # gameplay frames read so far by this Analyzer
     fails: int = 0                     # ... and how many of them failed
     screen_result: Any = None          # screens.ScreenResult (anchors found, for flow.py)
+    speed_x2: Optional[bool] = None    # belt speed 2x, confirmed this level (None: not yet)
+    speed_read: Optional[bool] = None  # ... this frame's reading of the ▶▶2x button
 
     def tap_rel(self) -> Optional[Tuple[float, float]]:
         """Relative screen point of the chosen move (what a tap would hit), or None."""
@@ -92,6 +94,9 @@ class Analyzer:
         #   buckets landed (levels.jsonl: are chest results the same on Try Again?)
         self._labels: Optional[List[List[str]]] = None   # last read's labels
         self.scatter_until = -1.0              # a chest opened: no decisions until then
+        from hud import SpeedTracker
+
+        self.speed = SpeedTracker(cfg.bot.speed_confirm_frames)   # ▶▶2x, per level
 
     def analyze(self, img: "np.ndarray", log=print, now: Optional[float] = None,
                 diff: Optional[float] = None, adjust=None) -> Analysis:
@@ -108,6 +113,13 @@ class Analyzer:
                 self.lattices.unlock()   # another level may follow
             return Analysis(screen, reads=self.reads, fails=self.fails, screen_result=found)
         self.reads += 1
+        from hud import read_speed
+
+        speed_read = read_speed(img, self.cfg.bot)   # ▶▶2x button (bot.py taps it when off)
+        if self.speed.feed(speed_read):
+            log(f"belt speed 2x: {'on' if self.speed.state else 'off'}")
+            if self.planner is not None:
+                self.planner.set_speed(bool(self.speed.state), log)
         try:
             gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log,
                                icons=self.icons, hints=self.hints, memory=self.memory,
@@ -139,6 +151,7 @@ class Analyzer:
             self.fails += 1
             self._save_failure(img, res.failure, diff, log)
         res.reads, res.fails = self.reads, self.fails
+        res.speed_x2, res.speed_read = self.speed.state, speed_read
         return res
 
     def _chest_scatter(self, gv: "GameView", res: Analysis, now: float, log) -> None:

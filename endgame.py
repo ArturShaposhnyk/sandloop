@@ -98,7 +98,9 @@ def last_slot_gamble(state: LevelState, cands: List["Candidate"], sc: StrategyCo
     if state.free_slots != 1 or stuck is None:
         return None
     pool = []
-    for c in (c for c in cands if c.low_exposure or c.reserved or c.sand_short):
+    # a lookahead "jam" on a stuck belt with one slot is this very situation (run 224631 #27:
+    # yellow, a key colour, passed the rules but the lookahead called the belt jammed)
+    for c in (c for c in cands if c.low_exposure or c.reserved or c.sand_short or c.jam):
         g = evaluate(state, c.pos, sc, gamble=True)
         if g.rejected is not None or g.color in state.belt_stalled:
             continue
@@ -142,6 +144,29 @@ def sacrifice(state: LevelState, cand: "Candidate", now, check, sc: StrategyConf
     return c
 
 
+def _keys(state: LevelState, sc: StrategyConfig):
+    """(key colours, buried belt colours) - see ``key_reserve``."""
+    belt = {b.color for b in state.conveyor if b.color and (b.fill or 0) < 100}
+    belt |= {s for b in state.conveyor for s in b.stages}
+    buried = {d for d in belt if state.exposed.get(d, 0.0) < sc.look_min_exposed}
+    if not buried:
+        return [], buried
+    keys = [k for k in state.grid_buckets() if not state.on_belt(k)
+            and state.exposed.get(k, 0.0) >= sc.look_min_exposed
+            and (state.exposed.get(k, 0.0) >= sc.key_min_exposed
+                 or any(d in buried and d != k and share >= sc.look_min_gain
+                        for d, share in state.above.get(k, {}).items()))]
+    return keys, buried
+
+
+def key_colours(state: LevelState, sc: StrategyConfig) -> List[str]:
+    """Board colours the key reserve keeps slots for. Run 20261020-224631 #27: the reserve kept
+    the last slot for yellow (22.9 % of the contact layer), then the last-slot minimum (25 %)
+    rejected yellow itself - so a key colour's own bucket takes the last slot at
+    ``key_min_exposed`` (``strategy.min_exposure``)."""
+    return _keys(state, sc)[0]
+
+
 def key_reserve(state: LevelState, pos, sc: StrategyConfig) -> Optional[str]:
     """User (2026-10-20, run 20261020-171133): a "key" colour is one whose contact sand covers
     (``look_min_gain`` of the contact layer at least, ``state.above``) the sand of belt buckets
@@ -157,19 +182,9 @@ def key_reserve(state: LevelState, pos, sc: StrategyConfig) -> Optional[str]:
     from planner import shortest_path
 
     free = state.free_slots
-    belt = {b.color for b in state.conveyor if b.color and (b.fill or 0) < 100}
-    belt |= {s for b in state.conveyor for s in b.stages}
-    if not free or not belt:
+    if not free:
         return None
-    board = state.grid_buckets()
-    buried = {d for d in belt if state.exposed.get(d, 0.0) < sc.look_min_exposed}
-    if not buried:
-        return None
-    keys = [k for k in board if not state.on_belt(k)
-            and state.exposed.get(k, 0.0) >= sc.look_min_exposed
-            and (state.exposed.get(k, 0.0) >= sc.key_min_exposed
-                 or any(d in buried and d != k and share >= sc.look_min_gain
-                        for d, share in state.above.get(k, {}).items()))]
+    keys, buried = _keys(state, sc)
     cell = state.cell(pos)
     if not keys or (cell is not None and cell.color in keys):
         return None                     # a key colour's bucket itself is always allowed

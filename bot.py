@@ -236,6 +236,9 @@ class Bot(LevelMixin):
         self.last_screen_reason = None
         if not self.in_level:
             self._start_level(now)
+        if self._speed_up(res, frame, now):   # level start: ▶▶2x first (levels.py)
+            self.gate.reset()
+            return
         self.left_unclear = False
         st = res.state
         if st is not None:

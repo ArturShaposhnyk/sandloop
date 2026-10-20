@@ -56,7 +56,8 @@ def test_the_25_percent_rule_holds_in_normal_cases():
     st = stuck_state(stalled={})                             # belt collecting
     d = choose(st, SC)
     assert d.move is None
-    assert all("25%" in c.rejected for c in d.candidates)
+    # darkred / cream cover the buried belt colours: key colours, 20 % on the last slot
+    assert all("20%, last slot, key colour" in c.rejected for c in d.candidates)
 
 
 def test_gamble_never_adds_a_stalled_colour_nor_one_that_cannot_fill():

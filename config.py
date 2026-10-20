@@ -218,6 +218,17 @@ class BotConfig:
     disagree_report_s: float = 10.0      # look != path rule this long with no move: log + frame
     loop_interval_s: float = 0.05        # min seconds between captures
     max_saved_frames: int = 1500         # PNGs per run in debug/runs/<stamp>/frames/
+    # belt speed 2x (user, 2026-10-20: the ▶▶2x button under the k/5 counter is free and resets
+    # every level): hud.read_speed / SpeedTracker, tapped by bot.py at level start when off
+    speed_x2: bool = True                # turn 2x on at level start
+    speed_zone: List[float] = field(default_factory=lambda: [0.43, 0.54, 0.57, 0.57])
+    speed_hue: List[float] = field(default_factory=lambda: [35.0, 85.0])   # OpenCV hue, green
+    speed_min_sv: float = 100.0          # ... saturation / value of the green "on" pixels
+    speed_on_share: float = 0.25         # green share of speed_zone -> on (live 0.34-0.57)
+    speed_off_grey: float = 0.3          # grey share (and no green) -> off (live ~0.4)
+    speed_confirm_frames: int = 2        # same reading this many gameplay frames in a row
+    speed_max_taps: int = 2              # taps on the button per level while it reads off
+    speed_retap_s: float = 3.0           # ... at most this often
 
 
 @dataclass
@@ -235,6 +246,8 @@ class FlowConfig:
     unknown_frame_s: float = 10.0        # on an unknown / ad screen: save a frame this often
     stuck_max_s: float = 90.0            # known screen, nothing allowed to tap this long -> stop
     ad_context_s: float = 60.0           # an "other" screen this soon after an ad: look for ✕ too
+    ad_retap_s: float = 3.0              # ad chains: ✕ / skip tapped again at most this often
+    ad_chain_max_s: float = 600.0        # ad chain without a known screen this long -> stop
     require_lives: bool = True           # PLAY / Try Again only with lives read as >= 1
     lives_zone: List[float] = field(default_factory=lambda: [0.60, 0.075, 0.70, 0.112])
     heart_tol: float = 14.0              # LAB distance to palette ui heart_red
@@ -285,6 +298,13 @@ class PlannerConfig:
     weight_stuck: float = 0.05        # ... per belt bucket whose colour is not exposed now
     weight_free: float = 0.02         # ... per free slot
     weight_full: float = 0.05         # ... per tap that took the last free slot (5/5 belt)
+    # belt speed 2x (bot.speed_x2): fill speeds in real seconds; tap_s stays (the bot's own
+    # cycle). None = the 1x value x speed_x2_factor (rate / max) or as at 1x (min exposed) until
+    # python -m tools.belt_speed has 2x samples
+    speed_x2_factor: float = 2.0
+    speed_x2_fill_rate: Optional[float] = None
+    speed_x2_fill_max: Optional[float] = None
+    speed_x2_fill_min_exposed: Optional[float] = None
 
 
 @dataclass
@@ -425,13 +445,21 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("bot: times / thresholds must be >= 0, settle_max_s >= settle_min_s")
     if b.window_lost_max_s <= 0 or b.max_run_s <= 0:
         raise ConfigError("bot.window_lost_max_s and max_run_s must be > 0")
+    z = b.speed_zone
+    if len(z) != 4 or not (0 <= z[0] < z[2] <= 1 and 0 <= z[1] < z[3] <= 1):
+        raise ConfigError("bot.speed_zone must be [x0, y0, x1, y1] in 0..1")
+    if b.speed_confirm_frames < 1 or b.speed_max_taps < 0 or b.speed_retap_s < 0:
+        raise ConfigError("bot.speed_confirm_frames >= 1, speed_max_taps / speed_retap_s >= 0")
+    if cfg.planner.speed_x2_factor <= 0:
+        raise ConfigError("planner.speed_x2_factor must be > 0")
     fl = cfg.flow
     if fl.confirm_frames < 1 or fl.same_button_max < 1 or fl.max_taps_between_levels < 1:
         raise ConfigError("flow.confirm_frames, same_button_max, max_taps_between_levels "
                           "must be >= 1")
     if (min(fl.target_tolerance, fl.tap_cooldown_s, fl.forbidden_margin, fl.ad_context_s,
            fl.heart_tol, fl.heart_min_share, fl.close_min_size, fl.close_min_iou,
-           fl.close_contrast, fl.ad_after_tap_s, fl.skip_min_size) < 0
+           fl.close_contrast, fl.ad_after_tap_s, fl.skip_min_size, fl.ad_retap_s,
+           fl.ad_chain_max_s) < 0
             or min(fl.unknown_max_s, fl.ad_max_s, fl.stuck_max_s, fl.unknown_frame_s) <= 0):
         raise ConfigError("flow: thresholds must be >= 0, timeouts > 0")
     if fl.close_max_size <= fl.close_min_size or fl.skip_max_size <= fl.skip_min_size:

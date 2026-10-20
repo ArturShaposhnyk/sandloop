@@ -19,6 +19,12 @@ read on the HUD; lives 0 = stop. Stops (with the frame saved by bot.py): a scree
 unknown / an ad without ✕ / a known screen with nothing allowed for too long, the same button
 tapped ``same_button_max`` times without effect, ``max_taps_between_levels`` screen taps without
 getting back into a level.
+
+Ad chains (user, run 20261020-224631: skip -> App Store sheet -> end card): ✕ / skip taps do not
+count towards ``same_button_max`` / ``max_taps_between_levels``; they repeat every
+``ad_retap_s`` for as many ads as come, until a known screen (gameplay, fail, menu, ...) is
+back. Only ``ad_chain_max_s`` without one stops the bot. Never Download / INSTALL / Get: taps
+are only ✕ / skip glyphs in the corner zones.
 """
 from __future__ import annotations
 
@@ -33,6 +39,7 @@ from screens import FORBIDDEN, ScreenResult
 LIVES_BUTTONS = ("play", "try_again")
 AD_CLOSE = "ad_close"
 AD_SKIP = "ad_skip"
+AD_BUTTONS = (AD_CLOSE, AD_SKIP)
 
 
 @dataclass
@@ -112,6 +119,7 @@ class ScreenFlow:
         self.same: Dict[Tuple[str, str], int] = {}        # (screen, button) -> taps, screen kept
         self.taps_between = 0
         self.last_ad = -1e9
+        self.chain_start: Optional[float] = None          # first ad tap of the current chain
         self.dry_done: set = set()                        # (screen, button) logged in a dry run
 
     def in_gameplay(self) -> None:
@@ -119,6 +127,7 @@ class ScreenFlow:
         self.same.clear()
         self.dry_done.clear()
         self.taps_between = 0
+        self.chain_start = None
 
     def _same_place(self, a: ScreenAction, b: ScreenAction) -> bool:
         if (a.kind, a.screen, a.button) != (b.kind, b.screen, b.button):
@@ -138,6 +147,11 @@ class ScreenFlow:
             self.last_ad = now
         if lives == 0:
             return ScreenAction("stop", res.screen, "lives 0")
+        if res.screen not in ("ad", "other"):
+            self.chain_start = None                       # a known screen: the ad chain ended
+        if self.chain_start is not None and now - self.chain_start > self.fc.ad_chain_max_s:
+            return ScreenAction("stop", res.screen, f"ad chain for {now - self.chain_start:.0f}s "
+                                "without a known screen")
         ad_recent = (now - self.last_ad <= self.fc.ad_context_s
                      or now - self.last_tap <= self.fc.ad_after_tap_s)
         act = plan(res, img, lives, self.fc, ad_recent)
@@ -152,11 +166,15 @@ class ScreenFlow:
             self.streak, self.count = act, 1
         waited = now - self.since[1]
         if act.kind == "tap" and self.count >= self.fc.confirm_frames:
-            if now - self.last_tap < self.fc.tap_cooldown_s:
+            ad = act.button in AD_BUTTONS
+            cooldown = max(self.fc.tap_cooldown_s, self.fc.ad_retap_s if ad else 0.0)
+            if now - self.last_tap < cooldown:
                 return ScreenAction("wait", act.screen, "cooldown after the last screen tap")
             key = (act.screen, act.button)
             if self.dry_run and key in self.dry_done:
                 act = ScreenAction("wait", act.screen, f"{act.button} (dry run: logged once)")
+            elif ad:
+                return act                                # ad chains: as many as come
             elif self.same.get(key, 0) >= self.fc.same_button_max:
                 return ScreenAction("stop", act.screen, f"{act.button} tapped "
                                     f"{self.same[key]}x and the screen did not change")
@@ -178,6 +196,10 @@ class ScreenFlow:
         self.since = (act.screen, now)
         if self.dry_run:
             self.dry_done.add(key)
+            return
+        if act.button in AD_BUTTONS:
+            if self.chain_start is None:
+                self.chain_start = now
             return
         self.same[key] = self.same.get(key, 0) + 1
         self.taps_between += 1

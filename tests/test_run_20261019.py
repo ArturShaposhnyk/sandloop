@@ -160,7 +160,7 @@ def test_bot_taps_through_the_booster_flicker(tmp_path):
     from config import load_config
 
     cfg = load_config()
-    cfg.bot = dataclasses.replace(cfg.bot, settle_min_s=0.0, settle_max_s=0.0,
+    cfg.bot = dataclasses.replace(cfg.bot, settle_min_s=0.0, settle_max_s=0.0, speed_x2=False,
                                   retap_guard_s=0.0, loop_interval_s=0.05)
     cfg.strategy = dataclasses.replace(cfg.strategy, stall_s=0.0)   # the belt sat still for 20 s+
     an = Analyzer(cfg)
