@@ -101,6 +101,7 @@ class VisionConfig:
     mystery_min_grey: float = 0.3     # mystery bucket: share of grey pixels (L186: 0.5)
     lattice_lock_frames: int = 3      # frames after the lock in which a finer reading replaces it
     lattice_min_fit: float = 0.8      # Lattice.fit below this = misread outline (failed read)
+    flight_s: float = 2.0             # a cell empty this recently stays empty (flying bucket)
     hint_threshold: float = 0.8       # hint arrow template match (hints.py)
     hint_scales: List[float] = field(default_factory=lambda: [0.9, 1.0, 1.1])
     hint_downscale: float = 0.5       # hint arrows are matched on the grid zone scaled by this
@@ -158,6 +159,13 @@ class StrategyConfig:
     path_cost_low_exposure: float = 1.0   # ... up to this extra (avail 0)
     path_step_cost: float = 0.02          # plan rank = target value - this x path cost
     weight_path_bonus: float = 1.0        # bonus for the first step = this x plan rank
+    gamble_stuck_s: float = 5.0           # belt stuck this long: last-slot gamble (strategy)
+    look_depth: int = 3                   # lookahead: taps per continuation (0 = off)
+    look_width: int = 3                   # ... follow-ups tried per step (best exposed first)
+    look_min_exposed: float = 0.03        # a belt colour this exposed collects
+    look_min_gain: float = 0.02           # ... or the settle step uncovers this much more
+    look_sand_margin: float = 1.0         # live = sand >= this x belt need x capacity
+    weight_lookahead: float = 1.0         # score += this x (usable-slot share after - now)
     belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
     relaxed_free_slots: int = 3           # this many free slots and up: min exposure relaxed
     relaxed_min_exposed: float = 0.0      # ... to this (also when no belt bucket collects)
@@ -328,12 +336,15 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("vision.template_scales must be a non-empty list of numbers > 0")
     if min(v.chest_tol, v.chest_min_wood, v.mystery_tol, v.mystery_min_grey,
            v.unlock_trust_s, v.unlock_wait_s, v.unlock_confident_dist,
-           v.unlock_confident_margin, v.lattice_min_fit) < 0 or v.lattice_lock_frames < 1:
+           v.unlock_confident_margin, v.lattice_min_fit, v.flight_s) < 0 or v.lattice_lock_frames < 1:
         raise ConfigError("vision chest / mystery / unlock settings must be >= 0 and "
                           "lattice_lock_frames >= 1")
     st = cfg.strategy
     if st.conveyor_slots < 1 or st.confirm_frames < 1:
         raise ConfigError("strategy.conveyor_slots and confirm_frames must be >= 1")
+    if (min(st.gamble_stuck_s, st.look_min_exposed, st.look_min_gain, st.look_sand_margin,
+            st.weight_lookahead) < 0 or st.look_depth < 0 or st.look_width < 1):
+        raise ConfigError("strategy gamble / look_* settings must be >= 0 (look_width >= 1)")
     if st.vision_fail_max_saves < 0:
         raise ConfigError("strategy.vision_fail_max_saves must be >= 0")
     for name in ("min_exposed", "last_slot_min_exposed", "unknown_fill_need"):

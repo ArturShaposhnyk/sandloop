@@ -242,6 +242,14 @@ def test_win_next_play_next_level(cfg6, analyzer, tmp_path):
     assert [e["result"] for e in events if e["type"] == "level_end"] == ["win"]
     nx = next(e for e in events if e["type"] == "screen_tap")
     assert nx["rel"][0] > 0.6                            # NEXT, not Watch Ad (left)
+    # phase 7: every level -> debug/levels.jsonl (L2 is cut off by the end of the frames)
+    lv = [json.loads(l) for l in (log.root / "levels.jsonl").read_text().splitlines()]
+    assert [(r["level"], r["result"]) for r in lv] == [(1, "win"), (2, "unfinished")]
+    first = lv[0]
+    assert first["run"] == log.dir.name and first["taps"] == 1 and first["strategy"]
+    tap = first["tap_log"][0]
+    assert tap["type"] == "tap" and tap["decision"]["candidates"]
+    assert first["end"]["grid"] and "lookahead" in tap["decision"]["candidates"][0]
 
 
 def test_revive_quit_then_try_again(cfg6, analyzer, tmp_path):

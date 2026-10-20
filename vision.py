@@ -17,7 +17,8 @@ from cells import (CELL_LOCK_BY_NAME, Cell, Kind, cell_features, classify_cell,
                    path_playable)
 from config import VisionConfig
 from digits import DigitReader
-from hints import CellMemory, HintArrows, LatticeLock, RecentUnlocks, clean, occlusion_mask
+from hints import (CellMemory, HintArrows, InFlight, LatticeLock, RecentUnlocks, clean,
+                   occlusion_mask)
 from belt import Slot, read_conveyor
 from icons import IconMatcher
 from palette import Lab, Palette, bgr_to_lab, lab_distance
@@ -293,6 +294,7 @@ class GameView:
     colour_notes: List[str] = field(default_factory=list)   # close colour calls (debug)
     unlocked: Set[Tuple[int, int]] = field(default_factory=set)  # key lock just opened
     unsure: Set[Tuple[int, int]] = field(default_factory=set)    # ... colour not sure yet
+    above: Dict[str, Dict[str, float]] = field(default_factory=dict)  # sand.contact_layers
 
     def labels(self) -> List[str]:
         return [" ".join("x" if c is None else c.label() for c in row) for row in self.grid]
@@ -388,18 +390,22 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
                   icons: Optional[IconMatcher] = None, hints: Optional[HintArrows] = None,
                   memory: Optional[CellMemory] = None,
                   unlocks: Optional[RecentUnlocks] = None, now: float = 0.0,
-                  lattices: Optional[LatticeLock] = None) -> GameView:
+                  lattices: Optional[LatticeLock] = None,
+                  flights: Optional[InFlight] = None) -> GameView:
     """``hints``: game hint arrows to ignore (hints.py); ``memory``: last clean cell readings,
     used for cells the arrows hide and updated with this frame's clean cells; ``unlocks``: cells
     whose key lock opened recently (``now`` = frame time in s), where the path rule alone decides
     (their face reads down under the padlock animation); ``lattices``: the level's grid geometry
-    (an extra row from the boosters below must not shift every cell)."""
+    (an extra row from the boosters below must not shift every cell); ``flights``: cells that
+    were empty a moment ago stay empty while a tapped bucket flies over them (hints.InFlight)."""
     arrows = hints.find(img, v) if hints is not None else []
     occ = occlusion_mask(img.shape, arrows) if arrows else None
     if arrows:
         log(f"hint arrows: {len(arrows)} masked out")
     lat, grid, regions = read_grid(img if occ is None else clean(img, occ), palette, v, reader,
                                    icons, occ, memory, lattices, log)
+    if flights is not None:
+        flights.apply(lat, grid, now, log)
     if memory is not None:
         memory.store(lat, grid)
     playable = path_playable(grid, lat.exits())
@@ -422,7 +428,8 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
                     f"{'face-up' if cell.face_up else 'face-down'} but the path rule says "
                     f"{'playable' if playable[r][c] else 'closed'} — not tapping it")
     k, slots = read_conveyor(img, palette, v, reader)
-    sand, exposed, lower = read_sand(img, palette, v) if palette.sand else ({}, {}, {})
+    sand, exposed, lower, above = (read_sand(img, palette, v) if palette.sand
+                                   else ({}, {}, {}, {}))
     unknown = [UnknownColour(cell.reason.split()[0] if cell.reason.startswith(("lock", "key"))
                              else "bucket", cell.lab, cell=(cell.row, cell.col))
                for row in grid for cell in row
@@ -434,7 +441,7 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
             f"python -m tools.add_colour)")
     return GameView(lat, grid, regions, playable, disagree, k, slots, sand, exposed, lower,
                     (img.shape[1], img.shape[0]), unknown, [b for b, _ in arrows],
-                    colour_notes(grid, palette, v), unlocked, unsure)
+                    colour_notes(grid, palette, v), unlocked, unsure, above)
 
 
 def unlock_unsure(cell: Cell, lock_colour: Optional[str], age: float, palette: Palette,

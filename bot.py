@@ -71,6 +71,9 @@ class Bot(LevelMixin):
         self.taps = 0
         self.screen_taps = 0
         self.level_no = 0
+        self.level_taps: List[Dict[str, Any]] = []      # this level's tap events (levels.jsonl)
+        self.level_last: Optional[Dict[str, Any]] = None   # ... its last gameplay analysis
+        self.level_t0 = 0.0
         self.in_level = False
         self.level_start: Optional[float] = None
         self.left_unclear = False             # left a level to a screen that is no result
@@ -119,6 +122,8 @@ class Bot(LevelMixin):
             result, reason = "stopped", f"failsafe: {e}"
         except KeyboardInterrupt:
             result, reason = "stopped", "Ctrl+C"
+        if self.in_level:
+            self._record_level("unfinished", f"{result}: {reason}")
         summary = self.session.summary()
         self.log.log(f"RESULT: {result} - {reason} ({self.taps} taps, {self.screen_taps} screen "
                      f"taps, levels {summary['levels']}: {summary['wins']} won, "
@@ -219,6 +224,8 @@ class Bot(LevelMixin):
         confirmed = self.gate.feed(res)
         rec = self.log.event("analysis", frame=self.frame_no, gate=self.gate.count,
                              confirmed=confirmed is not None, **analysis_record(res))
+        if st is not None:
+            self.level_last = rec
         self.log.belt(self.frame_no, res)
         self._report(res, frame, confirmed is not None, rec)
         self._watch_disagreements(res, frame, now)
@@ -343,17 +350,20 @@ class Bot(LevelMixin):
             r, c = cand.pos
             self.log.log(f"TAP #{self.taps} r{r}c{c} {cand.color} ({why})"
                          f"{' [dry-run]' if self.dry_run else ''}")
-            self.log.event("tap", n=self.taps, frame=self.frame_no, burst=i + 1,
-                           pos=[r, c], color=cand.color, stages=list(cand.stages),
-                           score=round(cand.score, 4), avail=round(cand.avail, 4),
-                           exposed=round(cand.exposed, 4),
-                           k_before=None if st.conveyor_k is None else st.conveyor_k + i,
-                           free_before=None if st.free_slots is None else st.free_slots - i,
-                           why=why, rel=[round(rel[0], 4), round(rel[1], 4)],
-                           point=[round(tr.point[0], 1), round(tr.point[1], 1)],
-                           executed=tr.executed, frame_png=raw, annotated_png=ann,
-                           alternatives=sum(1 for x in res.decision.candidates
-                                            if x.rejected is None) - 1)
+            evt = self.log.event("tap", n=self.taps, frame=self.frame_no, burst=i + 1,
+                                 pos=[r, c], color=cand.color, stages=list(cand.stages),
+                                 score=round(cand.score, 4), avail=round(cand.avail, 4),
+                                 exposed=round(cand.exposed, 4),
+                                 k_before=None if st.conveyor_k is None else st.conveyor_k + i,
+                                 free_before=None if st.free_slots is None else st.free_slots - i,
+                                 why=why, rel=[round(rel[0], 4), round(rel[1], 4)],
+                                 point=[round(tr.point[0], 1), round(tr.point[1], 1)],
+                                 executed=tr.executed, frame_png=raw, annotated_png=ann,
+                                 gamble=cand.gamble,
+                                 lookahead=cand.outlook.describe() if cand.outlook else None,
+                                 alternatives=sum(1 for x in res.decision.candidates
+                                                  if x.rejected is None) - 1)
+            self.level_taps.append({**evt, "decision": self.level_last} if i == 0 else evt)
         if tapped:
             self.pending = (tapped, st.conveyor_k)
             self.settle_from = self.clock()

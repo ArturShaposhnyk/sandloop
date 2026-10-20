@@ -275,6 +275,54 @@ class RecentUnlocks:
         return set(self._opened)
 
 
+class InFlight:
+    """A bucket never lands in a cell that was empty: taps only empty cells (chests scatter, but
+    a scattered bucket is accepted after ``flight_s`` like any other). Live run 20261020-142035
+    (L187): the bucket of tap #20 (r5c2) flying up its lane read as buckets in the empty cells
+    r4c3 / r3c3 for one frame (and r1c3 after tap #7): they cut paths ("r3c2 darkred-up / r4c2
+    blue-up looks face-up but the path rule says closed") and gave a phantom "tap r4c3 orange".
+    For ``flight_s`` after a cell last read empty, an object read there is the flying bucket:
+    the cell stays EMPTY. Same lattice rule as CellMemory."""
+
+    def __init__(self, flight_s: float = 2.0) -> None:
+        self.flight_s = flight_s
+        self._key: Optional[Tuple[int, int, int, int]] = None
+        self._empty_at: Dict[Tuple[int, int], float] = {}
+        self._paused_until = -1e9
+
+    def pause(self, until: float) -> None:
+        """A chest opened: its buckets land in empty cells - take every reading until then."""
+        self._paused_until, self._empty_at = until, {}
+
+    def apply(self, lat, grid, now: float, log=print) -> List[Tuple[int, int]]:
+        """Fix ``grid`` in place; returns the cells read as empty because of a flight."""
+        from cells import Cell, Kind
+
+        k = CellMemory.key(lat)
+        if k != self._key or now < self._paused_until:
+            self._key, self._empty_at = k, {}
+            if now < self._paused_until:
+                return []
+        fixed = []
+        for row in grid:
+            for cell in row:
+                if cell is None or cell.occluded:
+                    continue
+                pos = (cell.row, cell.col)
+                if cell.kind is Kind.EMPTY:
+                    self._empty_at[pos] = now
+                elif cell.kind in (Kind.BUCKET, Kind.UNKNOWN) and pos in self._empty_at:
+                    if now - self._empty_at[pos] <= self.flight_s:
+                        grid[cell.row][cell.col] = Cell(cell.row, cell.col, Kind.EMPTY)
+                        fixed.append(pos)
+                    else:
+                        del self._empty_at[pos]   # held longer: a real bucket (chest scatter)
+        if fixed:
+            log("in flight (empty before, read as empty): "
+                + ", ".join(f"r{r}c{c}" for r, c in fixed))
+        return fixed
+
+
 def cut_template(img: np.ndarray, box: Box, tol: float = 25.0, outline: int = 3
                  ) -> np.ndarray:
     """BGRA template of the arrow in ``box``: alpha = pixels near the fill colour sampled at the

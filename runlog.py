@@ -37,7 +37,10 @@ def candidate_record(c: "Candidate") -> Dict[str, Any]:
             "belt_demand": round(c.belt_demand, 4), "avail": round(c.avail, 4),
             "stages": list(c.stages), "short_stages": list(c.short_stages),
             "opens": [list(p) for p in c.opens], "on_belt": c.on_belt,
-            "plan": c.plan.describe(1, detail=False) if c.plan is not None else None}
+            "plan": c.plan.describe(1, detail=False) if c.plan is not None else None,
+            "lookahead": c.outlook.describe() if c.outlook is not None else None,
+            "look_bonus": round(c.look_bonus, 4), "gamble": c.gamble,
+            "uncovers": round(c.uncovers, 4)}
 
 
 def analysis_record(res: "Analysis") -> Dict[str, Any]:
@@ -74,6 +77,7 @@ class RunLog:
     def __init__(self, root: Path, cfg: Any, args: Dict[str, Any], max_frames: int = 1500,
                  clock=time.monotonic, stamp: Optional[str] = None) -> None:
         stamp = stamp or time.strftime("%Y%m%d-%H%M%S")
+        self.root = Path(root)
         self.dir = Path(root) / "runs" / stamp
         n = 1
         while self.dir.exists():   # two runs in one second
@@ -90,8 +94,10 @@ class RunLog:
         self._belt = csv.writer(self._belt_fh)
         self._belt.writerow(["t", "frame", "k", "slots", "mean_fill"])
         cfg_data = dataclasses.asdict(cfg) if dataclasses.is_dataclass(cfg) else None
+        self.commit = git_commit()
+        self.strategy = cfg_data.get("strategy") if cfg_data else None
         self._write_json("run.json", {"started": time.strftime("%Y-%m-%d %H:%M:%S"),
-                                      "args": args, "commit": git_commit(), "config": cfg_data})
+                                      "args": args, "commit": self.commit, "config": cfg_data})
 
     def t(self) -> float:
         return round(self._clock() - self.t0, 3)
@@ -104,6 +110,15 @@ class RunLog:
         rec = {"type": kind, "t": self.t(), **data}
         self._events.write(json.dumps(rec, default=str) + "\n")
         self._events.flush()
+        return rec
+
+    def level(self, **data: Any) -> Dict[str, Any]:
+        """One played level -> <debug>/levels.jsonl (across runs, for tuning the strategy
+        weights from results): run, commit, the strategy config it ran with + ``data``."""
+        rec = {"run": self.dir.name, "commit": self.commit,
+               "time": time.strftime("%Y-%m-%d %H:%M:%S"), **data, "strategy": self.strategy}
+        with (self.root / "levels.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, default=str) + "\n")
         return rec
 
     def log(self, msg: str) -> None:

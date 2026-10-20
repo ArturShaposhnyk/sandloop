@@ -4,7 +4,7 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 (full brief and phase plan). Work phase by phase; after each phase stop and wait for the user's
 OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 
-## Done (phases 0-6)
+## Done (phases 0-6, phase 7 started)
 | Phase | What | Commits |
 |---|---|---|
 | 0 | setup, config, permission check | `3b5b8f7` |
@@ -14,12 +14,32 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 4 | `state.py`, `strategy.py` (greedy + path planning), `tools/overlay.py --dry-run` | `6ff1c26`, `9f2b4e7`, `774d07e`, ... |
 | 5 | `bot.py` plays a level with real taps | `4b1883a`, `4f297f2`, `00daa0e` |
 | 6 | screens outside gameplay (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `--levels N`, session limits | `a07c297`, `c1b1423` |
-| fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`) | |
+| 7 (started) | lookahead 2-3 taps (`lookahead.py`), sand above the contact layer (`sand.contact_layers`), every level -> `debug/levels.jsonl` | this commit |
+| fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (this commit) | |
 
-Tests: `python -m pytest -q` - all 685 pass (the open-tower xfail is fixed).
+Tests: `python -m pytest -q` - all 698 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-20)
+- **L187 run `20261020-142035`**: the grid lock held (no lattice change in 155 s), 23 taps, then
+  "no bucket passes the rules" for 50 s until quit. Strategy, not vision (analysis in History).
+- **Last-slot gamble (user rule)**: belt stuck (every unfinished belt bucket without sand gain
+  for `strategy.gamble_stuck_s` 5 s), one slot left, every move rejected by the last-slot
+  exposure minimum -> take the slot with the move that uncovers the most sand for the belt's
+  colours (`sand.contact_layers` "above" matrix), ties by its own exposure; reason / log
+  "last-slot gamble: ...". My reading (please confirm): sand-short moves may be gambled too (the
+  run's end had only 0.8 % cream / darkred left), a colour stalled on the belt never.
+- **Phase 7 started - lookahead** (`lookahead.py`): per allowed tap the best continuation of up
+  to 3 taps (3 best-exposed follow-ups per step) is simulated with `after_tap` and a one-step
+  sand model (collecting colours drop the sand above them). Value = (free + live belt buckets)
+  / slots; live = enough sand (margin 1.0) and exposed / not stalled, or uncovered by the step.
+  Score += `weight_lookahead` x (value - now); a tap that jams a collecting belt is rejected.
+  Shown in candidates / overlay text as "lookahead r0c0 purple -> ...: 2 live / 0 dead, 3 free".
+- **Level records**: every level (win / fail / unfinished) -> `debug/levels.jsonl`: run, commit,
+  strategy config, result, duration, every tap with the decision it came from (state, all
+  candidates with scores / lookahead / gamble) and the last gameplay read.
+- **Flying bucket**: a cell read empty within `vision.flight_s` (2 s) stays empty when an object
+  shows there (`hints.InFlight`, paused while a chest's buckets land).
 - **Live wins: L186** by itself (run `20261019-171033`, 21 taps, 118 s). **L187 (HARD)**: two
   live runs got stuck on lattice misreads (`20261020-122638` at 3/5, `20261020-125351` after 21
   good taps: 7x7 <-> 4x4 flip-flop). Fixed offline (below), not live-tested again yet. No L187
@@ -55,15 +75,17 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
-1. Live: `python -m bot --levels 1` on L187 - expect one `lattice: level's grid 7x7 (cell 57
-   px) locked` line, no lattice change after it (`frame reads 4x4 ..., read with the level's
-   7x7` is fine), no "two objects" unknowns except a cell under a hint arrow; then `--levels 2`-`3`
-   to exercise phase 6 (watch it).
-2. Answers on phase-5 issues A / B, then fixes A-D (see "Phase 5 state" below).
-3. Question for the user (run `125351` end): belt 4/5 yellow / darkgreen / orange / blue all
-   stalled with ~0-3 % exposed, every grid candidate < 25 % (`last_slot_min_exposed`) -> "no
-   bucket passes the rules" even on the right 7x7 grid. Deadlock by the rules; should the bot
-   take the last slot anyway (best avail), or is the level lost here?
+1. Live: `python -m bot --levels 1` on L187, then `python -m tools.analyze_run`; check
+   `debug/levels.jsonl` got a line; look for "lookahead" in candidates, "last-slot gamble" if the
+   belt gets stuck, "in flight" lines after taps instead of path-rule warnings.
+2. Questions for the user (run `142035`): (a) may the bot **sacrifice a slot** for a bucket that
+   cannot fill (cream r1c6, 0.8 % sand) when it is the only way to a colour that unblocks the belt
+   (purple r3c6 / r5c6 under the cream, purple = 27-45 % of the contact layer)? Today the sand
+   rule forbids it and the planner treats cream as a wall. (b) gamble also when the moves are
+   short of sand (implemented that way)?
+3. Phase 7 next: tune weights from `debug/levels.jsonl`; belt reader shows a cream lower stage on
+   darkgreen (`darkgreen/cream`) that may be a misread (phantom cream demand, avail -18.7 %).
+4. Answers on phase-5 issues A / B, then fixes A-D (see "Phase 5 state" below).
 
 ## Open gaps / questions
 - **Hint arrows are missed in some animation phases** (template < 0.8; squashed arrows in
@@ -147,6 +169,31 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L187 live run 20261020-142035 (2026-10-20): grid lock OK, belt deadlock - gamble + lookahead
+- Lattice: 7x7 all run. 23 taps; #14-#23 had low scores; from 101 s the belt held yellow /
+  darkgreen / orange / blue (+ darkred), all starving; "no bucket passes the rules" for 50 s.
+- Why: the purple sky covered the bottom (contact layer purple 27 % at #21, 45 % at #23); the
+  belt's colours were under it. The last purple buckets r3c6 / r5c6 sat behind cream r1c6, which
+  became tappable after #17 (purple/cream tower r1c5). From then on cream was always rejected
+  (last-slot 25 % at 61 s; "not enough sand 0.8 % < 1.3 %" at #21 with 3 free slots), and the
+  planner treats a bucket that fails the rules as a wall, so no path to purple existed. The
+  mistake: #21 orange r5c4 (22 %) + #22 blue r4c2 burst (22 %, blue sand 2 % < one bucket: it
+  ended at 64 %) spent 2 of 3 free slots on colours buried under purple; better: cream r1c6
+  (a lost slot) then purple r3c6 (+ orange r4c6, purple r5c6) to drain the sky. Earlier: #5
+  yellow (burst, 10 % avail) sat on the belt from 16 s to the end and never filled.
+- End: "belt idle" flips (k > buckets seen counts as collecting; orange crept 52 -> 80 % until
+  112 s), so the last-slot minimum switched 25 % / 3 % and darkred r3c2 alternated between
+  "exposure" and "not enough sand"; cream's avail -18.7 % = a cream lower stage the belt reader
+  sees on darkgreen.
+- Warnings "r3c2 darkred-up / r4c2 blue-up ... path rule says closed" (76.4 s): neither the path
+  rule nor the colours - the bucket of tap #20 (r5c2) flying up the lane read as buckets in the
+  empty cells r4c3 / r3c3 for one frame (also r1c3 at 20.8 s after #7), cutting the path; that
+  frame even chose a phantom "tap r4c3 orange" (not confirmed). Fix: `hints.InFlight`.
+- Offline replay: the end frame with the belt stuck now gambles darkred r3c2 (uncovers ~6 %
+  orange / blue / darkgreen vs cream ~4 %); at #21 the lookahead marks blue dead (sand short).
+- Tests: `tests/test_lookahead.py` (gamble rules, lookahead, InFlight, the run's frames in
+  `tests/data/run-20261020-142035/`); `tests/test_bot.py` checks `levels.jsonl`.
 
 ## L187 live run 20261020-125351 (2026-10-20): 21 good taps, then 7x7 <-> 4x4 flip-flop — fixed
 - First lock was 7x7 (frame 00002, fit 0.88) - correct. At 34 s one frame read 4x4 (sparkles

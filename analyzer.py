@@ -72,7 +72,7 @@ class Analyzer:
         """Forget what belongs to one level. ``track``: the frames that follow are one level
         played live (bot.py, overlay): keep its grid geometry (hints.LatticeLock) and watch for
         chests opening. Off for unrelated screenshots (tests, ``python -m strategy``)."""
-        from hints import CellMemory, LatticeLock, RecentUnlocks
+        from hints import CellMemory, InFlight, LatticeLock, RecentUnlocks
 
         cfg = self.cfg
         self.memory = CellMemory()   # last clean cell readings, for cells under hint arrows
@@ -80,6 +80,7 @@ class Analyzer:
         self.lattices: Optional[LatticeLock] = (
             LatticeLock(cfg.vision.lattice_lock_frames, cfg.vision.lattice_min_fit) if track
             else None)
+        self.flights: Optional[InFlight] = InFlight(cfg.vision.flight_s) if track else None
         self.chests: Dict[Pos, int] = {}       # chests in the last read (cell -> N)
         self.scatter_until = -1.0              # a chest opened: no decisions until then
 
@@ -101,7 +102,8 @@ class Analyzer:
         try:
             gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log,
                                icons=self.icons, hints=self.hints, memory=self.memory,
-                               unlocks=self.unlocks, now=now, lattices=self.lattices)
+                               unlocks=self.unlocks, now=now, lattices=self.lattices,
+                               flights=self.flights)
         except VisionError as e:
             res = Analysis(screen, error=str(e), failure=f"grid: {e}")
         else:
@@ -135,6 +137,8 @@ class Analyzer:
 
             self.memory = CellMemory()
             self.scatter_until = now + self.cfg.strategy.chest_settle_s
+            if self.flights is not None:
+                self.flights.pause(self.scatter_until + self.cfg.vision.flight_s)
             log("chest " + ", ".join(f"r{r}c{c} ({n})" for (r, c), n in opened.items())
                 + " opened: buckets scatter - re-reading the whole grid")
         if now < self.scatter_until:

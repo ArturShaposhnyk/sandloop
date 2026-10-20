@@ -89,6 +89,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
   mystery_min_grey: 0.3
   lattice_lock_frames: 3     # the grid geometry is fixed in a level (hints.LatticeLock): the first fitting reading is locked; for this many frames a finer reading of the same grid may still replace it, then it holds until a non-gameplay screen
   lattice_min_fit: 0.8       # a reading whose inner walls sit on its cell boundaries less than this is a misread outline (224 live / dataset frames: good >= 0.88, hint arrows / sparkles joined to the grid <= 0.54)
+  flight_s: 2.0              # live: a cell read empty this recently stays empty - a tapped bucket flying up its lane read as buckets in empty cells (run 20261020-142035, ~1.4 s after the tap; hints.InFlight)
   empty_tol: 10.0            # LAB distance to the empty-cell colour
   empty_min_frac: 0.5        # share of empty-colour pixels for an empty cell
   face_up_max_ratio: 0.88    # centre V / top-stage rim V below this = face-up (up <= 0.83, down >= 0.93)
@@ -171,6 +172,22 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   # L186 mystery bucket: tapping a 4-neighbour reveals its colour (information)
   weight_mystery_reveal: 0.05
   weight_mystery_reachable: 0.15   # extra when the revealed bucket is then connected to the exit
+  # last-slot gamble (user, 2026-10-20): every unfinished belt bucket gained no sand for this
+  # long, one slot left, every move rejected only by the last-slot minimum -> take the slot
+  # with the move that uncovers the most sand for the belt (sand.contact_layers), ties by its
+  # own exposure. Logged "last-slot gamble".
+  gamble_stuck_s: 5.0
+  # phase 7 lookahead (lookahead.py): best continuation of up to look_depth taps (look_width
+  # best-exposed follow-ups per step); value = (free slots + live belt buckets) / slots after it.
+  # Live = sand >= look_sand_margin x need x capacity and (exposed >= look_min_exposed and not
+  # stalled, or the settle step uncovers >= look_min_gain of it). Score += weight_lookahead x
+  # (value after - value now); a tap that leaves the belt full with nothing live is rejected.
+  look_depth: 3
+  look_width: 3
+  look_min_exposed: 0.03
+  look_min_gain: 0.02
+  look_sand_margin: 1.0
+  weight_lookahead: 1.0
   chest_settle_s: 1.5        # a chest opened: no decision this long (its buckets are landing), then a full re-read
   analyze_interval_s: 0.5    # overlay --dry-run: min seconds between analyses
   confirm_frames: 2          # tap only after this many consecutive analyses chose the same move

@@ -77,6 +77,8 @@ class LevelState:
     # ^ after_tap: chests the simulated tap connects (cell, number of buckets they scatter)
     revealed: List[Pos] = field(default_factory=list)   # after_tap: mystery buckets revealed
     lower: Dict[str, float] = field(default_factory=dict)     # share of the picture's lower part
+    above: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    # ^ contact colour -> colour right above it -> contact share it becomes once collected
 
     # -- construction ---------------------------------------------------------------------
 
@@ -101,7 +103,8 @@ class LevelState:
             for s in gv.slots if not s.uncertain]
         return cls(grid, gv.lattice.exits(), list(gv.tappable()), list(gv.disagreements), locks,
                    gv.counter, conveyor_slots, conveyor, dict(gv.sand), dict(gv.exposed),
-                   unknown_fill_need, dict(belt_stalled or {}), lower=dict(gv.lower))
+                   unknown_fill_need, dict(belt_stalled or {}), lower=dict(gv.lower),
+                   above={c: dict(r) for c, r in gv.above.items()})
 
     # -- grid -----------------------------------------------------------------------------
 

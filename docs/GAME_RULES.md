@@ -174,6 +174,30 @@
   `path to r5c1 darkred: step 1/3`, `path to key yellow: step 1/2` (rejected paths with the
   failing step and why).
 
+## Last-slot gamble (user, 2026-10-20; `strategy.last_slot_gamble`)
+- If the belt is **stuck** (no unfinished belt bucket gained sand for `strategy.gamble_stuck_s`,
+  ~5 s), one slot is left and every remaining move is rejected by the last-slot exposure minimum,
+  waiting changes nothing and the level is lost otherwise: take the last slot anyway.
+- **Best** = the move whose colour, once collected, uncovers the most sand of the belt's colours
+  (`sand.contact_layers`: per picture column the sand right above the contact layer);
+  tie-break: the bucket's own exposed sand. Logged as "last-slot gamble".
+- The 25 % rule stays for normal cases. Bot reading (not confirmed): a move short of sand may be
+  gambled too (the level is lost otherwise), a colour stalled on the belt never (it uncovers
+  nothing).
+
+## Lookahead (phase 7, `lookahead.py`; weights in `config.yaml` `strategy:`)
+- Before each tap the bot simulates up to `look_depth` (3) taps: the candidate, then the
+  `look_width` best-exposed follow-ups the release rules allow, each with `after_tap`.
+- Sand model (one coarse step): the belt colours that collect now take their contact layer and
+  the sand right above it falls down (what the belt uncovers, `sand.contact_layers`).
+- A belt bucket is **live** if enough of its colour is left to fill what the belt needs of it
+  (`look_sand_margin` x need x capacity) and its colour is exposed and not stalled, or the
+  simulated collection uncovers enough of it. Value = (free slots + live buckets) / slots.
+- Score += `weight_lookahead` x (best value over the continuations - value now). A tap that
+  leaves the belt full with nothing live (a **jam**) is rejected unless the belt is idle anyway.
+- Every level is recorded in `debug/levels.jsonl` (result, every tap with its decision: state,
+  candidates, scores, lookahead; the strategy config) to tune the weights from results.
+
 ## Chests and mystery buckets (user, 2026-10-19, L186; weights in `config.yaml` `strategy:`)
 - A move that opens a path to a chest is risky: its N buckets fill up to N free cells and can
   close paths. Prefer it when free cells are few, when it doesn't cut off important paths, or
@@ -190,8 +214,14 @@
 - The grid's shape is fixed within a level. The boosters below the grid can pulse into the grid
   zone when the player is idle; the grid region then grew by ~0.7 row and the lattice gained a
   row, shifting every cell (towers that are really two buckets, boosters read as buckets). The
-  bot keeps the level's lattice (`hints.LatticeLock`): extra rows at the bottom are ignored, any
-  other change must hold `vision.lattice_switch_frames` frames.
+  bot keeps the level's lattice (`hints.LatticeLock`): it is never replaced mid-level, only a
+  non-gameplay screen (or another frame size) unlocks it; a reading whose inner walls miss its
+  cell boundaries (`vision.lattice_min_fit`) never becomes the lock (L187 run 20261020-125351:
+  hint arrows / sparkles joined the grid region and the lattice read 4x4).
+- A tapped bucket flies up its lane over empty cells (~1.4 s): for `vision.flight_s` after a cell
+  read empty, an object read there is that bucket and the cell stays empty (`hints.InFlight`;
+  paused while a chest's buckets land). Run 20261020-142035: r3c3 / r4c3 read orange for one
+  frame after tap #20 and cut the path of r3c2 / r4c2.
 - If a cell's look and the path rule still disagree for `bot.disagree_report_s` while there is no
   other move, the bot logs STUCK and saves the frame (`stuck` event) instead of waiting silently.
 

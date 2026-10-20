@@ -1,4 +1,5 @@
 """Greedy strategy: rules on synthetic states, decisions on saved shots, overlay dry-run."""
+import dataclasses
 import subprocess
 import sys
 from pathlib import Path
@@ -211,9 +212,10 @@ def test_stalled_belt_colour_is_a_penalised_last_resort_on_an_idle_belt():
     alone.belt_stalled = {"red": 10.0}
     d = choose(alone, SC)
     assert d.move.color == "red"
-    assert d.move.score == pytest.approx(choose(make_state(
+    flat = dataclasses.replace(SC, look_depth=0)   # the penalty alone (the lookahead adds its own)
+    assert choose(alone, flat).move.score == pytest.approx(choose(make_state(
         ["red"], k=1, conveyor=[ConveyorBucket("red", 49)], sand={"red": .4},
-        exposed={"red": .9}), SC).move.score - SC.weight_stalled_colour)
+        exposed={"red": .9}), flat).move.score - SC.weight_stalled_colour)
 
 
 def test_path_avoids_a_stalled_colour_step():

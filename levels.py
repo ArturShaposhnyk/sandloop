@@ -28,6 +28,7 @@ class LevelMixin:
         self._reset_level(analyzer=False)   # reset when the last level ended
         self.in_level, self.level_start = True, now
         self.level_no += 1
+        self.level_taps, self.level_last, self.level_t0 = [], None, self.log.t()
         lives = "?" if self.lives is None else self.lives
         self.log.log(f"LEVEL {self.level_no} started (lives {lives})")
         self.log.event("level_start", level=self.level_no, frame=self.frame_no, lives=self.lives)
@@ -52,9 +53,18 @@ class LevelMixin:
         self.log.log(f"LEVEL {self.level_no}: {result.upper()} ({how})")
         self.log.event("level_end", level=self.level_no, result=result, how=how, png=png,
                        taps=self.taps)
+        self._record_level(result, how)
         stop = self.session.record(result)
         if stop is not None:
             raise Stop(result, stop)
+
+    def _record_level(self, result: str, how: str) -> None:
+        """Phase 7: every level -> <debug>/levels.jsonl: result, every tap with the decision it
+        came from (state, candidates, scores, lookahead) and the last gameplay read."""
+        self.log.level(level=self.level_no, result=result, how=how,
+                       duration_s=round(self.log.t() - self.level_t0, 1),
+                       taps=len(self.level_taps), tap_log=self.level_taps,
+                       end=self.level_last)
 
     def _non_gameplay(self, res: Any, frame: np.ndarray, now: float) -> None:
         from hud import read_lives
