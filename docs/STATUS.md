@@ -17,7 +17,7 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 (started) | lookahead 2-3 taps (`lookahead.py`), sand above the contact layer (`sand.contact_layers`), every level -> `debug/levels.jsonl` | `ebd0c2a` |
 | 7 | whole-level plan (`sim.py`, `levelplan.py`), level memory, per-colour capacity, endgame reserve, sacrifice | `ee2c1c8` |
 | 7 | run 161536: measured belt speed in the simulator, plan waits never stall, plan checks, focus / window fixes | `b5d5a7e` |
-| 7 | run 171133: sand read to the picture's bottom edge, key-colour reserve, plans ranked by dead buckets, ad skip | (this commit) |
+| 7 | run 171133: sand read to the picture's bottom edge, key-colour reserve, plans ranked by dead buckets, ad skip | `6198f3b` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
 Tests: `python -m pytest -q` - all 731 pass.
