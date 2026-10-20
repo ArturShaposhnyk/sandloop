@@ -14,7 +14,7 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 4 | `state.py`, `strategy.py` (greedy + path planning), `tools/overlay.py --dry-run` | `6ff1c26`, `9f2b4e7`, `774d07e`, ... |
 | 5 | `bot.py` plays a level with real taps | `4b1883a`, `4f297f2`, `00daa0e` |
 | 6 | screens outside gameplay (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `--levels N`, session limits | `a07c297`, `c1b1423` |
-| fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule (this commit) | |
+| fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`) | |
 
 Tests: `python -m pytest -q` - all pass except 1 documented strict xfail (open tower, below).
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
@@ -34,7 +34,7 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
 - **L187 colours / icons**: yellow + purple (sand via `tools.add_colour` ->
   `dataset/extra_colours.json`, buckets from annotated shot 064); blue locks / keys; icons are
   matched on the cell's own rect (`vision.icon_crop`).
-- **Unlock rule (user, 2026-10-20, this commit)**: a bucket under a just-opened lock is tapped
+- **Unlock rule (user, 2026-10-20, `c9e26e2`)**: a bucket under a just-opened lock is tapped
   at once only with a confident colour (not the lock's colour, nearest <=
   `vision.unlock_confident_dist`, runner-up >= `unlock_confident_margin` further); else it
   waits until the padlock is gone (`vision.unlock_wait_s` 2 s). `vision.unlock_unsure`,
