@@ -75,6 +75,8 @@ def cfg():
     c = load_config()
     c.bot = dataclasses.replace(c.bot, settle_min_s=0.0, settle_max_s=0.0, retap_guard_s=0.0,
                                 loop_interval_s=0.05)
+    # the greedy loop (bursts, cover bonus, ...); the level planner: tests/test_levelplan.py
+    c.planner = dataclasses.replace(c.planner, enabled=False)
     return c
 
 

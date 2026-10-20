@@ -15,12 +15,32 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 5 | `bot.py` plays a level with real taps | `4b1883a`, `4f297f2`, `00daa0e` |
 | 6 | screens outside gameplay (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `--levels N`, session limits | `a07c297`, `c1b1423` |
 | 7 (started) | lookahead 2-3 taps (`lookahead.py`), sand above the contact layer (`sand.contact_layers`), every level -> `debug/levels.jsonl` | `ebd0c2a` |
+| 7 | whole-level plan (`sim.py`, `levelplan.py`), level memory, per-colour capacity, endgame reserve, sacrifice | this commit |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 698 pass.
+Tests: `python -m pytest -q` - all 710 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-20)
+- **L187 run `20261020-145310`** (uncommitted gamble/lookahead code, `bfaad21` + work tree): the
+  cream last-slot gamble (#22) opened purple and the sky drained; LOST with the belt 5/5 (green,
+  orange, yellow, purple, blue almost done, stuck) while 2 darkred buckets (39 % of the contact
+  layer) had no slot. Root cause: darkred sand is under-read (1.0 % of the picture), so "not
+  enough sand" rejected darkred from #19 on; #25 yellow was a burst at 0.15.
+- **Fixes**: capacity **per colour** measured at level start (`analyzer.colour_capacity`,
+  `LevelState.capacity_for`); **endgame reserve** (`strategy.endgame_reserve`); burst follow-ups
+  need `bot.burst_min_score` (0.3), no negative lookahead, never a gamble / sacrifice;
+  **sacrifice** (user (a)): a sand-short bucket may go when a 2-3 tap continuation revives a
+  dead belt colour and a slot stays free. Replay of the run: #20 now taps cream r1c6 (opens
+  purple) instead of purple r5c0 0.22; #26 taps darkred, purple waits ("endgame: keep a slot
+  for darkred"); no yellow follow-up after #24.
+- **Whole-level planner (phase 7)**: `sim.py` (picture as per-column sand stacks, belt laps,
+  towers, keys / locks, ice, curtains, capacity per colour) + `levelplan.py` (beam search, live
+  `PlanRunner`, `LevelMemory`, `python -m levelplan <frame>`). On by default (`planner.enabled`);
+  the greedy strategy takes over at the plan's horizon (unknown buckets) until it re-plans.
+  From run 145310's start (with its record as memory: 1 sequence banned, capacities calibrated):
+  18 taps to the horizon (the keys fly, the locks show unseen colours), belt never above 4/5,
+  0 dead buckets at the end, ~1 s.
 - **L187 run `20261020-142035`**: the grid lock held (no lattice change in 155 s), 23 taps, then
   "no bucket passes the rules" for 50 s until quit. Strategy, not vision (analysis in History).
 - **Last-slot gamble (user rule)**: belt stuck (every unfinished belt bucket without sand gain
@@ -75,17 +95,15 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
-1. Live: `python -m bot --levels 1` on L187, then `python -m tools.analyze_run`; check
-   `debug/levels.jsonl` got a line; look for "lookahead" in candidates, "last-slot gamble" if the
-   belt gets stuck, "in flight" lines after taps instead of path-rule warnings.
-2. Questions for the user (run `142035`): (a) may the bot **sacrifice a slot** for a bucket that
-   cannot fill (cream r1c6, 0.8 % sand) when it is the only way to a colour that unblocks the belt
-   (purple r3c6 / r5c6 under the cream, purple = 27-45 % of the contact layer)? Today the sand
-   rule forbids it and the planner treats cream as a wall. (b) gamble also when the moves are
-   short of sand (implemented that way)?
-3. Phase 7 next: tune weights from `debug/levels.jsonl`; belt reader shows a cream lower stage on
-   darkgreen (`darkgreen/cream`) that may be a misread (phantom cream demand, avail -18.7 %).
-4. Answers on phase-5 issues A / B, then fixes A-D (see "Phase 5 state" below).
+1. `python -m levelplan <L187 start frame>` (no taps) - the user checks the sequence; then
+   `python -m bot --dry-run` on L187 (plan logged, nothing tapped); then live `--levels 1`.
+2. Watch live: re-plans per level (`levels.jsonl` "plans"), how often the board differs from the
+   plan (timing of fills); the simulator's belt speed (`planner.lap_take`, `laps_per_tap`) is a
+   guess - compare predicted vs real fills and tune.
+3. Hidden colours (under locks / curtains / ice) end the plan; with Try Again the colours seen in
+   the last attempt could be filled in from memory (not done).
+4. Belt reader: a cream lower stage on darkgreen (`darkgreen/cream`) may be a misread.
+5. Answers on phase-5 issues A / B, then fixes A-D (see "Phase 5 state" below).
 
 ## Open gaps / questions
 - **Hint arrows are missed in some animation phases** (template < 0.8; squashed arrows in
@@ -169,6 +187,16 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L187 live run 20261020-145310 (2026-10-20): gamble worked, lost in the endgame
+- 26 taps; #22 last-slot gamble cream r1c6 -> #23 purple r3c6: the sky drained. Then #24 orange
+  r4c6 + burst #25 yellow r2c2 (0.15) and #26 purple r5c6 took the slots; belt 5/5 with colours
+  at 64-95 % whose sand was gone (yellow 0 %, others ~1 %); darkred 39-50 % of the contact layer
+  with 2 buckets on the board, rejected "not enough sand (1.0 % < 1.2 %)" - LEVEL FAILED (revive).
+- #20 r5c0 purple (0.22) was a confirmed tap, not a burst: both darkred buckets were rejected for
+  sand. #25 was a burst; it did not take the last slot (free 2 -> 1) but scored only 0.15.
+- Tests: `tests/test_levelplan.py` with frames 00002 / 00134 / 00188 / 00201 and the run's
+  levels.jsonl record in `tests/data/run-20261020-145310/`.
 
 ## L187 live run 20261020-142035 (2026-10-20): grid lock OK, belt deadlock - gamble + lookahead
 - Lattice: 7x7 all run. 23 taps; #14-#23 had low scores; from 101 s the belt held yellow /

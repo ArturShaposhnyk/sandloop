@@ -37,7 +37,7 @@ def usefulness(state: LevelState, colour: Optional[str], sc: StrategyConfig) -> 
     if not colour:
         return 0.0
     need = state.conveyor_need(colour)
-    cap = state.capacity_estimate()
+    cap = state.capacity_for(colour)
     if cap and state.sand.get(colour, 0.0) < (need + 1) * cap * sc.sufficiency_margin:
         return 0.0
     soon = max(state.exposed.get(colour, 0.0), sc.lower_weight * state.lower.get(colour, 0.0))

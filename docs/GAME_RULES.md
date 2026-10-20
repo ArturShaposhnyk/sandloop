@@ -83,6 +83,13 @@
   colour learned from the annotated open buckets. Close pairs (`vision.colour_watch`, e.g.
   green / darkgreen) are printed with the distance to both in the debug output.
 
+## Levels are deterministic (user, 2026-10-20)
+- **Try Again restarts the SAME level**: same buckets in the same cells, same colours.
+- A face-down bucket's visible colour is its real colour, so the whole board is known at level
+  start (except what locks / curtains / ice / chests / mystery buckets hide). Only **chests may
+  be random** (not sure): the bot logs every chest result per attempt (`levels.jsonl` "chests":
+  the cells and colours its buckets landed in) to check.
+
 ## Conveyor
 - Max 5 buckets on the conveyor at once (HUD shows "k/5").
 - A bucket rides the conveyor until it is 100% full, then disappears and frees its slot.
@@ -181,9 +188,30 @@
 - **Best** = the move whose colour, once collected, uncovers the most sand of the belt's colours
   (`sand.contact_layers`: per picture column the sand right above the contact layer);
   tie-break: the bucket's own exposed sand. Logged as "last-slot gamble".
-- The 25 % rule stays for normal cases. Bot reading (not confirmed): a move short of sand may be
-  gambled too (the level is lost otherwise), a colour stalled on the belt never (it uncovers
-  nothing).
+- The 25 % rule stays for normal cases. A move short of sand may be gambled too (the level is
+  lost otherwise; user-confirmed 2026-10-20), a colour stalled on the belt never.
+
+## Sacrifice (user, 2026-10-20)
+- A bucket that cannot fill now (not enough sand of its colour) may take a slot if the lookahead
+  shows it opens the way to the colour that unblocks the belt (after 2-3 taps a belt colour that
+  gets no sand now gets some) and at least one slot stays free after it (or it is the last-slot
+  gamble). More of its colour may appear once the covering layer is collected, so it may still
+  fill later. L187: cream r1c6 -> purple r3c6 drains the sky.
+
+## Endgame (user, 2026-10-20, run 20261020-145310)
+- With few colours left on the board (`strategy.endgame_colours`), keep a slot for each colour
+  whose sand is still in the picture (>= `endgame_sand_min` of a bucket), that has buckets on the
+  board and none on the belt, instead of adding a bucket of a colour that is almost done (on the
+  belt already, or less than a bucket of sand left). Only a colour more exposed than the one
+  being tapped is kept (no two colours waiting for each other).
+- A burst follow-up passes the same checks as any tap (rules, lookahead) and needs
+  `bot.burst_min_score`; it never takes the last free slot.
+
+## Sand per bucket
+- Bucket capacity is the same for all buckets of a level, but the picture reading under-counts
+  some colours (L187 darkred, cream by 2-3x: darkred read 1 % of the picture while it was 39 % of
+  the contact layer). The bot measures capacity **per colour** at level start (its sand / its
+  bucket stages, the level being balanced per colour) and uses it for "enough sand left".
 
 ## Lookahead (phase 7, `lookahead.py`; weights in `config.yaml` `strategy:`)
 - Before each tap the bot simulates up to `look_depth` (3) taps: the candidate, then the
@@ -197,6 +225,20 @@
   leaves the belt full with nothing live (a **jam**) is rejected unless the belt is idle anyway.
 - Every level is recorded in `debug/levels.jsonl` (result, every tap with its decision: state,
   candidates, scores, lookahead; the strategy config) to tune the weights from results.
+
+## Level plan (`levelplan.py`, `sim.py`; `config.yaml` `planner:`)
+- At level start the bot searches tap / wait sequences (beam search) in a simplified simulator:
+  the picture as per-column stacks of sand (buried colours included; collecting a colour lets
+  the sand above fall), belt slots with laps, towers, keys / locks, ice, curtains; capacity per
+  colour. It picks the sequence that never jams the belt (full belt, nothing moves) and collects
+  the most sand. Buckets of unknown colour (opened locks, curtains, ice, chests) end the plan
+  ("horizon"): once seen, it re-plans.
+- Live: each frame's board is matched to the plan's predicted board before each tap; a match
+  taps that step once the belt has no more buckets than the plan had there; no match = re-plan
+  (at most every `planner.replan_min_s`). No step left: the greedy strategy decides.
+- Level memory (`debug/levels.jsonl`): on Try Again (same board signature) the sequences of
+  attempts that did not win are banned (the plan must deviate) and the capacity per colour is
+  corrected from what those attempts really used.
 
 ## Chests and mystery buckets (user, 2026-10-19, L186; weights in `config.yaml` `strategy:`)
 - A move that opens a path to a chest is risky: its N buckets fill up to N free cells and can

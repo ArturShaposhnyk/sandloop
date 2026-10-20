@@ -57,6 +57,7 @@ class BeltOutlook:
 class Outlook:
     steps: List[Tuple[Pos, str]]          # the best continuation, the candidate first
     belt: BeltOutlook
+    end: Optional[LevelState] = None      # the state after it
 
     @property
     def value(self) -> float:
@@ -68,7 +69,7 @@ class Outlook:
 
 
 def _enough_sand(state: LevelState, colour: str, sc: StrategyConfig) -> bool:
-    cap = state.capacity_estimate()
+    cap = state.capacity_for(colour)
     if not cap:
         return True
     return state.sand.get(colour, 0.0) >= state.conveyor_need(colour) * cap * sc.look_sand_margin
@@ -101,28 +102,39 @@ def belt_outlook(state: LevelState, sc: StrategyConfig) -> BeltOutlook:
         if b.fill is not None and b.fill >= 100:
             continue
         c = b.color
-        if c is None:                      # not read: assume it collects
+        if c is None or _live(state, c, contact, sc):   # not read: assume it collects
             live += 1
-            continue
-        gain = contact.get(c, 0.0) - state.exposed.get(c, 0.0)
-        ok = _enough_sand(state, c, sc) and (_collecting(state, c, sc)
-                                             or gain >= sc.look_min_gain)
-        live, dead = (live + 1, dead) if ok else (live, dead + 1)
+        else:
+            dead += 1
     free = state.free_slots or 0
     return BeltOutlook(free, live, dead, state.conveyor_slots, contact)
+
+
+def _live(state: LevelState, colour: str, contact: Dict[str, float], sc: StrategyConfig) -> bool:
+    gain = contact.get(colour, 0.0) - state.exposed.get(colour, 0.0)
+    return _enough_sand(state, colour, sc) and (_collecting(state, colour, sc)
+                                               or gain >= sc.look_min_gain)
+
+
+def dead_colours(state: LevelState, sc: StrategyConfig) -> set:
+    """Colours of unfinished belt buckets that will get no sand (see the module docstring)."""
+    contact = settle(state, sc)
+    return {b.color for b in state.conveyor if b.color and (b.fill or 0) < 100
+            and not _live(state, b.color, contact, sc)}
 
 
 def outlook(state: LevelState, pos: Pos, check: Check, sc: StrategyConfig) -> Outlook:
     """Best continuation of up to ``look_depth`` taps starting with ``pos`` (allowed by the
     caller already)."""
     first = (pos, state.cell(pos).color or "?")
-    best = Outlook([first], belt_outlook(state.after_tap(pos), sc))
+    after = state.after_tap(pos)
+    best = Outlook([first], belt_outlook(after, sc), after)
 
     def walk(st: LevelState, steps: List[Tuple[Pos, str]]) -> None:
         nonlocal best
         here = belt_outlook(st, sc)
         if here.value > best.value + 1e-9:
-            best = Outlook(list(steps), here)
+            best = Outlook(list(steps), here, st)
         if len(steps) >= sc.look_depth or not st.free_slots:
             return
         nxt = [p for p in st.tappable if check(st, p) is None]
@@ -132,3 +144,22 @@ def outlook(state: LevelState, pos: Pos, check: Check, sc: StrategyConfig) -> Ou
 
     walk(state.after_tap(pos), [first])
     return best
+
+
+def unblocking(state: LevelState, pos: Pos, check, sc: StrategyConfig, dead: set):
+    """The continuation from ``pos`` (2-3 taps) after which one of the ``dead`` belt colours
+    gets sand, or None."""
+    first = (pos, state.cell(pos).color or "?")
+
+    def walk(st: LevelState, steps):
+        if len(steps) >= 2 and dead - dead_colours(st, sc):
+            return Outlook(list(steps), belt_outlook(st, sc), st)
+        if len(steps) >= max(2, sc.look_depth) or not st.free_slots:
+            return None
+        for p in [p for p in st.tappable if check(st, p) is None][:sc.look_width + 2]:
+            found = walk(st.after_tap(p), steps + [(p, st.cell(p).color or "?")])
+            if found is not None:
+                return found
+        return None
+
+    return walk(state.after_tap(pos), [first])

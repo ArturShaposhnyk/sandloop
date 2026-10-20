@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from cells import Kind
 from config import StrategyConfig
+from endgame import belt_stuck, endgame_reserve, last_slot_gamble, sacrifice
 from lookahead import Outlook, belt_outlook, outlook
 from planner import Opened, Plan, ScatterRisk, opened_value, plan, scatter_risk
 from state import LevelState, Pos
@@ -75,6 +76,10 @@ class Candidate:
     look_bonus: float = 0.0
     gamble: bool = False                       # last-slot gamble on a stuck belt
     uncovers: float = 0.0                      # ... contact share it uncovers for the belt
+    level_plan: Optional[str] = None           # "i/n": a step of the level plan (levelplan.py)
+    sacrifice: bool = False                    # can't fill now, opens what unblocks the belt
+    sand_short: bool = False                   # rejected only for "not enough sand"
+    reserved: bool = False                     # rejected only for the endgame slot reserve
 
     @property
     def unlock_value(self) -> float:
@@ -168,7 +173,7 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig, opener: bool = Fal
     cell = state.cell(pos)
     cand = Candidate(pos, cell.color or "?")
     free = state.free_slots
-    cap = state.capacity_estimate()
+    cap = state.capacity_for(cand.color)
     cand.exposed = state.exposed.get(cand.color, 0.0)
     cand.belt_demand = state.conveyor_need(cand.color) * sc.belt_demand_exposure
     cand.on_belt = state.on_belt(cand.color)
@@ -188,60 +193,22 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig, opener: bool = Fal
         cand.low_exposure = True
         cand.rejected = f"not enough exposed sand (avail {cand.avail:.1%} < {min_exp:.0%}, {why})"
     elif have < need and not gamble:
+        cand.sand_short = True
         cand.rejected = f"not enough sand ({have:.1%} < {need:.1%})"
+    elif not gamble and free:
+        keep = endgame_reserve(state, cand.color, sc)
+        if keep and free - 1 < len(keep):
+            cand.reserved = True
+            cand.rejected = (f"endgame: keep a slot for {', '.join(keep)} (still in the picture, "
+                             f"{cand.color} almost done)")
     cand.stages = [cell.body] if cell.body else []
     if cap:   # tower: the later stages need their sand too (after the top's, in order)
         for s in cand.stages:
             stage_need = ((state.conveyor_need(s) + 1 + (s == cand.color))
-                          * cap * sc.sufficiency_margin)
+                          * (state.capacity_for(s) or cap) * sc.sufficiency_margin)
             if state.sand.get(s, 0.0) < stage_need:
                 cand.short_stages.append(s)
     return cand
-
-
-def belt_stuck(state: LevelState, sc: StrategyConfig) -> Optional[float]:
-    """Seconds every unfinished belt bucket has not gained sand, if that is at least
-    ``gamble_stuck_s`` (else None). Buckets the reader cannot see right now keep their colour's
-    stall clock (BeltTracker forgets a colour only after ``stall_forget_s``)."""
-    colours = {b.color for b in state.conveyor if b.color and (b.fill or 0) < 100}
-    stalls = [state.belt_stalled.get(c) for c in colours | set(state.belt_stalled)]
-    if not stalls or any(s is None or s < sc.gamble_stuck_s for s in stalls):
-        return None
-    return min(stalls)
-
-
-def uncovers_for_belt(state: LevelState, colour: str) -> float:
-    """Contact share of the belt's colours that collecting ``colour`` uncovers (the sand right
-    above it, sand.contact_layers)."""
-    belt = {b.color for b in state.conveyor if b.color and (b.fill or 0) < 100}
-    belt |= {s for b in state.conveyor for s in b.stages}
-    return sum(share for d, share in state.above.get(colour, {}).items()
-               if d in belt and d != colour)
-
-
-def last_slot_gamble(state: LevelState, cands: List[Candidate], sc: StrategyConfig
-                     ) -> Optional[Candidate]:
-    """User rule (2026-10-20): the belt is stuck (no belt bucket gained sand for
-    ``gamble_stuck_s``), one slot is left and every remaining move breaks the last-slot exposure
-    minimum. Waiting changes nothing, the level is lost otherwise: take the last slot with the
-    move that uncovers the most sand for the belt's colours, ties by its own exposed sand. Only
-    moves rejected for that minimum count; one short of sand is allowed too (same reasoning:
-    the level is lost otherwise), a colour stalled on the belt never (it uncovers nothing)."""
-    stuck = belt_stuck(state, sc)
-    if state.free_slots != 1 or stuck is None:
-        return None
-    pool = []
-    for c in (c for c in cands if c.low_exposure):
-        g = evaluate(state, c.pos, sc, gamble=True)
-        if g.rejected is None and g.color not in state.belt_stalled:
-            g.gamble, g.uncovers = True, uncovers_for_belt(state, g.color)
-            pool.append(g)
-    if not pool:
-        return None
-    best = max(pool, key=lambda c: (round(c.uncovers, 6), round(c.exposed, 6),
-                                    -c.pos[0], -c.pos[1]))
-    _score(state, best, sc)
-    return best
 
 
 def path_check(sc: StrategyConfig):
@@ -347,11 +314,15 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
                 cand.path_bonus = sc.weight_path_bonus * best_plan.rank
                 cand.score += cand.path_bonus
     now = belt_outlook(state, sc)
+    check = rule_check(sc)
     if sc.look_depth > 0:
-        check = rule_check(sc)
         for cand in cands:
             if cand.rejected is None:
                 _look(state, cand, now, check, sc)
+    if sc.look_depth > 0 and free >= 2:
+        for i, cand in enumerate(cands):
+            if cand.sand_short and cand.stalled is None:
+                cands[i] = sacrifice(state, cand, now, check, sc) or cand
     tapped_cands = list(cands)
     cands += _not_tappable(state)
     allowed = [c for c in cands if c.rejected is None]

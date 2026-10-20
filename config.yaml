@@ -188,6 +188,12 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   look_min_gain: 0.02
   look_sand_margin: 1.0
   weight_lookahead: 1.0
+  # endgame (user, 2026-10-20, run 20261020-145310): with <= endgame_colours colours left on the
+  # board, a bucket of a colour that is almost done (on the belt, or < 1 bucket of sand left) is
+  # not tapped if it would leave fewer free slots than the other board colours that still have
+  # >= endgame_sand_min buckets of sand in the picture and none on the belt (darkred there)
+  endgame_colours: 3
+  endgame_sand_min: 0.5
   chest_settle_s: 1.5        # a chest opened: no decision this long (its buckets are landing), then a full re-read
   analyze_interval_s: 0.5    # overlay --dry-run: min seconds between analyses
   confirm_frames: 2          # tap only after this many consecutive analyses chose the same move
@@ -205,6 +211,7 @@ bot:                         # python -m bot: plays one level (docs/GAME_RULES.m
   burst_max: 3
   burst_min_free: 2
   burst_min_avail: 0.05
+  burst_min_score: 0.3       # a follow-up must also score this much (run 145310: #25 yellow 0.15)
   burst_gap_s: 0.3           # + clicks.max_taps_per_second
   # "about to be covered": a colour's contact-layer share dropped by cover_min_drop within
   # cover_window_s while no bucket of it is on the belt -> bonus weight_covering x drop
@@ -220,6 +227,22 @@ bot:                         # python -m bot: plays one level (docs/GAME_RULES.m
   disagree_report_s: 10.0    # a cell's look and the path rule disagree this long while there is no move: log STUCK + save the frame
   loop_interval_s: 0.05
   max_saved_frames: 1500     # PNGs per run in debug/runs/<stamp>/frames/
+
+planner:                     # levelplan.py + sim.py: whole-level plan (docs/GAME_RULES.md "Level plan")
+  enabled: true              # false = greedy strategy only (strategy.py)
+  beam: 8                    # beam search: nodes kept per depth
+  max_depth: 120             # actions (taps + waits) per plan
+  budget_s: 3.0              # search time per plan (the bot waits meanwhile)
+  cell_px: 8                 # sand cell of the simulated picture = this many frame px
+  lap_take: 20               # cells a belt bucket takes per lap at most
+  laps_per_tap: 1            # laps that pass while the bot taps
+  max_wait_laps: 60
+  replan_min_s: 2.0          # the board differs from the plan: re-plan at most this often
+  # beam score = share of the sand collected (+10 for a win) - weight_dead x belt buckets that
+  # can never fill - weight_stuck x belt buckets whose colour is not exposed + weight_free x free
+  weight_dead: 0.1
+  weight_stuck: 0.05
+  weight_free: 0.02
 
 flow:                        # flow.py: screens outside gameplay (docs/GAME_RULES.md "Bot behaviour outside gameplay")
   # win -> NEXT, menu -> PLAY (popups -> red ✕ first), revive -> Quit (else the popup's ✕),

@@ -62,8 +62,8 @@ def _rank(c: Candidate) -> tuple:
 
 def prioritize(decision: Decision, covering: Dict[str, float], weight: float) -> Decision:
     """Add the cover bonus to allowed candidates of a covered colour and re-pick the best."""
-    if decision.move is None or not covering or weight <= 0:
-        return decision
+    if decision.move is None or not covering or weight <= 0 or decision.move.level_plan:
+        return decision   # a level-plan step is the plan's, not re-picked
     bonus = {}
     for cand in decision.candidates:
         if cand.rejected is None and cand.color in covering:
@@ -97,8 +97,10 @@ def burst(state: LevelState, first: Candidate, real_tappable: Set[Pos], sc: Stra
         if not sim.tappable:
             break
         d = prioritize(choose(sim, sc), covering or {}, bc.weight_covering)
-        if d.move is None or d.move.avail < bc.burst_min_avail:
-            break
+        if (d.move is None or d.move.avail < bc.burst_min_avail
+                or d.move.score < bc.burst_min_score or d.move.look_bonus < 0
+                or d.move.gamble or d.move.sacrifice):
+            break   # a follow-up must be a clearly good move by the same checks (run 145310)
         moves.append((d.move, f"burst {len(moves) + 1}: {d.reason}"))
     return moves
 

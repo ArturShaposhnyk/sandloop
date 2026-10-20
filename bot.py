@@ -74,6 +74,8 @@ class Bot(LevelMixin):
         self.level_taps: List[Dict[str, Any]] = []      # this level's tap events (levels.jsonl)
         self.level_last: Optional[Dict[str, Any]] = None   # ... its last gameplay analysis
         self.level_t0 = 0.0
+        self.level_first: Optional[Dict[str, Any]] = None   # its first gameplay analysis
+        self.level_sig: Optional[str] = None                # board signature (levelplan)
         self.in_level = False
         self.level_start: Optional[float] = None
         self.left_unclear = False             # left a level to a screen that is no result
@@ -226,6 +228,10 @@ class Bot(LevelMixin):
                              confirmed=confirmed is not None, **analysis_record(res))
         if st is not None:
             self.level_last = rec
+            if self.level_first is None and res.view is not None:
+                from levelplan import level_signature
+
+                self.level_first, self.level_sig = rec, level_signature(res.view.labels())
         self.log.belt(self.frame_no, res)
         self._report(res, frame, confirmed is not None, rec)
         self._watch_disagreements(res, frame, now)
@@ -313,7 +319,8 @@ class Bot(LevelMixin):
                                    if self.prev_game is not None else set(st.tappable))
         both = {p for p in both if not self.ledger.guarded(p, now)}
         covering = self.trend.covering(b.color for b in st.conveyor if b.color)
-        moves = burst(st, move, both, self.cfg.strategy, self.bc, covering)
+        moves = ([(move, f"confirmed, level plan step {move.level_plan}")] if move.level_plan
+                 else burst(st, move, both, self.cfg.strategy, self.bc, covering))
         if self.max_taps is not None:
             moves = moves[:max(1, self.max_taps - self.taps)]
         geo = self.geometry(force=True)   # geometry check right before tapping

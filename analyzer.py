@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from cells import Kind
 from state import BeltTracker, LevelState, Pos
@@ -81,7 +81,16 @@ class Analyzer:
             LatticeLock(cfg.vision.lattice_lock_frames, cfg.vision.lattice_min_fit) if track
             else None)
         self.flights: Optional[InFlight] = InFlight(cfg.vision.flight_s) if track else None
+        self.planner = None                    # levelplan.PlanRunner (live, planner enabled)
+        if track and cfg.planner.enabled:
+            from levelplan import PlanRunner
+
+            self.planner = PlanRunner(cfg, Path(cfg.paths.debug) / "levels.jsonl")
+        self.colour_capacity: Optional[Dict[str, float]] = None   # measured on the 1st read
         self.chests: Dict[Pos, int] = {}       # chests in the last read (cell -> N)
+        self.chest_log: List[Dict[str, Any]] = []   # chests opened this level + where their
+        #   buckets landed (levels.jsonl: are chest results the same on Try Again?)
+        self._labels: Optional[List[List[str]]] = None   # last read's labels
         self.scatter_until = -1.0              # a chest opened: no decisions until then
 
     def analyze(self, img: "np.ndarray", log=print, now: Optional[float] = None,
@@ -110,12 +119,20 @@ class Analyzer:
             self._save_unknowns(img, gv, log)
             st = self.cfg.strategy
             state = LevelState.from_view(gv, st.conveyor_slots, st.unknown_fill_need)
+            if self.lattices is not None:   # live level: per-colour capacity from its start
+                if self.colour_capacity is None:
+                    self.colour_capacity = colour_capacity(state)
+                    log("capacity per colour (share of the picture per bucket): " + ", ".join(
+                        f"{c} {v:.2%}" for c, v in sorted(self.colour_capacity.items())))
+                state.colour_capacity = dict(self.colour_capacity)
             state.belt_stalled = self.belt.update(state.conveyor, now)
             if adjust is not None:
                 adjust(state)
             res = Analysis(screen, gv, state, choose(state, st))
             if self.lattices is not None:
                 self._chest_scatter(gv, res, now, log)
+            if self.planner is not None and now >= self.scatter_until:
+                res.decision = self.planner.decide(img, gv, state, res.decision, now, log)
             if gv.counter is None:
                 res.failure = "counter: k/5 not read"
         if res.failure:
@@ -132,7 +149,19 @@ class Analyzer:
                   if c is not None and c.kind is Kind.LOCK and c.lock == "chest"}
         opened = {p: n for p, n in self.chests.items() if p not in chests}
         self.chests = chests
+        labels = [row.split() for row in gv.labels()]
+        pending = next((e for e in self.chest_log if "landed" not in e), None)
+        if pending is not None and now >= self.scatter_until:
+            before = pending.pop("before")
+            pending["landed"] = [[r, c, lab] for r, row in enumerate(labels)
+                                 for c, lab in enumerate(row)
+                                 if r < len(before) and c < len(before[r])
+                                 and before[r][c] == "." and lab != "."]
+            log("chest result: " + (", ".join(f"r{r}c{c} {lab}" for r, c, lab in
+                                              pending["landed"]) or "no bucket landed"))
         if opened:
+            self.chest_log.append({"t": round(now, 2), "before": self._labels or labels,
+                                   "chests": [[r, c, n] for (r, c), n in opened.items()]})
             from hints import CellMemory
 
             self.memory = CellMemory()
@@ -141,6 +170,7 @@ class Analyzer:
                 self.flights.pause(self.scatter_until + self.cfg.vision.flight_s)
             log("chest " + ", ".join(f"r{r}c{c} ({n})" for (r, c), n in opened.items())
                 + " opened: buckets scatter - re-reading the whole grid")
+        self._labels = labels
         if now < self.scatter_until:
             res.decision = Decision(None, "wait: a chest opened, its buckets are landing",
                                     res.decision.candidates if res.decision else [])
@@ -182,6 +212,16 @@ class Analyzer:
             fh.write(json.dumps(rec) + "\n")
         if self.fails_saved == self.cfg.strategy.vision_fail_max_saves:
             log(f"vision_fail: saved {self.fails_saved} frames, not saving more this run")
+
+
+def colour_capacity(state: LevelState) -> Dict[str, float]:
+    """Per colour: its sand / its bucket stages still to fill. Levels are balanced per colour,
+    and this ratio cancels the reading's bias per colour (L187: darkred read 1.0 % of the picture
+    while it was 39 % of the contact layer, so the shared estimate rejected both darkred buckets
+    for "not enough sand" to the end of run 20261020-145310). Measured once per level, at its
+    start; colours seen later (opened locks) use the level-wide estimate."""
+    return {c: state.sand[c] / n for c, n in state.stages_by_colour().items()
+            if n > 0 and state.sand.get(c, 0.0) > 0}
 
 
 class DecisionGate:

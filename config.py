@@ -166,6 +166,8 @@ class StrategyConfig:
     look_min_gain: float = 0.02           # ... or the settle step uncovers this much more
     look_sand_margin: float = 1.0         # live = sand >= this x belt need x capacity
     weight_lookahead: float = 1.0         # score += this x (usable-slot share after - now)
+    endgame_colours: int = 3              # <= this many colours on the board: endgame reserve
+    endgame_sand_min: float = 0.5         # ... for colours with this many buckets of sand left
     belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
     relaxed_free_slots: int = 3           # this many free slots and up: min exposure relaxed
     relaxed_min_exposed: float = 0.0      # ... to this (also when no belt bucket collects)
@@ -196,6 +198,7 @@ class BotConfig:
     settle_zones: List[str] = field(default_factory=lambda: ["grid_zone", "counter"])
     burst_max: int = 3                   # taps released back to back from one confirmed decision
     burst_min_free: int = 2              # a follow-up tap needs this many free slots (never the last)
+    burst_min_score: float = 0.3          # a burst follow-up needs at least this score
     burst_min_avail: float = 0.05        # ... and its colour this much avail (useful right now)
     burst_gap_s: float = 0.3             # min seconds between burst taps (rate limit applies too)
     cover_window_s: float = 2.0          # exposure trend window for "about to be covered"
@@ -247,6 +250,23 @@ class SessionConfig:
 
 
 @dataclass
+class PlannerConfig:
+    """levelplan.py: whole-level beam search in sim.py, followed live, re-planned on change."""
+    enabled: bool = True
+    beam: int = 8                     # nodes kept per depth
+    max_depth: int = 120              # actions (taps + waits) per plan
+    budget_s: float = 3.0             # search time per plan
+    cell_px: int = 8                  # picture block per simulated sand cell (frame px)
+    lap_take: int = 20                # cells a belt bucket takes per lap at most
+    laps_per_tap: int = 1             # laps that pass while the bot taps
+    max_wait_laps: int = 60
+    replan_min_s: float = 2.0         # at most one re-plan this often
+    weight_dead: float = 0.1          # score per belt bucket that can never fill (sand short)
+    weight_stuck: float = 0.05        # ... per belt bucket whose colour is not exposed now
+    weight_free: float = 0.02         # ... per free slot
+
+
+@dataclass
 class PathsConfig:
     dataset: str = "dataset"
     debug: str = "debug"
@@ -267,6 +287,7 @@ class Config:
     bot: BotConfig = field(default_factory=BotConfig)
     flow: FlowConfig = field(default_factory=FlowConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    planner: PlannerConfig = field(default_factory=PlannerConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -339,6 +360,11 @@ def validate(cfg: Config) -> Config:
            v.unlock_confident_margin, v.lattice_min_fit, v.flight_s) < 0 or v.lattice_lock_frames < 1:
         raise ConfigError("vision chest / mystery / unlock settings must be >= 0 and "
                           "lattice_lock_frames >= 1")
+    pl = cfg.planner
+    if (min(pl.beam, pl.max_depth, pl.cell_px, pl.lap_take, pl.laps_per_tap, pl.max_wait_laps) < 1
+            or min(pl.budget_s, pl.replan_min_s) < 0):
+        raise ConfigError("planner: beam / max_depth / cell_px / lap_take / laps_per_tap / "
+                          "max_wait_laps must be >= 1, budget_s / replan_min_s >= 0")
     st = cfg.strategy
     if st.conveyor_slots < 1 or st.confirm_frames < 1:
         raise ConfigError("strategy.conveyor_slots and confirm_frames must be >= 1")

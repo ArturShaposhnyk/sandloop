@@ -29,6 +29,7 @@ class LevelMixin:
         self.in_level, self.level_start = True, now
         self.level_no += 1
         self.level_taps, self.level_last, self.level_t0 = [], None, self.log.t()
+        self.level_first, self.level_sig = None, None
         lives = "?" if self.lives is None else self.lives
         self.log.log(f"LEVEL {self.level_no} started (lives {lives})")
         self.log.event("level_start", level=self.level_no, frame=self.frame_no, lives=self.lives)
@@ -61,10 +62,14 @@ class LevelMixin:
     def _record_level(self, result: str, how: str) -> None:
         """Phase 7: every level -> <debug>/levels.jsonl: result, every tap with the decision it
         came from (state, candidates, scores, lookahead) and the last gameplay read."""
-        self.log.level(level=self.level_no, result=result, how=how,
+        an = self.analyzer
+        planner = getattr(an, "planner", None)
+        self.log.level(level=self.level_no, result=result, how=how, signature=self.level_sig,
                        duration_s=round(self.log.t() - self.level_t0, 1),
                        taps=len(self.level_taps), tap_log=self.level_taps,
-                       end=self.level_last)
+                       start=self.level_first, end=self.level_last,
+                       plans=planner.log if planner is not None else [],
+                       chests=list(getattr(an, "chest_log", [])))
 
     def _non_gameplay(self, res: Any, frame: np.ndarray, now: float) -> None:
         from hud import read_lives

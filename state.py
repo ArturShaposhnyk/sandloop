@@ -78,6 +78,9 @@ class LevelState:
     revealed: List[Pos] = field(default_factory=list)   # after_tap: mystery buckets revealed
     lower: Dict[str, float] = field(default_factory=dict)     # share of the picture's lower part
     above: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    colour_capacity: Dict[str, float] = field(default_factory=dict)
+    # ^ picture share one bucket stage of a colour takes, measured at level start (Analyzer):
+    #   the picture reading under-counts some colours (L187 darkred, cream) by 2-3x
     # ^ contact colour -> colour right above it -> contact share it becomes once collected
 
     # -- construction ---------------------------------------------------------------------
@@ -181,6 +184,22 @@ class LevelState:
         pending = self.pending_buckets()
         total = sum(self.sand.values())
         return total / pending if pending > 0 and total > 0 else None
+
+    def stages_by_colour(self) -> Dict[str, float]:
+        """Bucket stages still to fill per known colour: grid buckets (towers: both stages)
+        and what the belt still needs."""
+        out: Dict[str, float] = dict(self.grid_buckets())
+        for b in self.conveyor:
+            for col in {b.color, *b.stages} - {None}:
+                out[col] = out.get(col, 0.0) + b.need_for(col, self.unknown_fill_need)
+        return out
+
+    def capacity_for(self, colour: Optional[str]) -> Optional[float]:
+        """Sand one bucket of ``colour`` takes: its level-start measure (``colour_capacity``),
+        else the level-wide estimate."""
+        if colour and colour in self.colour_capacity:
+            return self.colour_capacity[colour]
+        return self.capacity_estimate()
 
     # -- simulation -----------------------------------------------------------------------
 
