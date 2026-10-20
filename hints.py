@@ -148,9 +148,11 @@ class LatticeLock:
     stopped tapping, the boosters below the grid pulsed into the grid zone, the grid region
     grew by ~0.7 row, the lattice got a 7th row and a smaller row pitch, and every cell was
     read across two rows ("pink/darkgreen" towers, boosters as buckets). A lattice like the
-    level's one but with extra rows at the bottom is replaced by the level's lattice; any
-    other change must hold ``switch_frames`` frames in a row (a new level) before it is used,
-    until then the frame is a failed read."""
+    level's one but with extra rows at the bottom is replaced by the level's lattice. The same
+    outline with another cell size is a misread, never used (live run 20261020-122638, L187:
+    4x4 instead of 7x7 mid-level; a new level comes after non-gameplay screens, which reset
+    the lock). Any other change must hold ``switch_frames`` frames in a row (a new level)
+    before it is used, until then the frame is a failed read."""
 
     def __init__(self, switch_frames: int = 3) -> None:
         self.switch_frames = switch_frames
@@ -163,6 +165,15 @@ class LatticeLock:
     def _same_top(a, b) -> bool:
         return (a.cols == b.cols and abs(a.x0 - b.x0) < b.cw / 2 and abs(a.y0 - b.y0) < b.ch / 2
                 and abs(a.cw - b.cw) < 0.05 * b.cw)
+
+    @staticmethod
+    def _same_outline(a, b) -> bool:
+        return (abs(a.x0 - b.x0) < b.cw / 2 and abs(a.y0 - b.y0) < b.ch / 2
+                and abs(a.cols * a.cw - b.cols * b.cw) < 0.05 * b.cols * b.cw)
+
+    @staticmethod
+    def _shape(lat) -> str:
+        return f"{lat.rows}x{lat.cols} (cell {lat.cw:.0f} px)"
 
     def check(self, lat, log=print):
         from vision import VisionError
@@ -177,15 +188,19 @@ class LatticeLock:
                     f"(the level's grid has {ref.rows})")
             self._ignoring = True
             return ref
+        if lat.cols != ref.cols and self._same_outline(lat, ref):
+            self._new_key, self._new_count = None, 0
+            raise VisionError(f"grid geometry {self._shape(lat)}: same outline as the level's "
+                              f"{self._shape(ref)}, other cell size - misread, not used")
         key = CellMemory.key(lat)
         self._new_count = self._new_count + 1 if key == self._new_key else 1
         self._new_key = key
         if self._new_count >= self.switch_frames:
-            log(f"lattice: new grid geometry {lat.rows}x{lat.cols} (was {ref.rows}x{ref.cols})")
+            log(f"lattice: new grid geometry {self._shape(lat)} (was {self._shape(ref)})")
             self.ref, self._new_key, self._new_count = lat, None, 0
             return lat
-        raise VisionError(f"grid geometry {lat.rows}x{lat.cols} differs from the level's "
-                          f"{ref.rows}x{ref.cols} ({self._new_count}/{self.switch_frames})")
+        raise VisionError(f"grid geometry {self._shape(lat)} differs from the level's "
+                          f"{self._shape(ref)} ({self._new_count}/{self.switch_frames})")
 
 
 class RecentUnlocks:

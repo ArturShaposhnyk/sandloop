@@ -18,6 +18,30 @@ Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: see the last commit; the 
 Analyzers use a frozen fake clock (`Analyzer(cfg, clock=...)`), so belt stall timing never
 depends on machine load (052 used to fail under load).
 
+## L187 live run 20261020-122638 (2026-10-20): STUCK at 3/5 — fixed, awaiting live check
+- Started right (7x7), 10 good taps; at 29 s the lattice turned 4x4 and LatticeLock took it
+  after 3 frames ("new grid geometry 4x4 (was 7x7)"): every cell held 2x2 buckets -> fake towers
+  ("cream/blue-up", "purple/cream-up"), the unknown colour, STUCK. Cause: the half-pitch
+  autocorrelation peak comes from the buckets in the lanes and faded as they left (0.50 -> 0.38
+  vs the walls' 2x peak 0.52), below `pitch_harmonic_ratio`. The run ended "window lost" when
+  the window was dragged off-screen (frame 00058), not by the bot.
+- Fixes: (1) `vision.wall_alignment`: the grid's inner walls (lanes, notches) must sit on cell
+  boundaries (`vision.pitch_wall_align` 0.8), else 1/2, 1/3 of the pitch is tried -> every frame
+  of the run 7x7. (2) `LatticeLock`: the same outline with another cell size is a misread,
+  refused for any number of frames (a new level comes after non-gameplay screens, which reset
+  the lock); its messages now show the cell size. (3) `cells`: a background row through a
+  cell's middle with object pixels above AND below it (`vision.split_bg_max` 0.15) = two
+  objects -> UNKNOWN, never a bucket / tower. Annotated buckets <= 0.042, fading padlocks
+  <= 0.066; of the run's 16 merged 4x4 cells 10 score >= 0.17, but two touching buckets in a
+  lane (the run's "cream/blue-up", "cream/purple-up") score ~0.1 and are NOT caught: pixels
+  alone cannot split them reliably, the two lattice checks are the real guard.
+- LAB 74/19/0 (r3c2) was NOT a colour: the 4x4 cell held an orange bucket bottom, a purple edge
+  and the blue key (median of the mix). Not added. No other unknown colour in the run.
+- Known gap (strict xfail): an OPEN tower in a tall lane (r1c0, orange on cream) reads
+  `orange-up` - the cream stage is drawn below the bucket crop. The belt reader still sees the
+  stage once it is on the belt; the lookahead under-counts its demand.
+- Tests: frames 00030 / 00041 in `tests/data/run-20261020-122638/`, `tests/test_run_20261020.py`.
+
 ## L187 dry run 20261020-120601 (2026-10-20) — fixed, awaiting the user's live check
 - Root cause of the "cream-up looks face-up but the path rule says closed" warnings: the
   **lattice**, not colours. L187 has walls every two columns; the column autocorrelation peak

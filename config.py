@@ -81,6 +81,7 @@ class VisionConfig:
     grid_zone: List[float] = field(default_factory=lambda: [0.0, 0.52, 1.0, 0.88])
     cell_aspect: float = 0.885        # cell height / width (fixed camera perspective)
     pitch_harmonic_ratio: float = 0.8   # a peak at 1/2 or 1/3 of the best this strong = the pitch
+    pitch_wall_align: float = 0.8      # share of inner grid walls that must sit on cell boundaries
     cell_shift_up: float = 0.1        # objects are drawn overhanging into the row above
     unlock_trust_s: float = 10.0      # after a key lock opens, its cells follow the path rule alone
     cell_inset: float = 0.125         # crop inset per side, share of the cell size
@@ -109,6 +110,7 @@ class VisionConfig:
                                       # bright and up (the rim; the inside is shaded)
     face_ref_percentile: float = 85.0  # rim brightness = this percentile of the top part's V
     tower_min_margin: float = 8.0     # LAB margin for a real second colour (tower stage)
+    split_bg_max: float = 0.15           # background row with objects above + below: 2 objects
     ice_min_white: float = 0.10
     ice_min_dark: float = 0.05
     color_max_dist: float = 22.0      # LAB distance to the nearest palette colour

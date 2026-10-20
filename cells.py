@@ -85,6 +85,7 @@ class CellFeatures:
     icon_lab: Optional[Lab] = None    # the icon's colour as seen
     wood_frac: float = 0.0            # share of chest-wood pixels (palette ui "chest_wood")
     grey_frac: float = 0.0            # share of mystery-grey pixels (palette ui "mystery_grey")
+    split_bg: float = 0.0  # widest background (empty / panel) row across the middle: 2 objects
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,24 @@ def _bright_lab(cell_bgr: np.ndarray, lab: np.ndarray, mask: np.ndarray) -> Opti
     return tuple(float(x) for x in np.median(sel, axis=0))  # type: ignore[return-value]
 
 
+def _split_band(obj: np.ndarray, V: np.ndarray, h: int, w: int) -> float:
+    """Two separate objects stacked in one cell (e.g. two buckets of a lane in a cell of a
+    too-coarse lattice, run 20261020-122638 "cream/blue-up"): a background row through the
+    middle (centre 40 % of the width, 25-80 % of the height) with object pixels both above and
+    below it. Score = min(background share of that row, object share above, object share
+    below), best row. One object that fills only part of the cell (a fading padlock, a bucket
+    flying off) has nothing below the row: 0."""
+    cols = slice(int(0.3 * w), int(0.7 * w))
+    bg = (~obj & (V > 60))[:, cols].mean(axis=1)
+    ob = obj[:, cols].mean(axis=1)
+    best = 0.0
+    for r in range(int(0.25 * h), int(0.8 * h)):
+        above, below = ob[:r], ob[r + 1:]
+        if above.size and below.size:
+            best = max(best, min(float(bg[r]), float(above.mean()), float(below.mean())))
+    return best
+
+
 def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> CellFeatures:
     """Features of one grid cell crop (the cell's own rectangle, slightly inset)."""
     import cv2
@@ -187,6 +206,8 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
     med = lambda m: (tuple(float(x) for x in np.median(lab[m], axis=0))  # noqa: E731
                      if m.sum() >= 10 else None)
     rim = upper & (V >= np.percentile(V[upper], v.rim_percentile)) if upper.sum() >= 20 else upper
+    split_bg = _split_band(obj, V, h, w)
+
     def share(name: str, tol: float) -> float:
         if name not in palette.ui:
             return 0.0
@@ -205,6 +226,7 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
         rim_lab=med(rim),  # type: ignore[arg-type]
         wood_frac=share("chest_wood", v.chest_tol),
         grey_frac=share("mystery_grey", v.mystery_tol),
+        split_bg=split_bg,
     )
 
 
@@ -248,6 +270,9 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
             return lock_cell(lock)
     if f.top_lab is None and f.body_lab is None:
         return Cell(row, col, Kind.UNKNOWN, reason="no object pixels")
+    if f.split_bg >= v.split_bg_max:   # never one bucket / tower: two objects (misread lattice?)
+        return Cell(row, col, Kind.UNKNOWN,
+                    reason=f"two objects in one cell (background band {f.split_bg:.2f})")
     face_up = f.face_ratio < v.face_up_max_ratio
     # an open bucket's inside is shaded (light green reads dark green): its colour is the rim's
     top_lab, seen = ((f.rim_lab, "rim") if face_up and f.rim_lab is not None

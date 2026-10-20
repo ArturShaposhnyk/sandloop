@@ -71,6 +71,43 @@ def _fundamental(ac: np.ndarray, pitch: int, lo: int, ratio: float) -> int:
     return pitch
 
 
+def wall_alignment(g: np.ndarray, gx0: int, gx1: int, cw: float, min_run: float) -> float:
+    """Share of the grid region's inner vertical edges (lane walls, notches: grid <-> panel
+    along x) that lie on a cell boundary gx0 + k * cw (within 15 % of a cell). Edge columns
+    shorter than ``min_run`` rows are ignored (hint arrows, rounded corners). 1.0 when there are
+    no inner edges (a plain rectangle says nothing about the pitch)."""
+    trans = np.abs(np.diff(g.astype(np.int8), axis=1)).sum(axis=0).astype(float)
+    xs = np.arange(len(trans)) + 1.0          # trans[i]: edge between columns i and i + 1
+    inner = (xs > gx0 + 2) & (xs < gx1 - 2) & (trans >= min_run)
+    if not inner.any():
+        return 1.0
+    off = (xs[inner] - gx0) / cw
+    on = np.abs(off - np.round(off)) <= 0.15
+    return float(trans[inner][on].sum() / trans[inner].sum())
+
+
+def _wall_aligned(ac: np.ndarray, pitch: int, lo: int, g: np.ndarray, gx0: int, gx1: int,
+                  v: VisionConfig) -> float:
+    """``pitch`` if the walls inside the grid sit on its cell boundaries, else the first of its
+    1/2, 1/3 (nearest autocorrelation peak) whose boundaries they do. Live run 20261020-122638
+    (L187): as the middle lanes emptied, the half-pitch peak faded (0.50 -> 0.38 of the 2x peak's
+    0.52) and the lattice became 4x4, but the lane walls sit at 1, 2, 5, 6 x 56.6 px."""
+    min_run = 0.3 * pitch * v.cell_aspect
+    if wall_alignment(g, gx0, gx1, (gx1 - gx0) / max(1, round((gx1 - gx0) / pitch)),
+                      min_run) >= v.pitch_wall_align:
+        return float(pitch)
+    for k in (2, 3):
+        q = int(round(pitch / k))
+        if q < lo:
+            break
+        a, b = max(lo, q - 3), min(len(ac), q + 4)
+        q = a + int(np.argmax(ac[a:b]))
+        cw = (gx1 - gx0) / max(1, round((gx1 - gx0) / q))
+        if wall_alignment(g, gx0, gx1, cw, min_run) >= v.pitch_wall_align:
+            return float(q)
+    return float(pitch)
+
+
 def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig,
                  occluded: Optional[np.ndarray] = None) -> Lattice:
     """Find the grid panel (the hole in the purple background below the conveyor) and its
@@ -115,7 +152,8 @@ def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig,
     lo, hi = int(0.06 * w), int(0.2 * w)
     pitch = lo + int(np.argmax(ac[lo:hi]))
     pitch = _fundamental(ac, pitch, lo, v.pitch_harmonic_ratio)
-    cols = max(1, round((gx1 - gx0) / pitch))
+    cw = _wall_aligned(ac, pitch, lo, g, gx0, gx1, v)
+    cols = max(1, round((gx1 - gx0) / cw))
     cw = (gx1 - gx0) / cols
     rows = max(1, round((gy1 - gy0) / (cw * v.cell_aspect)))
     ch = (gy1 - gy0) / rows

@@ -65,7 +65,9 @@
   - Seen in the grid from above: face-up = the top stage's opening; face-down = a disc of the
     top stage's colour on the dome of the stage below.
 - Vision (L187): columns can come in groups separated by walls; the column pitch is the cell
-  pitch, never a multiple of it (`vision.pitch_harmonic_ratio`). Lock / key icons are matched
+  pitch, never a multiple of it (`vision.pitch_harmonic_ratio`; the walls inside the grid sit
+  on cell boundaries, `vision.pitch_wall_align`). The grid geometry never changes within a
+  level; a cell with a background row through its middle holds two objects (never a tower). Lock / key icons are matched
   on the cell's own rectangle (`vision.icon_inset`), not on the bucket crop shifted up into the
   row above.
 - Colours seen so far: blue, cream, cyan, darkgreen, darkred, green, magenta, orange, pink, red,

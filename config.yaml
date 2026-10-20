@@ -63,6 +63,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
   grid_zone: [0.0, 0.52, 1.0, 0.88]
   cell_aspect: 0.885         # cell height / width (fixed camera perspective)
   pitch_harmonic_ratio: 0.8  # column pitch: a peak at 1/2 or 1/3 of the strongest one, at least this strong, wins (L187 walls every 2 columns: 2x pitch 0.511 vs real 0.502)
+  pitch_wall_align: 0.8      # the walls inside the grid (lanes, notches) must sit on cell boundaries for this share, else 1/2 or 1/3 of the pitch is tried (L187 run 20261020-122638: 4x4 mid-level)
   cell_shift_up: 0.1         # objects are drawn overhanging into the row above
   unlock_trust_s: 10.0       # a key lock just opened: its cells follow the path rule alone this long (padlock animation hides the face)
   cell_inset: 0.125          # crop inset per side, share of the cell size
@@ -88,6 +89,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
   rim_percentile: 75         # open bucket colour = top-stage pixels at least this V percentile (the rim; inside is shaded). 85+ pulls darkgreen rims toward green
   face_ref_percentile: 85    # rim brightness = this percentile of V in the top part of the object
   tower_min_margin: 8.0      # LAB margin for a real second colour (tower stage)
+  split_bg_max: 0.15         # background row through a cell's middle with objects above and below = two objects (UNKNOWN, never a tower). Annotated buckets <= 0.042, fading padlocks <= 0.066; the run's merged 4x4 cells: 10 of 16 >= 0.17 (two touching buckets in a lane score ~0.1: the lattice checks are the main guard)
   ice_min_white: 0.10
   ice_min_dark: 0.05
   color_max_dist: 22.0       # LAB distance to the nearest palette bucket colour
