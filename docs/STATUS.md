@@ -19,7 +19,7 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | run 161536: measured belt speed in the simulator, plan waits never stall, plan checks, focus / window fixes | `b5d5a7e` |
 | 7 | run 171133: sand read to the picture's bottom edge, key-colour reserve, plans ranked by dead buckets, ad skip | `6198f3b` |
 | 7 | run 224631: ✕ on an ad disc, frontmost check; gamble / plan / tower sand rules | `8f29be2`, `819daac` |
-| 7 | belt speed 2x (▶▶2x tapped at level start, planner 2x fill speeds, 1x / 2x calibration), ad chains, key colour on the last slot | (this commit) |
+| 7 | belt speed 2x (▶▶2x tapped at level start, planner 2x fill speeds, 1x / 2x calibration), ad chains, key colour on the last slot | `fdc832d` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
 Tests: `python -m pytest -q` - all 752 pass.
