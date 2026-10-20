@@ -59,6 +59,23 @@
 - **Wall** (L186, confirmed by the user): a dark grey cell, never passable, never tappable. On
   screen it is a hole in the grid panel in the panel's own colour (LAB = `panel_bg`), so the
   lattice has no cell there (`x`), which blocks paths exactly like a wall.
+- **Chain lock** (L189, confirmed by the user 2026-10-21): a padlock with chains in the grid
+  (L189: yellow, column 3; its padlock and chains cover r4c2 + r5c2, one gate). It is a
+  **gate**: impassable for the path rule (like a wall) until the key of its colour flies to it;
+  the key flies like any key (when the path reaches its cell; L189: bottom right corner). Then
+  its cells are empty and the buckets behind it can be reached. Vision: icon templates
+  `chain-*` (a chain-only cell may show no colour; adjacent chain cells are one gate with the
+  padlock's colour). Planner: reaching its key is worth `path_key_value` x the buckets the
+  open gate connects (`LevelState.behind_gate`); a tap whose key opens it gets the buckets it
+  connects as unlock value ("opens chain lock yellow").
+- **Shell bucket** (L188, confirmed by the user 2026-10-21): a bucket with a shell icon - face-down
+  a shell of its colour on the dome, face-up a GREY shell inside. Tapped like any bucket when
+  the path reaches it. On the belt it **takes a slot but collects nothing** until a shell of its
+  colour in the picture reaches the bottom and drops into it; then it works like a normal
+  bucket. Bot rule (user): **never tap a shell bucket until a shell of its colour is at (or
+  close to) the bottom of the picture** (`strategy.shell_near_bottom`, 3 % of the screen
+  height); the simulator and the level plan follow the same rule. Vision: `icons.ShellMatcher`
+  (shape) + colour (grey shell = face-up), labels `<colour>-<up|down>+shell`.
 - Tower bucket = stacked buckets in one cell (confirmed by the user, L183):
   - Tapping a tower sends the **whole tower** to the conveyor; its cell is **empty at once**
     (so the path rule, key release etc. apply immediately).
@@ -79,7 +96,11 @@
   on the cell's own rectangle (`vision.icon_inset`), not on the bucket crop shifted up into the
   row above.
 - Colours seen so far: blue, cream, cyan, darkgreen, darkred, green, magenta, orange, pink, red,
-  and from L187 **yellow** and **purple** (buckets and sand; purple = the sky there).
+  and from L187 **yellow** and **purple** (buckets and sand; purple = the sky there). Key / lock
+  colours: yellow, red, blue, and **magenta** (L189 lock + key).
+- Board shapes vary (L188: 4 columns + a 2-cell lane on top; L189: 7 columns with wall
+  blocks). The lattice check counts a wall by its longest unbroken vertical edge, not by
+  scattered edge pixels (L188 read "walls off its cell boundaries (fit 0.77)").
 - Colour of an **open (face-up) bucket** = its **rim**: the inside is shaded darker, so a light
   green open bucket reads dark green from its inside (user, L183 shot 055 r4c0). The bot takes
   the brightest top-stage pixels (`vision.rim_percentile`) and the palette has a rim look per
@@ -103,6 +124,20 @@
   uses the 2x fill speeds (`planner.speed_x2_*`).
 
 ## Sand
+- **Shells in the picture** (L188, user): shells of bucket colours sit in the sand and fall with
+  it as the sand under them is collected; a shell that reaches the bottom drops into a waiting
+  shell bucket of its colour (see "Shell bucket"). Before a picture lock opens, shells rest on
+  its box (L188 shots 066-067). Vision: `picture.py` (outline + colour, only the colours of
+  shell buckets in play; depth = distance to the picture's bottom edge).
+- **Picture locks** (L188, user): boxes with a keyhole in the picture (L188 bottom left yellow,
+  bottom right red). The sand behind a lock does not fall and cannot be collected while it is
+  locked; sand above it rests on it. A key on the board opens the lock of its colour (L188: the
+  keys were under the curtain 4, confirmed); then that sand starts falling. Seen in the
+  recording: after the curtain opened (067) the keys sat in its bottom row; once the path
+  reached them (068) both keys were gone and both boxes vanished. The box's sand is seen
+  through a light overlay (colours not readable): it is left out of the sand reading
+  (`picture.lock_mask`, "picture locked NN %"); the planner treats an opened box as unknown sand
+  (plan horizon).
 - A bucket collects only sand of exactly its color (same shade).
 - It collects only from the bottom of the picture (plus a few grains above).
 - Sand falls with physics, so new sand reaches the bottom over time.
@@ -372,6 +407,13 @@ must be extensible:
   last too long stop the bot (frame saved), as do session limits (`config.yaml session:`).
 
 ## Open questions
+- L188: does one shell fill exactly one shell bucket (6 shells, 6 shell buckets)? What happens
+  to a shell that reaches the bottom while no shell bucket of its colour is on the belt - does
+  it stay there (blocking that column) or disappear? The recording shows no frame of a shell
+  dropping in (the blue shell and the r3c3 blue shell bucket both vanished between 066 and 067).
+- L188: when a picture lock opens, do its sand colours match what shows through the overlay?
+- L189: the chain lock covers r4c2 + r5c2 on screen (padlock on their border, chains through
+  both): one gate of two cells (as modelled) or a gate in r5c2 only?
 - Path rule vs. picture: in shot 010 the blue bucket at r4c4 (0-based) looks face-down although
   the empty cell to its left connects it to the exit. Every other annotated bucket (7 grids)
   agrees with the path rule. Is there a delay before a bucket flips, or a nuance in the rule?

@@ -27,7 +27,7 @@ that never jams the belt:
 * **No step against the sand rules** (user, run 20261020-224631: #24 the plan tapped an
   orange/darkgreen tower at avail -5 %, orange never filled): a step the strategy rejects for
   lack of sand (exposure as for a planned path, enough sand left, a tower whose top cannot
-  fill) is skipped - re-planned at once with that tap forbidden on this board.
+  fill; L188: a shell bucket whose shell is not at the bottom yet) is skipped - re-planned at once with that tap forbidden on this board.
 * **Level memory** (``LevelMemory``, debug/levels.jsonl): attempts of the same board (same
   start signature) that did not win ban their tap sequence; their sand use calibrates the
   bucket capacity of the simulator.
@@ -315,7 +315,7 @@ class PlanRunner:
                 "the board changes")
             return fallback
         short = evaluate(state, step.pos, self.cfg.strategy, opener=True)
-        if short.low_exposure or short.sand_short:
+        if short.low_exposure or short.sand_short or short.shell_wait:
             return self._skip(img, state, board, step_i, short.rejected, fallback, now, log)
         self._check(state, step_i, now, log)
         cand = evaluate(state, step.pos, self.cfg.strategy, gamble=True)
@@ -408,7 +408,8 @@ class PlanRunner:
                 forbid: Set[Pos] = frozenset()) -> None:
         mem = LevelMemory(self.memory_path) if self.memory_path else None
         banned = mem.banned(self.signature) if mem else set()
-        pic = picture_from_frame(img, _palette(self.cfg), self.cfg.vision, self.pc.cell_px)
+        pic = picture_from_frame(img, _palette(self.cfg), self.cfg.vision, self.pc.cell_px,
+                                 state.shells, state.pic_locks)
         cap = None
         shares = mem.capacity_shares(self.signature) if mem else {}
         sand = sum(state.sand.values())

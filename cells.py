@@ -46,6 +46,7 @@ class Cell:
     seen_lab: Optional[Lab] = None    # bucket: the LAB its top colour was read from (debug)
     seen_from: str = ""               # ... and where: "rim" (open bucket) | "top" | "disc"
     hidden: int = 0                   # lookahead (state.py): buckets of unknown colour here
+    shell: bool = False               # L188 shell bucket: collects nothing until its shell drops in
 
     @property
     def is_obstacle(self) -> bool:
@@ -63,7 +64,7 @@ class Cell:
             return f"{short}{'' if self.counter is None else self.counter}"
         if self.kind is Kind.BUCKET:
             col = f"{self.color}/{self.body}" if self.body else f"{self.color}"
-            return f"{col}-{'up' if self.face_up else 'down'}"
+            return f"{col}-{'up' if self.face_up else 'down'}{'+shell' if self.shell else ''}"
         return "?"
 
 
@@ -86,6 +87,8 @@ class CellFeatures:
     wood_frac: float = 0.0            # share of chest-wood pixels (palette ui "chest_wood")
     grey_frac: float = 0.0            # share of mystery-grey pixels (palette ui "mystery_grey")
     split_bg: float = 0.0  # widest background (empty / panel) row across the middle: 2 objects
+    shell_score: float = 0.0  # L188 shell icon on the bucket (icons.ShellMatcher)
+    sat_lab: Optional[Lab] = None   # median of the saturated object pixels (no grey shell)
 
 
 @dataclass(frozen=True)
@@ -106,7 +109,9 @@ def _is_ice(f: CellFeatures, v: VisionConfig) -> bool:
 
 # Icon locks (vision.IconMatcher): a LOCK covers buckets and opens when the KEY of the same
 # colour flies to it; the key flies once the path rule connects its cell to the exit.
-ICON_LOCKS = ("lock", "key")
+# chain (L189, user 2026-10-21): a padlock with chains - a GATE, impassable for the path rule
+# until the key of its colour flies to it; then its cells are empty (nothing under it).
+ICON_LOCKS = ("lock", "key", "chain")
 
 # Single-cell locks, checked in order after "empty" (unless before_empty) and before "bucket".
 # chest (L186): a wooden box with a number N; opens when the path rule connects it (like a key)
@@ -115,6 +120,7 @@ ICON_LOCKS = ("lock", "key")
 CELL_LOCKS: List[CellLock] = [
     CellLock("lock", "key", lambda f, v: f.icon == "lock", coloured=True, before_empty=True),
     CellLock("key", "path", lambda f, v: f.icon == "key", coloured=True, before_empty=True),
+    CellLock("chain", "key", lambda f, v: f.icon == "chain", coloured=True, before_empty=True),
     CellLock("ice", "taps", _is_ice),
     CellLock("chest", "path", lambda f, v: f.wood_frac >= v.chest_min_wood, counter="required"),
     CellLock("mystery", "adjacent", lambda f, v: f.grey_frac >= v.mystery_min_grey,
@@ -227,6 +233,7 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
         wood_frac=share("chest_wood", v.chest_tol),
         grey_frac=share("mystery_grey", v.mystery_tol),
         split_bg=split_bg,
+        sat_lab=med(obj & (S > 55) & (V > 100)),  # type: ignore[arg-type]
     )
 
 
@@ -251,7 +258,7 @@ def foot_stage(cell: Cell, lab: Optional[Lab], below: Optional[Cell], palette: P
     chest, mystery: no colour) or an unknown cell overhangs into the strip (shots 004 ice,
     055 curtain), and so does an object of the same colour."""
     if (lab is None or cell.kind is not Kind.BUCKET or not cell.face_up or cell.body is not None
-            or cell.color is None):
+            or cell.color is None or cell.shell):   # a shell bucket is one bucket, never a tower
         return None
     if below is not None and (below.kind is Kind.UNKNOWN
                               or (below.kind is Kind.LOCK and below.color is None)):
@@ -287,7 +294,9 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
                   v: VisionConfig) -> Cell:
     """Classify a cell that is not covered by a multi-cell lock."""
     def lock_cell(lock: CellLock) -> Cell:
-        if lock.coloured and f.icon_color is None:
+        if lock.coloured and f.icon_color is None and lock.name != "chain":
+            # a chain cell may show only chain links: its gate's padlock gives the colour
+            # (state._merge_lock_icons)
             return Cell(row, col, Kind.UNKNOWN, reason=f"{lock.name} colour not in palette",
                         lab=f.icon_lab)
         return Cell(row, col, Kind.LOCK, lock=lock.name, unlock=lock.unlock,
@@ -298,6 +307,10 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
             return lock_cell(lock)
     if f.empty_frac >= v.empty_min_frac:
         return Cell(row, col, Kind.EMPTY)
+    if f.shell_score >= v.shell_threshold:   # before mystery: the grey shell is mystery-grey
+        shell = _shell_bucket(row, col, f, palette, v)
+        if shell is not None:
+            return shell
     for lock in CELL_LOCKS:
         if not lock.before_empty and lock.detect(f, v):
             return lock_cell(lock)
@@ -331,6 +344,29 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
              and _distinct(top_lab, top, body, palette, v.tower_min_margin))
     return Cell(row, col, Kind.BUCKET, color=color, body=body if tower else None,
                 face_up=face_up, seen_lab=top_lab, seen_from=seen)
+
+
+def _shell_bucket(row: int, col: int, f: CellFeatures, palette: Palette,
+                  v: VisionConfig) -> Optional[Cell]:
+    """L188 shell bucket (user, 2026-10-21): face-up shows a GREY shell inside the open bucket,
+    face-down a shell of the bucket's own colour on its dome (before: the grey shell read as
+    mystery / a cream stage). Face-up = the shell (cell centre) is grey (chroma below
+    ``vision.shell_grey_chroma``); face-down = the shell has the dome's colour. Colour from the
+    saturated pixels. Anything else that matched the shell shape is a tower top (a disc of
+    ANOTHER colour on a dome): None."""
+    if f.centre_lab is None:
+        return None
+    grey = float(np.hypot(f.centre_lab[1], f.centre_lab[2])) < v.shell_grey_chroma
+    # the saturated pixels: rim / dome / body, never the grey shell (an open darkred shell
+    # bucket's lower half is mostly shell and read cream)
+    lab = f.sat_lab or f.body_lab
+    color, _ = palette.nearest(lab, "buckets", v.color_max_dist)
+    if color is None:
+        return None
+    if not grey and palette.nearest(f.centre_lab, "buckets", v.color_max_dist)[0] != color:
+        return None
+    return Cell(row, col, Kind.BUCKET, color=color, face_up=grey, seen_lab=lab,
+                seen_from="shell", shell=True)
 
 
 def path_playable(cells: Sequence[Sequence[Optional[Cell]]],

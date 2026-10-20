@@ -39,7 +39,8 @@ class UnknownColour:
 
 
 def unknown_sand(img: np.ndarray, palette: Palette, v: VisionConfig,
-                 clusters: int = 4, seed: int = 0) -> List[UnknownColour]:
+                 clusters: int = 4, seed: int = 0,
+                 mask: Optional[np.ndarray] = None) -> List[UnknownColour]:
     """Sand colours missing from the palette: picture pixels matching no sand colour (nor the
     empty picture, nor dark neutral shadow) are clustered; a cluster with at least
     ``unknown_sand_min`` of the picture within half of ``sand_max_dist`` of its centre is a
@@ -54,6 +55,8 @@ def unknown_sand(img: np.ndarray, palette: Palette, v: VisionConfig,
     if "picture_empty" in palette.ui:
         un &= lab_distance(lab, palette.ui["picture_empty"]) >= 10
     un &= ~((lab[..., 0] < 35) & (np.hypot(lab[..., 1], lab[..., 2]) < 8))   # shadow
+    if mask is not None:   # L188 lock boxes: their overlay is no sand colour (picture.lock_mask)
+        un &= ~crop_rel(mask.astype(np.uint8)[..., None], v.picture)[..., 0].astype(bool)
     n = un.size
     px = lab[un]
     if len(px) < v.unknown_sand_min * n:

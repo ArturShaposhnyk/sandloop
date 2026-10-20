@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -74,12 +74,28 @@ def _fundamental(ac: np.ndarray, pitch: int, lo: int, ratio: float) -> int:
     return pitch
 
 
+def _longest_runs(d: np.ndarray) -> np.ndarray:
+    """Per column of the boolean image ``d``: its longest run of consecutive True rows."""
+    best = np.zeros(d.shape[1])
+    cur = np.zeros(d.shape[1])
+    for row in d:
+        cur = np.where(row, cur + 1, 0)
+        best = np.maximum(best, cur)
+    return best
+
+
 def wall_alignment(g: np.ndarray, gx0: int, gx1: int, cw: float, min_run: float) -> float:
     """Share of the grid region's inner vertical edges (lane walls, notches: grid <-> panel
     along x) that lie on a cell boundary gx0 + k * cw (within 15 % of a cell). Edge columns
     shorter than ``min_run`` rows are ignored (hint arrows, rounded corners). 1.0 when there are
-    no inner edges (a plain rectangle says nothing about the pitch)."""
-    trans = np.abs(np.diff(g.astype(np.int8), axis=1)).sum(axis=0).astype(float)
+    no inner edges (a plain rectangle says nothing about the pitch). An edge counts by its
+    longest unbroken vertical run (+-1 px): a wall is one straight edge, while bucket pixels
+    close to the panel colour scatter short ones (L188 run 20261021-001541: blue / pink shell
+    buckets gave 0.77 by transition counts, the board is right; misread L187 4x4 stay <= 0.51)."""
+    d = np.abs(np.diff(g.astype(np.int8), axis=1)).astype(bool)
+    d[:, 1:] |= d[:, :-1].copy()
+    d[:, :-1] |= np.abs(np.diff(g.astype(np.int8), axis=1)).astype(bool)[:, 1:]
+    trans = _longest_runs(d)
     xs = np.arange(len(trans)) + 1.0          # trans[i]: edge between columns i and i + 1
     inner = (xs > gx0 + 2) & (xs < gx1 - 2) & (trans >= min_run)
     if not inner.any():
@@ -295,6 +311,9 @@ class GameView:
     unlocked: Set[Tuple[int, int]] = field(default_factory=set)  # key lock just opened
     unsure: Set[Tuple[int, int]] = field(default_factory=set)    # ... colour not sure yet
     above: Dict[str, Dict[str, float]] = field(default_factory=dict)  # sand.contact_layers
+    shells: List[Any] = field(default_factory=list)     # picture.PicShell (L188)
+    pic_locks: List[Any] = field(default_factory=list)  # picture.PicLock (L188)
+    locked: float = 0.0              # share of the picture behind picture locks (sand unreadable)
 
     def labels(self) -> List[str]:
         return [" ".join("x" if c is None else c.label() for c in row) for row in self.grid]
@@ -349,12 +368,17 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
             ix = v.cell_inset * lat.cw
             upper = img[int(y0 + v.cell_inset * lat.ch):int((y0 + y1) / 2), int(x0 + ix):int(x1 - ix)]
             f.empty_frac = empty_fraction(upper, palette, v)
+            if icons is not None and icons.shells is not None:
+                f.shell_score = icons.shells.match(crop)
             if icons is not None:
                 icon = icon_crop(img, lat, r, c, v)
                 kind, score = icons.match(icon)
-                if kind is not None and score >= v.icon_threshold:
+                lab = icon_lab(icon) if kind is not None and score >= v.icon_threshold else None
+                # an icon has a coloured body: without any coloured pixels the match is the
+                # cell pattern (L189's light yellow key template matched empty L188 cells 0.8)
+                if lab is not None:
                     f.icon = kind
-                    f.icon_lab = icon_lab(icon)
+                    f.icon_lab = lab
                     f.icon_color = (None if f.icon_lab is None else
                                     palette.nearest(f.icon_lab, "keys", v.color_max_dist)[0])
             cell = classify_cell(r, c, f, palette, v)
@@ -428,20 +452,32 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
                     f"{'face-up' if cell.face_up else 'face-down'} but the path rule says "
                     f"{'playable' if playable[r][c] else 'closed'} — not tapping it")
     k, slots = read_conveyor(img, palette, v, reader)
-    sand, exposed, lower, above = (read_sand(img, palette, v) if palette.sand
+    shells, pic_locks = [], []
+    if icons is not None and icons.picture is not None:
+        from sand import _bottom_edge
+
+        shell_colours = {c.color for row in grid for c in row
+                         if c is not None and c.shell and c.color}
+        shells, pic_locks = icons.picture.find(img, palette, v, _bottom_edge(img, palette, v),
+                                               shell_colours)
+    from picture import lock_mask, locked_share
+
+    mask = lock_mask(img.shape[:2], pic_locks)
+    sand, exposed, lower, above = (read_sand(img, palette, v, mask) if palette.sand
                                    else ({}, {}, {}, {}))
     unknown = [UnknownColour(cell.reason.split()[0] if cell.reason.startswith(("lock", "key"))
                              else "bucket", cell.lab, cell=(cell.row, cell.col))
                for row in grid for cell in row
                if cell is not None and cell.kind is Kind.UNKNOWN and cell.lab is not None
                and not cell.occluded]
-    unknown += unknown_sand(img, palette, v)
+    unknown += unknown_sand(img, palette, v, mask=mask)
     for u in unknown:
         log(f"warning: {u.describe()} — not in the palette (dataset/unknown_colours/, "
             f"python -m tools.add_colour)")
     return GameView(lat, grid, regions, playable, disagree, k, slots, sand, exposed, lower,
                     (img.shape[1], img.shape[0]), unknown, [b for b, _ in arrows],
-                    colour_notes(grid, palette, v), unlocked, unsure, above)
+                    colour_notes(grid, palette, v), unlocked, unsure, above, shells, pic_locks,
+                    locked_share(img.shape[:2], pic_locks, v))
 
 
 def unlock_unsure(cell: Cell, lock_colour: Optional[str], age: float, palette: Palette,
@@ -528,7 +564,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     cfg = load_config(args.config)
     pal = Palette.load(cfg.paths.palette)
     reader = DigitReader.load(Path(cfg.paths.dataset) / "digits.npz")
-    icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons")
+    icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons", pal)
     hints = HintArrows.load(Path(cfg.paths.dataset) / "templates" / "hints")
     out_dir = Path(cfg.paths.debug)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -549,6 +585,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"  tappable: {gv.tappable()}   conveyor: {gv.counter}/5")
         print("  slots   : " + ", ".join(f"{s.color}{'' if s.fill is None else f' {s.fill}%'}"
                                          f"{' (?)' if s.uncertain else ''}" for s in gv.slots))
+        for sh in gv.shells:
+            print(f"  shell   : {sh.colour} at ({sh.x:.2f}, {sh.y:.2f}), {sh.depth:.1%} above the "
+                  f"bottom ({sh.score:.2f})")
+        for pl in gv.pic_locks:
+            print(f"  pic lock: {pl.colour} box {[round(a, 3) for a in pl.rect]} "
+                  f"(picture locked {gv.locked:.0%})")
         print("  sand    : " + ", ".join(f"{k} {v:.0%}" for k, v in
                                          sorted(gv.sand.items(), key=lambda kv: -kv[1])))
         print("  exposed : " + ", ".join(f"{k} {v:.0%}" for k, v in

@@ -95,6 +95,13 @@ class VisionConfig:
     counter_search: float = 0.02      # share of height the k/5 search extends the counter zone
     disc_min_dist: float = 20.0       # face-down tower: LAB distance disc vs the ring around it
     unknown_sand_min: float = 0.03    # share of the picture for an unknown sand colour
+    pic_shell_threshold: float = 0.76    # picture.py: shell outline match (shells 0.76-0.98, else <= 0.75)
+    pic_shell_purity: float = 0.85      # ... share of the shell's pixels in one bucket colour
+    keyhole_threshold: float = 0.8       # ... keyhole of a picture lock
+    pic_lock_frame_v: float = 110.0      # ... the lock box's dark grey frame: V below this
+    pic_lock_max: float = 0.4            # ... frame searched this far from the keyhole (share of width)
+    shell_grey_chroma: float = 12.0      # L188 shell bucket: shell chroma below this = grey = face-up
+    shell_threshold: float = 0.84        # shell shape match (shells >= 0.82, plain buckets <= 0.78)
     icon_threshold: float = 0.75      # lock / key icon template match (other cells <= 0.65)
     icon_inset: float = 0.05             # icon crop = the cell's own rect minus this per side
     chest_tol: float = 12.0           # LAB distance to palette ui "chest_wood"
@@ -163,6 +170,8 @@ class StrategyConfig:
     path_step_cost: float = 0.02          # plan rank = target value - this x path cost
     weight_path_bonus: float = 1.0        # bonus for the first step = this x plan rank
     gamble_stuck_s: float = 5.0           # belt stuck this long: last-slot gamble (strategy)
+    shell_near_bottom: float = 0.03       # L188: a shell bucket only with its shell this near the bottom
+    weight_pic_unlock: float = 0.3        # L188: score for a tap whose key opens a picture lock
     gamble_fill_margin: float = 1.0       # gamble: sand left >= this x the buckets it must fill
     look_depth: int = 3                   # lookahead: taps per continuation (0 = off)
     look_width: int = 3                   # ... follow-ups tried per step (best exposed first)

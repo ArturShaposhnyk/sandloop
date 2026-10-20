@@ -12,7 +12,8 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
                ) -> LevelState:
     """Rows of space-separated cells: '.' empty, 'x' no cell, 'ice3' lock, 'cur2' curtain cell,
     'red' face-up bucket, 'red_' face-down bucket, 'red/blue' tower (top/body),
-    'lock:red' / 'key:red' lock icon / key, 'chest4' chest, 'mystery' mystery bucket."""
+    'lock:red' / 'key:red' lock icon / key, 'chain:yellow' / 'chain:?' chain gate (L189),
+    'chest4' chest, 'mystery' mystery bucket, '<bucket>+shell' shell bucket (L188)."""
     grid = []
     for r, line in enumerate(rows):
         out = []
@@ -23,10 +24,11 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
                 out.append(Cell(r, c, Kind.EMPTY))
             elif t.startswith("ice"):
                 out.append(Cell(r, c, Kind.LOCK, lock="ice", unlock="taps", counter=int(t[3:])))
-            elif t.startswith(("lock:", "key:")):
+            elif t.startswith(("lock:", "key:", "chain:")):
                 kind, _, colour = t.partition(":")
                 out.append(Cell(r, c, Kind.LOCK, lock=kind,
-                                unlock="key" if kind == "lock" else "path", color=colour))
+                                unlock="path" if kind == "key" else "key",
+                                color=None if colour == "?" else colour))
             elif t.startswith("chest"):
                 out.append(Cell(r, c, Kind.LOCK, lock="chest", unlock="path", counter=int(t[5:])))
             elif t == "mystery":
@@ -35,9 +37,11 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
                 out.append(Cell(r, c, Kind.LOCK, lock="curtain", unlock="fills",
                                 counter=int(t[3:]), region=0))
             else:
+                shell = t.endswith("+shell")
+                t = t.removesuffix("+shell")
                 top, _, body = t.rstrip("_").partition("/")
                 out.append(Cell(r, c, Kind.BUCKET, color=top, body=body or None,
-                                face_up=not t.endswith("_")))
+                                face_up=not t.endswith("_"), shell=shell))
         grid.append(out)
     exits = [(0, c) for c, cell in enumerate(grid[0]) if cell is not None]
     locks = list(locks)
@@ -46,8 +50,10 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
             if cell is not None and cell.kind is Kind.LOCK and cell.region is None:
                 locks.append(Lock(cell.lock, cell.unlock, cell.counter, ((cell.row, cell.col),),
                                   cell.color))
-    st = LevelState(grid, exits, [], [], locks, k, 5, list(conveyor), sand or {}, exposed or {},
-                    lower=lower or {})
+    from state import _merge_lock_icons
+
+    st = LevelState(grid, exits, [], [], _merge_lock_icons(locks), k, 5, list(conveyor),
+                    sand or {}, exposed or {}, lower=lower or {})
     st.tappable = st.playable()
     return st
 

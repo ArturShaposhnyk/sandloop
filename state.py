@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import Any, TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from cells import Cell, Kind, exit_connected, path_playable
 
@@ -72,11 +72,16 @@ class LevelState:
     unknown_fill_need: float = 0.5
     belt_stalled: Dict[str, float] = field(default_factory=dict)  # colour -> s without fill growth
     unlocked: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)
+    gates_opened: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)   # chain locks
     # ^ after_tap: (colour, lock cells) opened by keys that flew because of the simulated tap
     chests_opened: List[Tuple[Pos, int]] = field(default_factory=list)
     # ^ after_tap: chests the simulated tap connects (cell, number of buckets they scatter)
     revealed: List[Pos] = field(default_factory=list)   # after_tap: mystery buckets revealed
     lower: Dict[str, float] = field(default_factory=dict)     # share of the picture's lower part
+    shells: List[Any] = field(default_factory=list)     # picture.PicShell in the picture (L188)
+    pic_locks: List[Any] = field(default_factory=list)  # picture.PicLock still locked (L188)
+    locked: float = 0.0                # share of the picture behind picture locks
+    pics_opened: List[str] = field(default_factory=list)   # after_tap: picture locks opened
     above: Dict[str, Dict[str, float]] = field(default_factory=dict)
     colour_capacity: Dict[str, float] = field(default_factory=dict)
     # ^ picture share one bucket stage of a colour takes, measured at level start (Analyzer):
@@ -107,7 +112,10 @@ class LevelState:
         return cls(grid, gv.lattice.exits(), list(gv.tappable()), list(gv.disagreements), locks,
                    gv.counter, conveyor_slots, conveyor, dict(gv.sand), dict(gv.exposed),
                    unknown_fill_need, dict(belt_stalled or {}), lower=dict(gv.lower),
-                   above={c: dict(r) for c, r in gv.above.items()})
+                   above={c: dict(r) for c, r in gv.above.items()},
+                   shells=list(getattr(gv, "shells", [])),
+                   pic_locks=list(getattr(gv, "pic_locks", [])),
+                   locked=getattr(gv, "locked", 0.0))
 
     # -- grid -----------------------------------------------------------------------------
 
@@ -213,6 +221,7 @@ class LevelState:
             raise ValueError(f"no bucket at {pos}")
         nxt = copy.deepcopy(self)
         nxt._release_keys()   # keys already connected are flying anyway: not this tap's credit
+        nxt.gates_opened, nxt.pics_opened = [], []
         nxt._open_chests()    # ... and chests already connected open anyway
         r, c = pos
         nxt.grid[r][c] = Cell(r, c, Kind.EMPTY)
@@ -237,7 +246,9 @@ class LevelState:
     def _release_keys(self) -> List[Tuple[str, Tuple[Pos, ...]]]:
         """Keys the path rule connects to the exit fly to the lock of their colour: the key's
         cell empties (confirmed, GAME_RULES.md) and the lock's cells open (buckets of unknown
-        colour until seen: UNKNOWN here). Repeats while a released key connects another key.
+        colour until seen: UNKNOWN here; a chain gate's cells become EMPTY, ``gates_opened``;
+        L188: no grid lock of its colour but one picture lock -> it opens, ``pics_opened``).
+        Repeats while a released key connects another key.
         A key whose colour has no lock, or several separate locks, opens nothing here."""
         opened: List[Tuple[str, Tuple[Pos, ...]]] = []
         while True:
@@ -249,11 +260,22 @@ class LevelState:
                 (kr, kc), = key.cells
                 self.grid[kr][kc] = Cell(kr, kc, Kind.EMPTY)
                 self.locks.remove(key)
-                targets = [l for l in self.locks if l.kind == "lock" and l.color == key.color]
+                targets = [l for l in self.locks if l.kind in ("lock", "chain")
+                           and l.color == key.color]
+                pics = [p for p in self.pic_locks if p.colour == key.color]
+                if not targets and len(pics) == 1:   # L188: the picture lock of its colour
+                    self.pic_locks.remove(pics[0])
+                    self.pics_opened.append(key.color or "?")
+                    continue
                 if len(targets) != 1:
                     continue
                 target = targets[0]
                 self.locks.remove(target)
+                if target.kind == "chain":   # a gate: its cells are free now (L189, user)
+                    for lr, lc in target.cells:
+                        self.grid[lr][lc] = Cell(lr, lc, Kind.EMPTY)
+                    self.gates_opened.append((key.color or "?", target.cells))
+                    continue
                 for lr, lc in target.cells:
                     self.grid[lr][lc] = Cell(lr, lc, Kind.UNKNOWN,
                                              reason="opened lock: bucket colour not seen yet")
@@ -289,6 +311,21 @@ class LevelState:
                 out.append((mr, mc))
         return out
 
+    def shell_near(self, colour: Optional[str], near: float) -> Optional[float]:
+        """L188: depth (share of the screen height above the picture's bottom edge) of the
+        lowest shell of ``colour`` in the picture if it is within ``near``, else None."""
+        depths = [s.depth for s in self.shells if s.colour == colour]
+        return min(depths) if depths and min(depths) <= near else None
+
+    def behind_gate(self, gate: "Lock") -> List[Pos]:
+        """Buckets the path rule would connect if the chain gate ``gate`` were open now."""
+        before = self.connected()
+        nxt = copy.deepcopy(self)
+        for r, c in gate.cells:
+            nxt.grid[r][c] = Cell(r, c, Kind.EMPTY)
+        return sorted(p for p in nxt.connected() - before
+                      if nxt.cell(p).kind is Kind.BUCKET)
+
     def opened_by(self, pos: Pos) -> Tuple[List[Pos], List[Pos]]:
         """Lookahead of one tap: (buckets, lock cells) that become connected to the exit."""
         before = self.connected()
@@ -317,25 +354,29 @@ class LevelState:
 
 
 def _merge_lock_icons(locks: List[Lock]) -> List[Lock]:
-    """4-adjacent lock cells of the same colour form one lock (L183 has only single-cell ones;
-    whether a lock can cover several cells is not confirmed yet)."""
-    out = [l for l in locks if l.kind != "lock"]
-    pending = [l for l in locks if l.kind == "lock"]
+    """4-adjacent lock cells of the same kind and colour form one lock (L183 has only
+    single-cell ones; whether a lock can cover several cells is not confirmed yet). A chain gate
+    (L189) spans its padlock cell and the chain cells next to it, which may show no colour: a
+    colourless chain cell joins its neighbour and the group takes the padlock's colour."""
+    out = [l for l in locks if l.kind not in ("lock", "chain")]
+    pending = [l for l in locks if l.kind in ("lock", "chain")]
     while pending:
         group = [pending.pop(0)]
         grew = True
         while grew:
             grew = False
+            colour = next((g.color for g in group if g.color), None)
             for l in list(pending):
-                if l.color == group[0].color and any(
-                        abs(r - gr) + abs(c - gc) == 1
-                        for (r, c) in l.cells for g in group for (gr, gc) in g.cells):
+                if l.kind == group[0].kind and (l.color == colour or None in (l.color, colour)) \
+                        and any(abs(r - gr) + abs(c - gc) == 1
+                                for (r, c) in l.cells for g in group for (gr, gc) in g.cells):
                     group.append(l)
                     pending.remove(l)
                     grew = True
         first = group[0]
         cells = tuple(sorted(p for g in group for p in g.cells))
-        out.append(Lock(first.kind, first.unlock, first.counter, cells, first.color))
+        colour = next((g.color for g in group if g.color), None)
+        out.append(Lock(first.kind, first.unlock, first.counter, cells, colour))
     return out
 
 

@@ -13,7 +13,8 @@ from zones import crop_rel
 Above = Dict[str, Dict[str, float]]   # contact colour -> colour above it -> contact share
 
 
-def read_sand(img: np.ndarray, palette: Palette, v: VisionConfig
+def read_sand(img: np.ndarray, palette: Palette, v: VisionConfig,
+              mask: Optional[np.ndarray] = None
               ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float], Above]:
     """Share of the picture covered by each sand colour, the share of each colour in the
     contact layer (sand the belt can collect right now, see ``contact_layers``), in the lower
@@ -22,20 +23,22 @@ def read_sand(img: np.ndarray, palette: Palette, v: VisionConfig
     bottom edge (``_bottom_edge``): it can reach below the configured zone, and the colour that
     settles at the bottom was cut off (run 20261020-171133, L187 end: darkred 0.17 % in the zone
     vs 1.4 % to the edge - "not enough sand" for the darkred bucket at 26 % of the contact
-    layer)."""
+    layer). ``mask`` (frame size, picture.lock_mask): pixels read as empty picture - L188 lock
+    boxes, whose sand is behind a light overlay and cannot be collected."""
     edge = _bottom_edge(img, palette, v)
-    if edge is not None and edge > int(v.picture[3] * img.shape[0]):
-        h, w = img.shape[:2]
-        pic = img[int(v.picture[1] * h):edge, int(v.picture[0] * w):int(v.picture[2] * w)]
-    else:
-        pic = crop_rel(img, v.picture)
+    h, w = img.shape[:2]
+    ya, xa, xb = int(v.picture[1] * h), int(v.picture[0] * w), int(v.picture[2] * w)
+    yb = edge if edge is not None and edge > int(v.picture[3] * h) else int(v.picture[3] * h)
+    pic = img[ya:yb, xa:xb]
     lab = bgr_to_lab(pic)
     idx, names = palette.classify_pixels(lab, "sand", v.sand_max_dist)
     if "picture_empty" in palette.ui:
         idx[lab_distance(lab, palette.ui["picture_empty"]) < 10] = -1
+    if mask is not None:
+        idx[mask[ya:yb, xa:xb]] = -1
     total = idx.size
     sand = {n: float((idx == i).sum()) / total for i, n in enumerate(names)}
-    layers = contact_layers(img, palette, v)
+    layers = contact_layers(img, palette, v, mask)
     exposed, above = layers if layers is not None else (None, {})
     if exposed is None:   # bottom edge not found: fall back to the zone's bottom band
         band = idx[int((1 - v.bottom_band) * idx.shape[0]):]
@@ -54,7 +57,8 @@ def contact_layer(img: np.ndarray, palette: Palette, v: VisionConfig
     return None if layers is None else layers[0]
 
 
-def contact_layers(img: np.ndarray, palette: Palette, v: VisionConfig
+def contact_layers(img: np.ndarray, palette: Palette, v: VisionConfig,
+                   mask: Optional[np.ndarray] = None
                    ) -> Optional[Tuple[Dict[str, float], Above]]:
     """(contact, above). ``contact``: colour shares of the sand a belt bucket can collect: per
     picture column the lowest ``contact_layer`` px of sand above the picture's real bottom edge
@@ -72,10 +76,13 @@ def contact_layers(img: np.ndarray, palette: Palette, v: VisionConfig
     if edge is None:
         return None
     layer, reach = max(1, int(v.contact_layer * h)), max(1, int(v.contact_reach * h))
-    lab = bgr_to_lab(img[max(0, edge - reach - layer):edge, x0:x1])
+    top = max(0, edge - reach - layer)
+    lab = bgr_to_lab(img[top:edge, x0:x1])
     idx, names = palette.classify_pixels(lab, "sand", v.sand_max_dist)
     if "picture_empty" in palette.ui:
         idx[lab_distance(lab, palette.ui["picture_empty"]) < 10] = -1
+    if mask is not None:   # lock boxes: nothing to collect there (picture.lock_mask)
+        idx[mask[top:edge, x0:x1]] = -1
     sand = idx >= 0
     from_bottom = np.cumsum(sand[::-1], axis=0)[::-1]   # sand px at or below, per column
     in_reach = np.zeros_like(sand)

@@ -19,6 +19,14 @@ Simplified, deterministic model of one level from one frame:
   %/s. Below that share a bucket gets (almost) nothing: L187 orange at 7 % of the contact layer
   did not fill in 30 s. A full stage leaves (a tower's next stage starts); a curtain counts the
   fills.
+* **Shells** (L188, picture.py): a shell sits in its column's stack and falls with the sand
+  (``Shell.below`` = sand cells under it). A shell bucket takes a slot but collects nothing
+  until a shell of its colour is at the bottom (``below`` <= ``contact``); then the shell is
+  used up and the bucket collects like any other. Shell buckets are tapped only when such a
+  shell is at the bottom (the live rule, strategy.evaluate).
+* **Picture locks** (L188): the boxes' cells are ``LOCKED`` sand that is never collected (the
+  sand above rests on them). A key that opens one makes its sand unknown: the plan ends there
+  ("horizon", as for curtains).
 * **Grid**: ``LevelState.after_tap`` (path rule, keys -> locks, ice counts down by taps,
   chests, mystery buckets). Ice at 0 and curtains at 0 open to buckets of unknown colour
   (UNKNOWN cells): the plan cannot use them until they are seen (re-plan).
@@ -41,6 +49,14 @@ from state import LevelState, Pos
 
 Sig = Tuple[str, ...]
 UNREAD = "?"                          # a belt bucket the reader did not see: keeps its slot
+LOCKED = "locked"                     # picture cells behind a picture lock (L188)
+
+
+@dataclass
+class Shell:
+    colour: str
+    col: int                          # picture column (stack index)
+    below: int                        # sand cells under it in its column
 
 
 @dataclass
@@ -48,9 +64,16 @@ class Picture:
     names: List[str]
     cols: List[List[int]]             # per column: colour indices bottom -> top
     contact: int                      # cells a bucket reaches per column
+    shells: List[Shell] = field(default_factory=list)
 
     def copy(self) -> "Picture":
-        return Picture(self.names, [list(c) for c in self.cols], self.contact)
+        return Picture(self.names, [list(c) for c in self.cols], self.contact,
+                       [Shell(s.colour, s.col, s.below) for s in self.shells])
+
+    def shell_down(self, colour: str) -> Optional[Shell]:
+        """A shell of ``colour`` at the bottom (it drops into a waiting shell bucket)."""
+        return next((s for s in self.shells if s.colour == colour and s.below <= self.contact),
+                    None)
 
     def total(self) -> int:
         return sum(len(c) for c in self.cols)
@@ -77,12 +100,15 @@ class Picture:
         if n <= 0 or colour not in self.names:
             return 0
         i, got = self.names.index(colour), 0
-        for col in self.cols:
+        for k, col in enumerate(self.cols):
             j = 0
             while j < min(self.contact, len(col)) and got < n:
                 if col[j] == i:
-                    del col[j]          # the sand above falls down
+                    del col[j]          # the sand above falls down (with its shells)
                     got += 1
+                    for s in self.shells:
+                        if s.col == k and s.below > j:
+                            s.below -= 1
                 else:
                     j += 1
             if got >= n:
@@ -90,10 +116,12 @@ class Picture:
         return got
 
 
-def picture_from_frame(img: np.ndarray, palette, v, cell_px: int = 8) -> Picture:
+def picture_from_frame(img: np.ndarray, palette, v, cell_px: int = 8, shells=(),
+                       pic_locks=()) -> Picture:
     """Stacks from the picture of a gameplay frame, cut at its real bottom edge (as vision's
     contact layer): per ``cell_px`` block the most frequent sand colour of its pixels (empty
-    picture when most pixels are empty / not sand)."""
+    picture when most pixels are empty / not sand). ``shells`` / ``pic_locks``: picture.py
+    objects of the frame (L188): shells become ``Shell`` markers, lock boxes ``LOCKED`` cells."""
     from palette import bgr_to_lab, lab_distance
     from sand import _bottom_edge
 
@@ -112,9 +140,26 @@ def picture_from_frame(img: np.ndarray, palette, v, cell_px: int = 8) -> Picture
     blocks = blocks.reshape(rows, ncols, cell_px * cell_px) + 1          # 0 = empty
     counts = np.stack([(blocks == i).sum(axis=2) for i in range(len(names) + 1)], axis=2)
     cell = counts.argmax(axis=2) - 1
+    names = list(names)
+    top = (edge if edge is not None else y1) - rows * cell_px    # frame row of block row 0
+    if pic_locks:
+        names.append(LOCKED)
+        for lk in pic_locks:
+            bx0, by0, bx1, by1 = lk.rect
+            r0, r1 = int((by0 * h - top) // cell_px), int(-(-(by1 * h - top) // cell_px))
+            c0, c1 = int((bx0 * w - x0) // cell_px), int(-(-(bx1 * w - x0) // cell_px))
+            cell[max(0, r0):max(0, r1), max(0, c0):max(0, c1)] = len(names) - 1
     cols = [[int(x) for x in cell[::-1, j] if x >= 0] for j in range(ncols)]
     contact = max(1, round(v.contact_layer * h / cell_px))
-    return Picture(list(names), cols, contact)
+    markers = []
+    for sh in shells:
+        j = int((sh.x * w - x0) // cell_px)
+        if sh.colour is None or not 0 <= j < ncols:
+            continue
+        r = int((sh.y * h - top) // cell_px)        # block row of the shell's centre
+        below = int((cell[max(0, r + 1):, j] >= 0).sum())
+        markers.append(Shell(sh.colour, j, below))
+    return Picture(names, cols, contact, markers)
 
 
 @dataclass
@@ -123,6 +168,7 @@ class Slot:
     left: int                         # cells the current stage still needs
     stage: int = 0
     credit: float = 0.0               # cells collected but not yet whole
+    shell: bool = False               # L188 shell bucket still waiting for its shell
 
     @property
     def colour(self) -> str:
@@ -163,6 +209,7 @@ class Sim:
     jam: bool = False
     t: float = 0.0                    # belt seconds since the start
     full_taps: int = 0                # taps that took the last free slot
+    pics_opened: int = 0              # picture locks opened by keys in the simulation
 
     # -- construction ---------------------------------------------------------------------
 
@@ -201,10 +248,11 @@ class Sim:
         return cls(grid, belt, pic, cap, sc)
 
     def clone(self) -> "Sim":
-        return Sim(self.grid, [Slot(s.stages, s.left, s.stage, s.credit) for s in self.belt],
+        return Sim(self.grid, [Slot(s.stages, s.left, s.stage, s.credit, s.shell)
+                               for s in self.belt],
                    self.pic.copy(), self.capacity, self.sc, list(self.taps),
                    list(self.actions), self.fills, self.collected, self.jam, self.t,
-                   self.full_taps)
+                   self.full_taps, self.pics_opened)
 
     # -- queries --------------------------------------------------------------------------
 
@@ -213,10 +261,17 @@ class Sim:
         return self.sc.slots - len(self.belt)
 
     def moves(self) -> List[Pos]:
+        """Tappable buckets of known colour; a shell bucket only with its shell at the bottom
+        (L188, the live rule)."""
         if self.free <= 0:
             return []
-        return [p for p in self.grid.tappable
-                if self.grid.cell(p).kind is Kind.BUCKET and self.grid.cell(p).color]
+        out = []
+        for p in self.grid.tappable:
+            c = self.grid.cell(p)
+            if c.kind is Kind.BUCKET and c.color and (
+                    not c.shell or self.pic.shell_down(c.color) is not None):
+                out.append(p)
+        return out
 
     def dead_slots(self) -> int:
         """Belt buckets that can never fill: not enough of their colour left in the picture."""
@@ -243,8 +298,11 @@ class Sim:
                 and not self.unknown_left())
 
     def unknown_left(self) -> int:
+        """Cells whose content is not known (opened locks / curtains / ice ...) + 1 per picture
+        lock a key opened in the simulation (its sand's colours are unknown, L188)."""
         return len(self.grid.cells(Kind.UNKNOWN)) + sum(
-            len(l.cells) for l in self.grid.locks if l.kind in ("curtain", "lock", "ice"))
+            len(l.cells) for l in self.grid.locks if l.kind in ("curtain", "lock", "ice")) + \
+            self.pics_opened
 
     def signature(self) -> Sig:
         return grid_signature(self.grid.grid)
@@ -258,9 +316,10 @@ class Sim:
         g = self.grid.after_tap(pos)
         g.conveyor, g.conveyor_k = [], 0
         nxt.grid = g
+        nxt.pics_opened += len(g.pics_opened)
         nxt._open_ice()
         nxt.belt.append(Slot((cell.color,) + ((cell.body,) if cell.body else ()),
-                             nxt.capacity.get(cell.color, 1)))
+                             nxt.capacity.get(cell.color, 1), shell=cell.shell))
         nxt.taps.append(pos)
         nxt.full_taps += nxt.free == 0
         for _ in range(self.sc.laps_per_tap):
@@ -290,6 +349,12 @@ class Sim:
         got = 0.0
         self.t += self.sc.lap_s
         for s in list(self.belt):
+            if s.shell:   # L188: nothing until a shell of its colour drops in
+                down = self.pic.shell_down(s.colour)
+                if down is None:
+                    continue
+                self.pic.shells.remove(down)
+                s.shell = False
             rate = self.sc.rate(self.pic.share(s.colour))
             if rate <= 0:
                 continue
@@ -350,7 +415,8 @@ def grid_signature(grid) -> Sig:
             elif cell.kind is Kind.EMPTY:
                 out.append(".")
             elif cell.kind is Kind.BUCKET:
-                out.append(f"{cell.color}/{cell.body}" if cell.body else str(cell.color))
+                out.append((f"{cell.color}/{cell.body}" if cell.body else str(cell.color))
+                           + ("+shell" if cell.shell else ""))
             elif cell.kind is Kind.LOCK:
                 out.append(f"{cell.lock}:{cell.color or ''}")
             else:

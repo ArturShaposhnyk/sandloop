@@ -83,6 +83,14 @@ vision:                      # vision.py / screens.py; colours come from dataset
   counter_search: 0.02       # share of height the "k/5" search extends the counter zone up/down
   disc_min_dist: 20.0        # face-down tower = centre disc this far (LAB) from the ring around it (open bucket: <= 5, disc: >= 76)
   unknown_sand_min: 0.03     # unknown sand colour = a compact cluster of unmatched pixels >= this share of the picture
+  # picture.py (L188): shells in the picture / picture locks (keyhole + its box's dark frame)
+  pic_shell_threshold: 0.76  # L188 066-069: shells 0.76-0.98, sand / stars <= 0.75, other levels <= 0.73
+  pic_shell_purity: 0.85     # share of the shell's pixels in its one bucket colour
+  keyhole_threshold: 0.8     # keyholes 0.96-1.0, anything else <= 0.42
+  pic_lock_frame_v: 110
+  pic_lock_max: 0.4
+  shell_threshold: 0.84      # (L189 plain cyan dome 0.81; live L188 shells 0.86-0.99) L188 shell icon on a bucket (icons.ShellMatcher: shells >= 0.82 with their own template left out, plain buckets <= 0.78, tower tops up to 0.83 - told apart by colour)
+  shell_grey_chroma: 12.0    # L188 shell bucket: its shell's chroma below this = grey shell inside = face-up
   icon_threshold: 0.75       # lock / key icon match (grey shape on icon_inset crops; L187 icons >= 0.88 with their own template left out, other cells <= 0.65)
   icon_inset: 0.05           # icons are matched on the cell's own rect (not shifted up like buckets) minus this per side
   # L186 chest (wooden box with a number) and mystery bucket (grey with "?"): colour shares
@@ -185,6 +193,11 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   # (sand left >= gamble_fill_margin x (belt need + 1 bucket)) or opens the path to one; those
   # that fill themselves rank first.
   gamble_stuck_s: 5.0
+  # L188 shells (user): a shell bucket takes a slot but collects nothing until a shell of its
+  # colour reaches the picture's bottom - tap it only when one is this near the bottom edge
+  # (share of the screen height, ~40 px; picture.PicShell.depth)
+  shell_near_bottom: 0.03
+  weight_pic_unlock: 0.3     # L188: a tap whose key flies to a picture lock (its sand starts falling)
   gamble_fill_margin: 1.0
   # phase 7 lookahead (lookahead.py): best continuation of up to look_depth taps (look_width
   # best-exposed follow-ups per step); value = (free slots + live belt buckets) / slots after it.

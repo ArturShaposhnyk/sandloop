@@ -44,8 +44,10 @@ def read_shot(dataset: Path, seq: str) -> np.ndarray:
 
 def parse_label(label: str) -> Tuple[str, Optional[str], Optional[str], Optional[bool], Optional[int]]:
     """'.', 'x', 'ice17', 'cur12', 'chest4', 'mystery', 'red-up', 'cream/red-down', 'lock:red',
-    'key:yellow' -> (kind, color, body, face_up, counter)."""
-    for kind in ("lock", "key"):
+    'key:yellow', 'chain:yellow' (L189 gate), 'pink-down+shell' (L188 shell bucket, see ``is_shell``) -> (kind, color, body,
+    face_up, counter)."""
+    label = label.removesuffix("+shell")
+    for kind in ("lock", "key", "chain"):
         if label.startswith(kind + ":"):
             return kind, label[len(kind) + 1:], None, None, None
     if label == ".":
@@ -61,6 +63,10 @@ def parse_label(label: str) -> Tuple[str, Optional[str], Optional[str], Optional
     color, face = label.rsplit("-", 1)
     top, _, body = color.partition("/")
     return "bucket", top, body or None, face == "up", None
+
+
+def is_shell(label: str) -> bool:
+    return label.endswith("+shell")
 
 
 def grid_labels(ann: dict) -> Dict[str, List[List[str]]]:
@@ -99,13 +105,15 @@ def build_buckets(dataset: Path, ann: dict, pal: Palette, v: VisionConfig) -> No
 
     samples: Dict[Tuple[str, str], List[Lab]] = {}
     for seq, rows in grid_labels(ann).items():
+        if seq in ann.get("no_bucket_colours", []):
+            continue
         img = read_shot(dataset, seq)
         lat = find_lattice(img, pal, v)
         for r, row in enumerate(rows):
             for c, lab in enumerate(row):
                 kind, color, body, face_up, _ = parse_label(lab)
-                if kind != "bucket" or body is not None:
-                    continue
+                if kind != "bucket" or body is not None or is_shell(lab):
+                    continue   # towers / shell buckets (the shell icon) would blur the looks
                 f = cell_features(cell_crop(img, lat, r, c, v), pal, v)
                 face = "up" if face_up else "down"
                 parts = [("top", f.top_lab), ("body", f.body_lab)]
@@ -149,34 +157,68 @@ def build_sand(dataset: Path, ann: dict, pal: Palette, v: VisionConfig,
 
 def build_icons(dataset: Path, ann: dict, pal: Palette, v: VisionConfig, out: Path) -> List[str]:
     """Lock / key cells: grey icon templates -> ``out``/<kind>-<colour>-<seq>-r<r>c<c>.png and
-    the icon colours -> palette group ``keys``."""
+    the icon colours -> palette group ``keys``. Shell buckets (L188 '...+shell'): templates
+    ``templates/shells/shell-<colour>-<up|down>-<seq>-r<r>c<c>.png`` (grey bucket crops for
+    icons.ShellMatcher)."""
     import cv2
 
     from cells import icon_lab
-    from icons import icon_grey
-    from vision import find_lattice, icon_crop
+    from icons import icon_grey, shell_grey
+    from vision import cell_crop, find_lattice, icon_crop
 
-    out.mkdir(parents=True, exist_ok=True)
-    for old in out.glob("*.png"):
-        old.unlink()
+    shells = out.parent / "shells"
+    for d in (out, shells):
+        d.mkdir(parents=True, exist_ok=True)
+        for old in d.glob("*.png"):
+            old.unlink()
     names, colours = [], {}
     for seq, rows in grid_labels(ann).items():
         img = read_shot(dataset, seq)
         lat = find_lattice(img, pal, v)
         for r, row in enumerate(rows):
             for c, label in enumerate(row):
-                kind, colour, _, _, _ = parse_label(label)
-                if kind not in ("lock", "key"):
+                kind, colour, _, up, _ = parse_label(label)
+                if is_shell(label):
+                    name = f"shell-{colour}-{'up' if up else 'down'}-{seq}-r{r}c{c}"
+                    cv2.imwrite(str(shells / f"{name}.png"), shell_grey(cell_crop(img, lat, r, c, v)))
+                    names.append(name)
+                    continue
+                if kind not in ("lock", "key", "chain"):
                     continue
                 crop = icon_crop(img, lat, r, c, v)
                 name = f"{kind}-{colour}-{seq}-r{r}c{c}"
                 cv2.imwrite(str(out / f"{name}.png"), icon_grey(crop))
                 names.append(name)
                 lab = icon_lab(crop)
-                if lab is not None:
-                    colours.setdefault(colour, []).append(lab)
-    for colour, labs in sorted(colours.items()):
-        pal.keys[colour] = [tuple(float(x) for x in np.median(np.asarray(labs), axis=0))]
+                if lab is not None and colour != "?":   # a chain cell may show no padlock
+                    colours.setdefault(colour, {}).setdefault(seq, []).append(lab)
+    # one look per colour and shot: icon colours differ between levels / captures (L189's yellow
+    # key LAB 89/-9/81 was > color_max_dist from the median of all yellow icons)
+    for colour, shots in sorted(colours.items()):
+        pal.keys[colour] = [tuple(float(x) for x in np.median(np.asarray(labs), axis=0))
+                            for _, labs in sorted(shots.items())]
+    return names
+
+
+def build_picture(dataset: Path, ann: dict, out: Path) -> List[str]:
+    """Shells and keyholes in the picture (annotations 'picture', L188): grey crops ->
+    ``out``/shell-<colour>-<seq>-<i>.png, keyhole-<colour>-<seq>-<i>.png (picture.py)."""
+    import cv2
+
+    out.mkdir(parents=True, exist_ok=True)
+    for old in out.glob("*.png"):
+        old.unlink()
+    names = []
+    for seq, objs in ann.get("picture", {}).items():
+        img = read_shot(dataset, seq)
+        for kind in ("shells", "keyholes"):
+            for i, (colour, rect) in enumerate(objs.get(kind, [])):
+                name = f"{kind[:-1]}-{colour}-{seq}-{i}"
+                crop = crop_rel_px(img, rect)
+                cv2.imwrite(str(out / f"{name}.png"), cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY))
+                if kind == "shells":   # colour crop: picture.py cuts the shell mask from it
+                    cv2.imwrite(str(out / f"{name}.bgr.png"), crop)
+                names.append(name)
     return names
 
 
@@ -259,6 +301,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     build_buckets(dataset, ann, pal, v)
     build_sand(dataset, ann, pal, v)
     icons = build_icons(dataset, ann, pal, v, dataset / "templates" / "icons")
+    picture = build_picture(dataset, ann, dataset / "templates" / "picture")
     from tools.add_colour import merge_extra
 
     extra = merge_extra(pal, dataset / "extra_colours.json")
@@ -272,6 +315,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"  buckets : {', '.join(f'{k}({len(c)})' for k, c in sorted(pal.buckets.items()))}")
     print(f"  sand    : {', '.join(sorted(pal.sand))}")
     print(f"  keys    : {', '.join(sorted(pal.keys))} (icons: {len(icons)} templates)")
+    print(f"  picture : {len(picture)} templates (shells / keyholes)")
     if extra:
         print(f"  extra   : {', '.join(extra)} (dataset/extra_colours.json, tools/add_colour)")
     print(f"digits   : {dataset / 'digits.npz'} — "

@@ -63,6 +63,7 @@ class Candidate:
     opens_locks: List[Pos] = field(default_factory=list)
     unlocks: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)  # keys released:
     #   (colour, cells of the lock they open)
+    gates: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)   # chain locks opened
     stages: List[str] = field(default_factory=list)        # tower: later stage colours
     short_stages: List[str] = field(default_factory=list)  # ... without enough sand left
     opened: List[Opened] = field(default_factory=list)     # opens, with colour usefulness
@@ -79,6 +80,8 @@ class Candidate:
     uncovers: float = 0.0                      # ... contact share it uncovers for the belt
     fills: Optional[str] = None                # ... why it can fill ("fills itself" / "opens ...")
     jam: bool = False                          # rejected only by the lookahead (belt jams)
+    shell_wait: bool = False                   # L188 shell bucket whose shell is not at the bottom
+    pics: List[str] = field(default_factory=list)   # picture locks its key opens (L188)
     level_plan: Optional[str] = None           # "i/n": a step of the level plan (levelplan.py)
     sacrifice: bool = False                    # can't fill now, opens what unblocks the belt
     sand_short: bool = False                   # rejected only for "not enough sand"
@@ -110,6 +113,8 @@ class Candidate:
         if self.opened:
             head += " -> opens " + ", ".join(o.describe() for o in self.opened)
         extra = f", {len(self.opens_locks)} lock cell(s)" if self.opens_locks else ""
+        extra += "".join(f", opens chain lock {col}" for col, _ in self.gates)
+        extra += "".join(f", opens picture lock {col}" for col in self.pics)
         extra += "".join(f", opens lock {col} with {len(cells)} bucket(s)"
                          for col, cells in self.unlocks)
         if self.stages:
@@ -189,7 +194,13 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig, opener: bool = Fal
     min_exp, why = min_exposure(free or 0, belt_idle(state, sc), opener, sc, key)
     need = (state.conveyor_need(cand.color) + 1) * cap * sc.sufficiency_margin if cap else 0.0
     have = state.sand.get(cand.color, 0.0)
-    if free is None:
+    if cell.shell and state.shell_near(cand.color, sc.shell_near_bottom) is None:
+        # user (L188): it would take a slot and collect nothing until its shell drops in
+        depths = [s.depth for s in state.shells if s.colour == cand.color]
+        cand.shell_wait = True
+        cand.rejected = (f"shell bucket: no {cand.color} shell at the bottom of the picture yet"
+                         + (f" (lowest {min(depths):.1%} up)" if depths else " (none seen)"))
+    elif free is None:
         cand.rejected = "conveyor counter not read"
     elif free == 0:
         cand.rejected = "conveyor full"
@@ -247,6 +258,8 @@ def _score(state: LevelState, cand: Candidate, sc: StrategyConfig) -> None:
     cand.opens, cand.opens_locks = state.opened_by(cand.pos)
     cand.opened = opened_value(after, cand.opens, sc)
     cand.unlocks = after.unlocked
+    cand.gates = after.gates_opened
+    cand.pics = after.pics_opened
     cand.chests, cand.scatter = after.chests_opened, scatter_risk(after)
     cand.reveals = after.revealed
     reach = after.connected()
@@ -258,6 +271,7 @@ def _score(state: LevelState, cand: Candidate, sc: StrategyConfig) -> None:
                   + sc.weight_unlock_value * cand.unlock_value
                   + sc.weight_open_lock * len(cand.opens_locks)
                   + sc.weight_key_unlock * cand.unlocked_buckets
+                  + sc.weight_pic_unlock * len(cand.pics)
                   - sc.weight_tower_short_stage * len(cand.short_stages)
                   - (sc.weight_stalled_colour if cand.stalled is not None else 0.0)
                   - risk + sc.weight_mystery_reveal * len(cand.reveals)

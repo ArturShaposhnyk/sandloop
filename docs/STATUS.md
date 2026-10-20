@@ -19,14 +19,58 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | run 161536: measured belt speed in the simulator, plan waits never stall, plan checks, focus / window fixes | `b5d5a7e` |
 | 7 | run 171133: sand read to the picture's bottom edge, key-colour reserve, plans ranked by dead buckets, ad skip | `6198f3b` |
 | 7 | run 224631: ✕ on an ad disc, frontmost check; gamble / plan / tower sand rules | `8f29be2`, `819daac` |
+| 7 | L188 shells + picture locks, L189 chain lock, lattice fit by wall runs | (this commit) |
 | 7 | first L187 win (run 000105); finished board no longer starts a level | `66a279d` |
 | 7 | belt speed 2x (▶▶2x tapped at level start, planner 2x fill speeds, 1x / 2x calibration), ad chains, key colour on the last slot | `fdc832d` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 754 pass.
+Tests: `python -m pytest -q` - all 812 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+- **L188 / L189 mechanics (user-confirmed, docs/GAME_RULES.md)**. L188 run `20261021-001541`
+  stopped by the user: the grid failed "grid geometry 6x4: walls off its cell boundaries (fit
+  0.77)" - the board WAS read right (4 columns + 2-cell top lane); blue / pink (shell) bucket
+  pixels near the panel colour scattered short edges. `vision.wall_alignment` now counts each
+  edge by its longest unbroken vertical run: every L188 frame >= 0.88 (most 1.0), misread L187
+  4x4 still <= 0.51. 2x worked in that run too.
+  - **Shell buckets**: `icons.ShellMatcher` (shell outline on the gradient image, templates
+    `dataset/templates/shells/` from annotated `+shell` cells of 065 / 066), threshold 0.84
+    (L188 shells 0.86-0.99 live; L189 plain cyan dome 0.81); `cells._shell_bucket`: grey shell =
+    face-up, shell in the dome's colour = face-down, colour from the saturated pixels; checked
+    before mystery (grey shell = mystery grey). Strategy: a shell bucket is rejected ("shell
+    bucket: no pink shell at the bottom of the picture yet (lowest 6.2% up)") until a shell of
+    its colour is within `strategy.shell_near_bottom` (3 %) of the bottom; plan steps too.
+    Known gap: 067 r5c3 (darkred shell next to the opening curtain's gold frame) scores 0.79 and
+    reads cream/darkred.
+  - **Picture shells / locks** (`picture.py`): shells by masked outline + colour purity + the
+    colour of a shell bucket in play (no search without shell buckets); depth to the picture's
+    bottom edge. 065: all 6 found; 066-068 miss the blue shell touching the darkred one (the bot
+    then waits longer); other levels with L188's shell colours <= 0.79 (threshold 0.76).
+    Locks: keyhole template (0.96-1.0) + the box's dark grey frame; colour from the keyhole
+    ring (yellow / red). The boxes are masked out of the sand reading (065 contact layer now
+    orange 55 % / darkred 34 % / cream 11 %, was cream 64 %; the "unknown colour LAB 73/10/-2"
+    was the overlay). A key whose colour has a picture lock opens it (`pics_opened`,
+    `weight_pic_unlock`). Analyzer logs once per level "picture lock yellow: its key is not on
+    the board yet (under a curtain / lock / ice?)" - or "unknown mechanic, ask the user" if
+    nothing hides one.
+  - **Simulator**: shells are markers in the column stacks that fall with the sand; a shell
+    bucket waits (slot taken, no fill) until its shell is down; shell buckets are moves only
+    with their shell down; lock boxes are LOCKED cells (never collected); an opened picture lock
+    ends the plan (horizon). L188 start plan: r0c1 darkred, r1c1 orange, r2c1 cream, r3c1 blue
+    (the column the user cleared first), then horizon (curtain).
+  - **Chain lock (L189)**: cell lock `chain` (icon templates from shot 072), a gate: impassable
+    until its key flies, then EMPTY (`state._release_keys`, `gates_opened`); adjacent chain
+    cells are one gate with the padlock's colour; `LevelState.behind_gate`, planner key target
+    worth the buckets behind it. Magenta lock / key colour added (palette keys: one look per
+    shot). Shot 072 is a Mac screenshot: used for shapes / key colours only, not for bucket
+    colours (`no_bucket_colours`: its yellow was b 88 vs 72 and turned L187's fading yellow
+    padlock into orange).
+  - Dataset: the user's L188 recording renamed 001-007 -> **065-071** (seqs clashed); 065 / 066
+    annotated (grids with `+shell`, `picture` shells / keyholes / boxes); 072 = L189 start.
+  - **Mismatches / open (asked)**: no frame shows a shell dropping in; one shell per shell
+    bucket? a shell at the bottom with no shell bucket waiting? the chain lock spans two cells
+    on screen (modelled as one 2-cell gate).
 - **FIRST L187 (HARD) WIN: run `20261021-000105`** (`d566114`, `--levels 3`), after 6 lost
   attempts: 29 taps (31 with the speed tap), level plan followed to the end (20 plans, 2 steps
   skipped by the new sand rule: r1c6 cream avail -11.7 %, r4c0 orange last slot 10.9 %; no
@@ -234,6 +278,10 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
+-2. Live L188 (`--levels 3` from L188): watch "shell bucket: no X shell at the bottom", the
+   shells / "picture lock" lines (python -m vision on saved frames), "picture lock ...: its key
+   is not on the board yet", and whether a shell bucket on the belt fills once its shell drops.
+   Then L189 (chain lock + magenta lock).
 -1. `python -m bot --levels 3` from the menu (L188 / PLAY): check one level is counted per real
    board, PLAY is pressed after each win, 2x at every level start; then
    `python -m tools.belt_speed debug/runs/20261021-000105 <new run>` -> `planner.speed_x2_fill_*`.
@@ -335,6 +383,10 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L188 run 20261021-001541 + user recording (065-071), L189 start (072) - 2026-10-21
+- See "Where it stands". Tests: `tests/test_l188_l189.py` (frames from the run, dataset shots
+  065-069 / 072), annotated grids 065 / 066 / 072 in every grid test of `tests/test_vision.py`.
 
 ## L187 live run 20261021-000105 (2026-10-21): FIRST L187 WIN, win counted 3x
 - See "Where it stands". Tests: `tests/test_run_20261021_000105.py` (frames 00260, 00268,

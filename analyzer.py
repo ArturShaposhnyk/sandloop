@@ -57,7 +57,8 @@ class Analyzer:
         self.clock = clock or time.monotonic
         self.palette = Palette.load(cfg.paths.palette)
         self.reader = DigitReader.load(Path(cfg.paths.dataset) / "digits.npz")
-        self.icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons")
+        self.icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons",
+                                      self.palette)
         self.hints = HintArrows.load(Path(cfg.paths.dataset) / "templates" / "hints")
         self.reset_level(track=False)
         self.classifier = ScreenClassifier(load_templates(Path(cfg.paths.dataset) / "templates"),
@@ -94,6 +95,7 @@ class Analyzer:
         #   buckets landed (levels.jsonl: are chest results the same on Try Again?)
         self._labels: Optional[List[List[str]]] = None   # last read's labels
         self.scatter_until = -1.0              # a chest opened: no decisions until then
+        self.mechanics_noted: set = set()      # "unknown mechanic" notes logged this level
         from hud import SpeedTracker
 
         self.speed = SpeedTracker(cfg.bot.speed_confirm_frames)   # ▶▶2x, per level
@@ -138,6 +140,7 @@ class Analyzer:
                         f"{c} {v:.2%}" for c, v in sorted(self.colour_capacity.items())))
                 state.colour_capacity = dict(self.colour_capacity)
             state.belt_stalled = self.belt.update(state.conveyor, now)
+            self._note_mechanics(state, log)
             if adjust is not None:
                 adjust(state)
             res = Analysis(screen, gv, state, choose(state, st))
@@ -153,6 +156,29 @@ class Analyzer:
         res.reads, res.fails = self.reads, self.fails
         res.speed_x2, res.speed_read = self.speed.state, speed_read
         return res
+
+    def _note_mechanics(self, state: LevelState, log) -> None:
+        """Once per level: what the bot cannot explain on this board yet (user, 2026-10-21:
+        log "unknown mechanic" and ask instead of guessing)."""
+        hidden = any(l.kind in ("curtain", "lock", "ice", "chest", "mystery")
+                     for l in state.locks) or bool(state.cells(Kind.UNKNOWN))
+        for pl in state.pic_locks:
+            keys = [l for l in state.locks if l.kind == "key" and l.color == pl.colour]
+            if keys:
+                continue
+            note = (f"picture lock {pl.colour}: its key is not on the board yet"
+                    + (" (under a curtain / lock / ice?)" if hidden else
+                       " and nothing hides one - unknown mechanic, ask the user"))
+            if note not in self.mechanics_noted:
+                self.mechanics_noted.add(note)
+                log(note)
+        shells = {c.color for c in state.cells(Kind.BUCKET) if c.shell}
+        for colour in sorted(shells - {s.colour for s in state.shells}):
+            note = (f"shell buckets {colour}: no {colour} shell seen in the picture (hidden behind "
+                    "a picture lock / missed by the reader?) - they wait")
+            if note not in self.mechanics_noted:
+                self.mechanics_noted.add(note)
+                log(note)
 
     def _chest_scatter(self, gv: "GameView", res: Analysis, now: float, log) -> None:
         """A chest that was in the last read and is gone has opened: its buckets scatter over
