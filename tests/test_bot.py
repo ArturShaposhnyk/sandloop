@@ -86,25 +86,28 @@ def analyzer(cfg):
 
 
 def make_bot(cfg, analyzer, tmp_path, frames, tapper=None, failsafe=None, controls=None,
-             geo_size=None, max_taps=None, dry_run=False):
+             geo_size=None, max_taps=None, dry_run=False, levels=1):
     from bot import Bot
 
     clk = Clock()
     it = iter(frames)
+    last = [frames[0]]
 
     def grab():
         try:
-            return next(it)
+            last[0] = next(it)
         except StopIteration:
             controls_.quit.set()
-            return frames[-1]
+        return last[0]
 
     controls_ = controls or Controls()
     log = RunLog(tmp_path / "debug", cfg, {"dry_run": dry_run}, clock=clk, stamp="test")
-    size = geo_size or (frames[0].shape[1], frames[0].shape[0])
-    bot = Bot(cfg, analyzer, tapper or Tapper(), grab, lambda force=False: Geo(size), log,
+    def geometry(force=False):   # the window as it is now: the last grabbed frame's size
+        return Geo(geo_size or (last[0].shape[1], last[0].shape[0]))
+
+    bot = Bot(cfg, analyzer, tapper or Tapper(), grab, geometry, log,
               controls_, failsafe or Failsafe(), dry_run=dry_run, max_taps=max_taps,
-              clock=clk, sleep=clk.sleep)
+              levels=levels, clock=clk, sleep=clk.sleep)
     return bot, log
 
 
@@ -186,11 +189,92 @@ def test_out_of_bounds_tap_is_refused(cfg, analyzer, tmp_path):
     assert bot.taps == 0
 
 
-def test_menu_before_gameplay_stops(cfg, analyzer, tmp_path):
+def test_menu_before_gameplay_taps_play(cfg, analyzer, tmp_path):
     m = shot(S023)
-    bot, log = make_bot(cfg, analyzer, tmp_path, [m] * 3)
+    tapper = Tapper()
+    bot, log = make_bot(cfg, analyzer, tmp_path, [m] * 3, tapper=tapper)
+    run(bot, log)
+    assert len(tapper.taps) == 1 and 0.4 < tapper.taps[0][0] < 0.6   # PLAY
+    tap = next(e for e in load_events(log.dir) if e["type"] == "screen_tap")
+    assert tap["screen"] == "menu" and tap["button"] == "play" and tap["lives"] == 5
+    assert (log.dir / tap["frame_png"]).exists() and (log.dir / tap["annotated_png"]).exists()
+
+
+# --- phase 6: level after level ---------------------------------------------------------------
+
+S059 = "20261019-171450-497-059-auto.png"    # Well Done! NEXT / Watch Ad
+S036 = "20261016-102521-772-036-auto.png"    # revive: Quit / Keep Playing 900
+S001 = "20261016-102033-862-001-auto.png"    # L180 start
+
+
+@pytest.fixture(scope="module")
+def cfg6(cfg):
+    return dataclasses.replace(cfg, flow=dataclasses.replace(cfg.flow, tap_cooldown_s=0.0))
+
+
+def screen_taps(log):
+    return [(e["screen"], e["button"]) for e in load_events(log.dir) if e["type"] == "screen_tap"]
+
+
+def test_one_level_stops_on_the_win_screen_without_tapping(cfg6, analyzer, tmp_path):
+    g, w = shot(S056), shot(S059)
+    tapper = Tapper()
+    bot, log = make_bot(cfg6, analyzer, tmp_path, [g, g] + [w] * 4, tapper=tapper)
+    assert run(bot, log) == "win"
+    assert len(tapper.taps) == 1 and screen_taps(log) == []
+    res = json.loads((log.dir / "result.json").read_text())
+    assert res["levels"] == 1 and res["wins"] == 1
+
+
+def test_win_next_play_next_level(cfg6, analyzer, tmp_path):
+    g, w, m, g2 = shot(S056), shot(S059), shot(S023), shot(S001)
+    tapper = Tapper()
+    frames = [g, g] + [w] * 6 + [m] * 3 + [g2]
+    bot, log = make_bot(cfg6, analyzer, tmp_path, frames, tapper=tapper, levels=2)
+    run(bot, log)
+    assert screen_taps(log) == [("level_complete", "next"), ("menu", "play")]
+    from tools.analyze_run import post_mortem
+
+    text = "\n".join(post_mortem(log.dir))
+    assert "levels: L1 win" in text and "level_complete: next" in text
+    events = load_events(log.dir)
+    assert [e["level"] for e in events if e["type"] == "level_start"] == [1, 2]
+    assert [e["result"] for e in events if e["type"] == "level_end"] == ["win"]
+    nx = next(e for e in events if e["type"] == "screen_tap")
+    assert nx["rel"][0] > 0.6                            # NEXT, not Watch Ad (left)
+
+
+def test_revive_quit_then_try_again(cfg6, analyzer, tmp_path):
+    g, r, f = shot(S056), shot(S036), shot(S039)
+    tapper = Tapper()
+    frames = [g, g] + [r] * 5 + [f] * 4
+    bot, log = make_bot(cfg6, analyzer, tmp_path, frames, tapper=tapper, levels=3)
+    run(bot, log)
+    assert screen_taps(log) == [("revive", "quit"), ("fail", "try_again")]
+    ends = [e for e in load_events(log.dir) if e["type"] == "level_end"]
+    assert [e["result"] for e in ends] == ["fail"]       # revive + fail = one lost level
+
+
+def test_consecutive_fails_stop_the_session(cfg6, analyzer, tmp_path):
+    c = dataclasses.replace(cfg6, session=dataclasses.replace(cfg6.session,
+                                                              max_consecutive_fails=1))
+    g, f = shot(S056), shot(S039)
+    tapper = Tapper()
+    bot, log = make_bot(c, analyzer, tmp_path, [g, g] + [f] * 4, tapper=tapper, levels=5)
+    assert run(bot, log) == "fail"
+    assert screen_taps(log) == []
+    assert "lost in a row" in json.loads((log.dir / "result.json").read_text())["reason"]
+
+
+def test_unknown_screen_too_long_stops_with_frame(cfg6, analyzer, tmp_path):
+    c = dataclasses.replace(cfg6, flow=dataclasses.replace(cfg6.flow, unknown_max_s=0.3))
+    splash = shot("20261016-102416-612-022-auto.png")
+    tapper = Tapper()
+    bot, log = make_bot(c, analyzer, tmp_path, [splash] * 12, tapper=tapper)
     assert run(bot, log) == "stopped"
-    assert "not in a level" in json.loads((log.dir / "result.json").read_text())["reason"]
+    res = json.loads((log.dir / "result.json").read_text())
+    assert "screen other for" in res["reason"] and tapper.taps == []
+    assert any(p.name.endswith("stop-other.png") for p in (log.dir / "frames").iterdir())
 
 
 def test_analyze_run_post_mortem(cfg, analyzer, tmp_path):

@@ -18,11 +18,17 @@ from config import VisionConfig
 
 SCREEN_TYPES = ("gameplay", "level_complete", "fail", "revive", "ad", "menu", "other")
 
+# Anchors the bot must never tap: coins, purchases, ads, store links (GAME_RULES "Bot behaviour
+# outside gameplay"). No tap may land inside one of their boxes (flow.py).
+FORBIDDEN = ("keep_playing", "watch_ad", "get_app", "appstore_badge")
+
 # (screen type, anchors — any one of them is enough). Order matters: overlays first.
+# status_icons = the iOS status bar (signal + wifi): the game hides it, ads show it (020).
 RULES: List[Tuple[str, Tuple[str, ...]]] = [
     ("revive", ("out_of_slot", "keep_playing", "quit")),
     ("fail", ("level_failed", "try_again")),
-    ("ad", ("take_a_break", "get_app", "appstore_badge", "ad_mute")),
+    ("level_complete", ("level_completed", "next")),
+    ("ad", ("take_a_break", "get_app", "appstore_badge", "ad_mute", "status_icons")),
     ("other", ("logo",)),
     ("gameplay", ("counter_slash5",)),
     ("menu", ("play", "close_red")),
@@ -34,6 +40,7 @@ class Match:
     name: str
     score: float
     center_rel: Tuple[float, float]   # where it was found (relative screen coordinates)
+    box_rel: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)   # x0, y0, x1, y1
 
 
 @dataclass
@@ -75,6 +82,7 @@ class ScreenClassifier:
 
         tpl = self.templates[name]
         best = Match(name, -1.0, (0.0, 0.0))
+        gh, gw = gray.shape[:2]
         for s in self.v.template_scales:
             t = tpl if s == 1.0 else cv2.resize(tpl, None, fx=s, fy=s,
                                                 interpolation=cv2.INTER_AREA)
@@ -83,9 +91,9 @@ class ScreenClassifier:
             res = cv2.matchTemplate(gray, t, cv2.TM_CCOEFF_NORMED)
             _, score, _, (x, y) = cv2.minMaxLoc(res)
             if score > best.score:
-                cx = (x + t.shape[1] / 2) / gray.shape[1]
-                cy = (y + t.shape[0] / 2) / gray.shape[0]
-                best = Match(name, float(score), (cx, cy))
+                th, tw = t.shape[:2]
+                best = Match(name, float(score), ((x + tw / 2) / gw, (y + th / 2) / gh),
+                             (x / gw, y / gh, (x + tw) / gw, (y + th) / gh))
         return best
 
     def classify(self, img: np.ndarray) -> ScreenResult:

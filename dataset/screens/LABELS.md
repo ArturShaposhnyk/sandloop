@@ -3,7 +3,8 @@
 One line per screenshot. Types: gameplay / level_complete / fail / revive / ad / menu / other.
 Collected 2026-10-16 with `python -m tools.collect` (iPhone screen area, 602x1302 px, scale 2).
 
-Not covered yet: **level_complete** (after winning L180 the game went straight to an ad break).
+level_complete: shots 059-063 (L186 win, 2026-10-19; after winning L180 the game had gone straight
+to an ad break). Their capture session numbered them 001-005, renamed to 059-063 (unique seqs).
 
 | file | type | note |
 |---|---|---|
@@ -18,7 +19,7 @@ Not covered yet: **level_complete** (after winning L180 the game went straight t
 | 20261016-102310-385-013-auto.png | ad | video ad (no close button yet), mute + Get App |
 | 20261016-102327-385-018-auto.png | ad | App Store sheet opened by the ad, close (x) bottom right |
 | 20261016-102407-977-019-auto.png | ad | playable ad end card, Get App |
-| 20261016-102409-173-020-auto.png | ad | ad end card without Get App banner |
+| 20261016-102409-173-020-auto.png | ad | ad end card without Get App banner (recognised by the iOS status bar) |
 | 20261016-102415-198-021-auto.png | other | black frame (transition / ad closing) |
 | 20261016-102416-612-022-auto.png | other | Sand Loop splash / loading |
 | 20261016-102418-506-023-auto.png | menu | home map, level 181, PLAY button, 2/30 stars |
@@ -46,3 +47,8 @@ Not covered yet: **level_complete** (after winning L180 the game went straight t
 | 20261016-185258-702-056-live.png | gameplay | L183, 1/5 (cream 33%): only r1c1 cyan tappable, opens a path; 10 px contact layer read cyan 2.6 % and the bot waited (regression: reach band + no pointless wait, expect tap r1c1 cyan) |
 | 20261019-162708-850-057-live.png | gameplay | L186 start, 1/5 (cream 68%): new cell types - chests "4" at r4c1 / r4c5 (open when connected, scatter 4 buckets), mystery buckets "?" at r5c1 / r5c5 (revealed by tapping a neighbour), wall at r3c3 (panel-coloured hole: 'x') |
 | 20261019-162746-400-058-live.png | gameplay | L186, 4/5 (orange 26%, red 21%, cream 69%, pink 35%): the frame the live run froze on - every 2nd frame the boosters below joined the grid region, the lattice got a 7th row and every cell was read across two rows (regression: 6 rows; with the belt idle expect tap r4c0 darkgreen) |
+| 20261019-171450-497-059-auto.png | level_complete | L186 won: "Well Done! / Level completed!", NEXT (right), Watch Ad x2 (left, never) |
+| 20261019-171509-276-060-snap.png | level_complete | same screen |
+| 20261019-171510-884-061-snap.png | level_complete | same screen |
+| 20261019-171512-124-062-auto.png | level_complete | same screen |
+| 20261019-171515-475-063-auto.png | level_complete | same screen, confetti, 27 % |

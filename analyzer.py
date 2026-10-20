@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from cells import Kind
 from state import BeltTracker, LevelState, Pos
@@ -28,6 +28,7 @@ class Analysis:
     failure: Optional[str] = None      # failed read of a gameplay frame: "<step>: <reason>"
     reads: int = 0                     # gameplay frames read so far by this Analyzer
     fails: int = 0                     # ... and how many of them failed
+    screen_result: Any = None          # screens.ScreenResult (anchors found, for flow.py)
 
     def tap_rel(self) -> Optional[Tuple[float, float]]:
         """Relative screen point of the chosen move (what a tap would hit), or None."""
@@ -86,11 +87,12 @@ class Analyzer:
         from vision import VisionError, read_gameplay
 
         now = time.monotonic() if now is None else now
-        screen = self.classifier.classify(img).screen
+        found = self.classifier.classify(img)
+        screen = found.screen
         if screen != "gameplay":
             if self.lattices is not None:
                 self.lattices.ref = None   # another level may follow
-            return Analysis(screen, reads=self.reads, fails=self.fails)
+            return Analysis(screen, reads=self.reads, fails=self.fails, screen_result=found)
         self.reads += 1
         try:
             gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log,

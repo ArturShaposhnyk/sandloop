@@ -12,10 +12,34 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
 | 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
 | 5 | `bot.py` plays one level with real taps; **won L186 live by itself** (run 20261019-171033, 21 taps, 118 s) | `4b1883a`, `4f297f2`, `00daa0e` |
+| 6 | non-gameplay screens (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `bot.py --levels N`; offline only, **not live-tested** | (uncommitted) |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 581 passed, 1 xfailed (screen 020, see below).
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests (phase 6): 636 passed, 1 failed - `test_live_regression_052` also fails on the phase-5 commit now (wall-clock belt stall clock in a shared analyzer, flaky under machine load); 020 no longer xfail.
 
-## Current state and NEXT (2026-10-19)
+## Phase 6 — level after level (2026-10-19) — done offline, awaiting the user's live check
+- Screens: win -> **NEXT** (template `next`; `watch_ad` is forbidden), menu -> red ✕ of a popup
+  else **PLAY**, revive -> **Quit** else the popup's red ✕ (038; assumption, ask the user),
+  fail -> **Try Again**, ads -> "Take a break" wait / generic ✕ (`adclose.py`, X-shaped glyph
+  in corner zones; 018's App Store ✕ found, no hits on gameplay / menu / win shots), unknown ->
+  wait (✕ search too within `flow.ad_context_s` after an ad). `screens.FORBIDDEN`: no tap inside
+  Keep Playing / Watch Ad / Get App / App Store badge boxes.
+- Taps need `flow.confirm_frames` agreeing frames, `tap_cooldown_s` apart; stops: same button
+  `same_button_max` x without effect, `max_taps_between_levels`, screen other > `unknown_max_s`,
+  ad without ✕ > `ad_max_s`, known screen with nothing allowed > `stuck_max_s`, lives 0
+  (`hud.read_lives`: digit in the heart, palette ui `heart_red`; PLAY / Try Again need lives
+  >= 1). Every stop saves the frame; every screen tap logs raw + annotated frame
+  (`screen_tap` event; `tools.analyze_run` lists them and level results).
+- Session (`config.yaml session:`): `--levels N` (default 1 = stop on the end screen, like
+  phase 5) capped by `max_levels`, `max_total_minutes`, `max_consecutive_fails`; `bot.max_run_s`
+  is now per level. Revive / fail = one lost level.
+- Dataset: win shots renamed 001-005 -> **059-063** (their seqs clashed with L180 shots), labeled
+  `level_complete`; new templates `level_completed`, `next`, `watch_ad`, `status_icons` (iOS
+  status bar = ad: fixes 020, xfail removed); ui colour `heart_red`. Palette otherwise unchanged.
+- Not covered by shots: lives 0, a real ad ✕ in the corner (only the App Store sheet's),
+  "no lives" popups, ad end cards outside `close_zones`.
+- Fixes A-D from phase 5 (below) are still open; E (level_complete template) is done.
+
+## Phase 5 state (2026-10-19)
 - **Phase 5 (`bot.py`) is done: it won L186 live by itself** (run
   `debug/runs/20261019-171033`: 21 taps, 118 s, 0 read failures, 0 no-effect taps; result
   `win`, inferred from sand 0 % then a non-gameplay screen). Live runs that day, all L186:
@@ -48,12 +72,7 @@ Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: 581 passed, 1 xfailed (sc
 - Earlier the same day: buckets under a just-opened key lock are tappable at once
   (`hints.RecentUnlocks`); a colour stalled on the belt = lost slot (wait while the belt
   collects, else a penalised last resort; jitter-proof stall clock).
-- Phase 6 (outside gameplay: PLAY, revive -> Quit, Try Again, popups -> only ✕, win screen,
-  stop at 0 lives) is NOT started. The bot still stops on any non-gameplay screen, and needs to
-  be started inside a level (it does not press PLAY).
-- **NEXT**:
-  1. Get the user's answers on A and B, then fixes A-E (E is safe either way).
-  2. Then phase 6 (win screen -> NEXT, etc.), after the user's OK.
+- **NEXT**: the user's live check of phase 6; answers on A / B, then fixes A-D.
 
 ## Key commands
 ```bash
@@ -72,6 +91,7 @@ python -m strategy dataset/screens/*.png # greedy decision per shot -> debug/str
 python -m tools.overlay --dry-run        # live: detections + chosen move, never clicks
 python -m bot --dry-run                  # phase 5 loop, logs to debug/runs/, never clicks
 python -m bot --max-taps 3               # real taps, stop after 3
+python -m bot --levels 3                 # phase 6: 3 levels in a row (NEXT / PLAY / Quit / Try Again / ad ✕)
 python -m tools.analyze_run              # post-mortem of the latest run
 python -m pytest -q                      # all tests, no live game needed
 ```
@@ -109,11 +129,8 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 ## Open questions / known gaps
-- **Win screen (level_complete)**: captured 2026-10-19 (5 shots `20261019-1714*`/`1715*`), no
-  template yet (fix E above).
-- **Screen 020** (ad end card without Get App / mute / ✕): no anchor, classified `other`
-  (xfail in tests). Needs more ad end-card shots, ideally when the ✕ appears, to add a generic
-  ad anchor.
+- **Revive ✕**: when Quit is not visible the bot taps the OUT OF SLOT popup's red ✕ (038),
+  assumed to decline without coins. Ask the user.
 - **Shot 010, cell r4c4 (0-based)**: blue bucket looks face-down although the path rule says
   playable. Asked the user whether flips are delayed or the rule has a nuance. Bot doesn't tap it.
 - Popup ✕ template threshold is tight (real 0.96–1.00 vs false up to 0.93).

@@ -1,7 +1,8 @@
 """Run log of bot.py: every run gets debug/runs/<stamp>/ with
 
     run.json         start time, args, git commit, config snapshot
-    events.jsonl     one JSON object per line, "type": analysis | tap | effect | screen | log | stop
+    events.jsonl     one JSON object per line, "type": analysis | tap | effect | screen | log | stop,
+                     level_start | level_end | lives | screen_wait | screen_tap (phase 6)
     belt.csv         belt over time: t, k, slots ("red 45|cyan/orange 10"), mean fill %
     frames/          PNGs: every tap (raw + annotated), decision changes, the final screen
     result.json      win | fail | revive | stopped, why, duration, taps

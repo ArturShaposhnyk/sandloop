@@ -121,7 +121,8 @@ class VisionConfig:
     canonical_width: int = 301        # frames are resized to this width for template matching
     template_threshold: float = 0.75
     template_thresholds: Dict[str, float] = field(  # per-anchor overrides
-        default_factory=lambda: {"close_red": 0.95, "ad_mute": 0.85})
+        default_factory=lambda: {"close_red": 0.95, "ad_mute": 0.85, "level_completed": 0.85,
+                                 "next": 0.85, "status_icons": 0.85})
     template_scales: List[float] = field(
         default_factory=lambda: [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.15, 1.3])
 
@@ -185,13 +186,47 @@ class BotConfig:
     weight_covering: float = 1.0         # score bonus per dropped share (colour not on the belt)
     retap_guard_s: float = 2.0           # never tap a cell we tapped this recently again
     max_no_effect_taps: int = 2          # taps in a row that changed nothing -> stop
-    screen_confirm_frames: int = 3       # non-gameplay this many analyses in a row -> stop
+    screen_confirm_frames: int = 3       # leaving gameplay: non-gameplay this many in a row
     win_sand_max: float = 0.01           # level ends with less sand than this -> inferred win
     window_lost_max_s: float = 10.0      # window missing / geometry check failing this long -> stop
-    max_run_s: float = 900.0             # safety stop for one level
+    max_run_s: float = 900.0             # safety stop for one level (from its first frame)
     disagree_report_s: float = 10.0      # look != path rule this long with no move: log + frame
     loop_interval_s: float = 0.05        # min seconds between captures
     max_saved_frames: int = 1500         # PNGs per run in debug/runs/<stamp>/frames/
+
+
+@dataclass
+class FlowConfig:
+    """flow.py: non-gameplay screens (win, menu, revive, fail, ads, popups), GAME_RULES.md."""
+    confirm_frames: int = 3              # same screen + same button this many analyses -> tap
+    target_tolerance: float = 0.02       # ... "same button" = centre moved less than this (rel)
+    tap_cooldown_s: float = 2.5          # after a screen tap, no other screen tap this long
+    same_button_max: int = 3             # same button tapped this often, screen unchanged -> stop
+    max_taps_between_levels: int = 10    # screen taps without reaching gameplay -> stop
+    forbidden_margin: float = 0.01       # a tap must be this far outside forbidden anchor boxes
+    unknown_max_s: float = 60.0          # screen "other" this long -> stop (frame saved)
+    ad_max_s: float = 150.0              # ad with no ✕ found this long -> stop
+    stuck_max_s: float = 90.0            # known screen, nothing allowed to tap this long -> stop
+    ad_context_s: float = 60.0           # an "other" screen this soon after an ad: look for ✕ too
+    require_lives: bool = True           # PLAY / Try Again only with lives read as >= 1
+    lives_zone: List[float] = field(default_factory=lambda: [0.60, 0.075, 0.70, 0.112])
+    heart_tol: float = 14.0              # LAB distance to palette ui heart_red
+    heart_min_share: float = 0.15        # heart pixels in lives_zone (HUD ~0.3, elsewhere 0)
+    # generic ad ✕ (adclose.py): an X-shaped glyph on a plain backdrop in these zones
+    close_zones: List[List[float]] = field(default_factory=lambda: [
+        [0.0, 0.0, 0.3, 0.2], [0.7, 0.0, 1.0, 0.2], [0.7, 0.8, 1.0, 1.0], [0.0, 0.8, 0.3, 1.0]])
+    close_min_size: float = 0.022        # glyph size, share of screen width (mute icon x: 0.017)
+    close_max_size: float = 0.09
+    close_min_iou: float = 0.5           # overlap with a drawn X
+    close_contrast: float = 40.0         # adaptive threshold offset (grey levels)
+
+
+@dataclass
+class SessionConfig:
+    """bot.py --levels N: limits for unattended play."""
+    max_levels: int = 50                 # --levels is capped at this
+    max_total_minutes: float = 120.0     # whole session
+    max_consecutive_fails: int = 3
 
 
 @dataclass
@@ -213,6 +248,8 @@ class Config:
     vision: VisionConfig = field(default_factory=VisionConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     bot: BotConfig = field(default_factory=BotConfig)
+    flow: FlowConfig = field(default_factory=FlowConfig)
+    session: SessionConfig = field(default_factory=SessionConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -316,6 +353,24 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("bot: times / thresholds must be >= 0, settle_max_s >= settle_min_s")
     if b.window_lost_max_s <= 0 or b.max_run_s <= 0:
         raise ConfigError("bot.window_lost_max_s and max_run_s must be > 0")
+    fl = cfg.flow
+    if fl.confirm_frames < 1 or fl.same_button_max < 1 or fl.max_taps_between_levels < 1:
+        raise ConfigError("flow.confirm_frames, same_button_max, max_taps_between_levels "
+                          "must be >= 1")
+    if min(fl.target_tolerance, fl.tap_cooldown_s, fl.forbidden_margin, fl.ad_context_s,
+           fl.heart_tol, fl.heart_min_share, fl.close_min_size, fl.close_min_iou,
+           fl.close_contrast) < 0 or min(fl.unknown_max_s, fl.ad_max_s, fl.stuck_max_s) <= 0:
+        raise ConfigError("flow: thresholds must be >= 0, timeouts > 0")
+    if fl.close_max_size <= fl.close_min_size:
+        raise ConfigError("flow.close_max_size must be > close_min_size")
+    for r in [fl.lives_zone] + list(fl.close_zones):
+        if (not isinstance(r, (list, tuple)) or len(r) != 4
+                or not (0 <= r[0] < r[2] <= 1 and 0 <= r[1] < r[3] <= 1)):
+            raise ConfigError("flow.lives_zone / close_zones must be [x0, y0, x1, y1] in 0..1")
+    se = cfg.session
+    if se.max_levels < 1 or se.max_consecutive_fails < 1 or se.max_total_minutes <= 0:
+        raise ConfigError("session.max_levels / max_consecutive_fails must be >= 1, "
+                          "max_total_minutes > 0")
     for z in b.settle_zones:
         if z not in VISION_ZONES:
             raise ConfigError(f"bot.settle_zones: unknown vision zone {z!r}")

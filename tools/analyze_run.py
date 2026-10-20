@@ -89,6 +89,15 @@ def post_mortem(run_dir: Path) -> List[str]:
     reads = sum(1 for e in events if e["type"] == "analysis")
     no_eff = sum(1 for e in effects if not e["ok"])
     out.append(f"analyses {reads}, read failures {fails}, taps without effect {no_eff}")
+    ends = [e for e in events if e["type"] == "level_end"]
+    if ends:
+        out.append("levels: " + ", ".join(f"L{e['level']} {e['result']}" for e in ends))
+    screen_taps = [e for e in events if e["type"] == "screen_tap"]
+    if screen_taps:
+        out.append(f"screen taps ({len(screen_taps)}):")
+        out += [f"  {e['t']:7.1f}s {e['screen']}: {e['button']} at {e['rel']}"
+                f"{'' if e['executed'] else ' [dry-run]'}  {e['frame_png']}"
+                for e in screen_taps[-10:]]
     if not analyses:
         return out + ["no gameplay analysed"]
 

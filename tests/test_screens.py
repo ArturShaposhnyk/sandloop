@@ -13,10 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCREENS = ROOT / "dataset" / "screens"
 RECORDS = [json.loads(l) for l in (SCREENS / "index.jsonl").read_text().splitlines() if l.strip()]
 
-KNOWN_LIMITATIONS = {
-    "020": "ad end card without Get App / mute button: no anchor, classified 'other' "
-           "(the bot waits there either way)",
-}
+KNOWN_LIMITATIONS = {}   # 020 (ad end card without Get App / mute) is found by the status bar
 
 
 @pytest.fixture(scope="module")

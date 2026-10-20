@@ -213,14 +213,24 @@ must be extensible:
   its counter, when it unlocks), not hardcoded if/else chains.
 
 ## Bot behaviour outside gameplay
-- Revive ("OUT OF SLOT" / "Keep Playing"): always press **Quit** (never spend coins), then
-  **Try Again** on LEVEL FAILED.
+- Win ("Well Done! / Level completed!"): tap **NEXT**. Never "Watch Ad" / "x2" (or the x1..x25
+  multiplier).
+- Home map: tap **PLAY**. Popups on it (shop offers, passes, events): close with the red **✕**
+  only (it wins over PLAY when both are seen).
+- Revive ("OUT OF SLOT" / "Keep Playing"): always press **Quit** (never spend coins); when Quit
+  is not visible, the popup's red ✕ (shot 038; assumed to decline like Quit - to be confirmed
+  by the user). Then **Try Again** on LEVEL
+  FAILED. A revive / fail screen = the level is lost (counted once).
 - Ads / popups: only tap ✕, and wait for it to appear. Never tap "Get App", purchases or
-  "Activate". If an App Store sheet opens, close it.
-- Stop the bot when lives reach 0.
+  "Activate". If an App Store sheet opens, close it (its ✕). "Take a break!" = wait.
+  Ads are recognised by their anchors or the iOS status bar (the game hides it).
+- Stop the bot when lives reach 0 (heart in the top bar). PLAY / Try Again only with lives >= 1.
+- Every tap outside gameplay needs `flow.confirm_frames` frames agreeing on the button, never
+  lands inside a forbidden anchor (Keep Playing, Watch Ad, Get App, App Store badge) and is
+  logged with its frame. Unknown screens / ads without ✕ / screens with nothing allowed that
+  last too long stop the bot (frame saved), as do session limits (`config.yaml session:`).
 
 ## Open questions
-- Win screen (level_complete): not captured yet.
 - Path rule vs. picture: in shot 010 the blue bucket at r4c4 (0-based) looks face-down although
   the empty cell to its left connects it to the exit. Every other annotated bucket (7 grids)
   agrees with the path rule. Is there a delay before a bucket flips, or a nuance in the rule?
