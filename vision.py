@@ -56,6 +56,21 @@ class VisionError(RuntimeError):
     pass
 
 
+def _fundamental(ac: np.ndarray, pitch: int, lo: int, ratio: float) -> int:
+    """The cell pitch, not a multiple of it: walls between column groups (L187: gaps every two
+    columns) can make 2x the pitch the strongest autocorrelation peak (0.511 vs 0.502 at the
+    real one). A local peak at 1/3 or 1/2 of ``pitch`` at least ``ratio`` x as strong wins."""
+    for k in (3, 2):
+        q = int(round(pitch / k))
+        if q < lo:
+            continue
+        a, b = max(lo, q - 3), min(len(ac) - 1, q + 4)
+        j = a + int(np.argmax(ac[a:b]))
+        if a < j < b - 1 and ac[j] >= ratio * ac[pitch]:
+            return j
+    return pitch
+
+
 def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig,
                  occluded: Optional[np.ndarray] = None) -> Lattice:
     """Find the grid panel (the hole in the purple background below the conveyor) and its
@@ -99,6 +114,7 @@ def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig,
     ac = np.correlate(prof, prof, "full")[len(prof) - 1:]
     lo, hi = int(0.06 * w), int(0.2 * w)
     pitch = lo + int(np.argmax(ac[lo:hi]))
+    pitch = _fundamental(ac, pitch, lo, v.pitch_harmonic_ratio)
     cols = max(1, round((gx1 - gx0) / pitch))
     cw = (gx1 - gx0) / cols
     rows = max(1, round((gy1 - gy0) / (cw * v.cell_aspect)))
@@ -194,6 +210,15 @@ def cell_crop(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) ->
     return img[y0:y1, x0:x1]
 
 
+def icon_crop(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) -> np.ndarray:
+    """Where a lock / key icon is matched: the cell's own rectangle (not shifted up like the
+    buckets), inset by ``icon_inset``. The shifted bucket crop held the rim of the bucket above
+    and cut the key off; on L187 that made empty cells under a bucket match a key at 0.80."""
+    x0, y0, x1, y1 = lat.rect(r, c)
+    ix, iy = v.icon_inset * lat.cw, v.icon_inset * lat.ch
+    return img[max(0, int(y0 + iy)):int(y1 - iy), int(x0 + ix):int(x1 - ix)]
+
+
 def lock_digits_roi(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) -> np.ndarray:
     """Where a single-cell lock shows its counter: the cell shifted up like the objects."""
     x0, y0, x1, y1 = lat.rect(r, c)
@@ -270,10 +295,11 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
             upper = img[int(y0 + v.cell_inset * lat.ch):int((y0 + y1) / 2), int(x0 + ix):int(x1 - ix)]
             f.empty_frac = empty_fraction(upper, palette, v)
             if icons is not None:
-                kind, score = icons.match(crop)
+                icon = icon_crop(img, lat, r, c, v)
+                kind, score = icons.match(icon)
                 if kind is not None and score >= v.icon_threshold:
                     f.icon = kind
-                    f.icon_lab = icon_lab(crop)
+                    f.icon_lab = icon_lab(icon)
                     f.icon_color = (None if f.icon_lab is None else
                                     palette.nearest(f.icon_lab, "keys", v.color_max_dist)[0])
             cell = classify_cell(r, c, f, palette, v)

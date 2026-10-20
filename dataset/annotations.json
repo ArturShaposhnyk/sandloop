@@ -36,6 +36,13 @@
             "orange-down cream-up . . cream-up",
             "orange-down red-down red-up . red-up",
             "x darkred-down cream-down cream-up x"],
+    "064": ["x x darkred-up orange-up darkred-up x x",
+            "orange/cream-down blue-down yellow-down blue-down purple-down purple/cream-down cream-down",
+            "lock:yellow x yellow-down orange-down cream-down x lock:blue",
+            "purple-down x darkred-down blue-down orange/darkgreen-down x purple-down",
+            "orange-down x blue-down cream-down purple-down x orange-down",
+            "purple-down x orange-down purple-down orange-down x purple-down",
+            ". x key:yellow blue-down key:blue x ."],
     "053": ["x x darkgreen-up green-up darkgreen-up cyan-up x",
             "x cyan-down green/cream-down cur10 cur10 cyan-down x",
             "x lock:yellow x cur10 cur10 darkgreen/cyan-down key:yellow",
@@ -82,7 +89,7 @@
   "counters": {
     "001": "0/5", "003": "0/5", "004": "3/5", "006": "5/5", "008": "3/5", "010": "3/5",
     "011": "5/5", "030": "0/5", "031": "0/5", "032": "2/5", "033": "5/5", "035": "4/5",
-    "041": "0/5", "043": "4/5", "045": "5/5", "053": "0/5", "054": "2/5"
+    "041": "0/5", "043": "4/5", "045": "5/5", "053": "0/5", "054": "2/5", "064": "0/5"
   },
   "fill_percent": {
     "004": [74, 0],

@@ -40,3 +40,4 @@
 {"file": "20261019-171510-884-061-snap.png", "time": "2026-10-19T17:15:10", "source": "snap", "label": "level_complete", "change": 0.0052, "frame_px": [598, 1298], "scale": 2.0, "window_pt": [26.0, 221.0, 315.0, 695.0], "screen_pt": [34.0, 259.0, 299.0, 649.0]}
 {"file": "20261019-171512-124-062-auto.png", "time": "2026-10-19T17:15:12", "source": "auto", "label": "level_complete", "change": 1.0, "frame_px": [598, 1300], "scale": 2.0, "window_pt": [26.0, 221.0, 315.0, 695.0], "screen_pt": [34.0, 258.0, 299.0, 650.0]}
 {"file": "20261019-171515-475-063-auto.png", "time": "2026-10-19T17:15:15", "source": "auto", "label": "level_complete", "change": 1.0, "frame_px": [598, 1298], "scale": 2.0, "window_pt": [-30.0, 221.0, 315.0, 695.0], "screen_pt": [-22.0, 259.0, 299.0, 649.0]}
+{"file": "20261020-120606-000-064-live.png", "time": "2026-10-20T12:06:06", "source": "live", "label": "gameplay", "change": null, "frame_px": [598, 1298], "scale": 2.0}

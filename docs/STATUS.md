@@ -18,6 +18,31 @@ Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: see the last commit; the 
 Analyzers use a frozen fake clock (`Analyzer(cfg, clock=...)`), so belt stall timing never
 depends on machine load (052 used to fail under load).
 
+## L187 dry run 20261020-120601 (2026-10-20) — fixed, awaiting the user's live check
+- Root cause of the "cream-up looks face-up but the path rule says closed" warnings: the
+  **lattice**, not colours. L187 has walls every two columns; the column autocorrelation peak
+  at 2x the pitch (112 px, 0.511) beat the real one (56 px, 0.502) -> a 4x4 lattice, every cell
+  spanning several buckets. `vision._fundamental`: a peak at 1/2 or 1/3 of the best that is
+  >= `vision.pitch_harmonic_ratio` (0.8) x as strong is the pitch. Now 7x7; all other shots
+  unchanged.
+- Colours: sand yellow + purple via `tools.add_colour` (-> `dataset/extra_colours.json`);
+  yellow / purple **bucket** looks from shot **064** (annotated) - the run's bucket crop was cut
+  by the wrong lattice (two yellows + blue/orange neighbours). Yellow vs cream: >= 54 LAB apart
+  on every annotated bucket. Only face-down yellow / purple looks so far (no open one seen).
+- Locks / keys: blue is a new key colour (palette keys blue / red / yellow). The yellow key was
+  read as orange-down: icons were matched on the bucket crop shifted up, i.e. the rim of the
+  bucket above + a cut-off key; with L187 templates empty cells then matched a key at 0.80.
+  `vision.icon_crop` (cell's own rect, `vision.icon_inset` 0.05): icons with their own template
+  left out >= 0.88, other cells <= 0.65 (threshold 0.75). L183 reads unchanged.
+- Start decision on 064: tap r0c3 orange (47 % exposed), path to r2c3 orange.
+- Tests: `tests/test_run_20261020.py` + 064 in every annotated-grid test of `test_vision.py`.
+- **Open question (found through yellow)**: right after a key opens a lock, the cell still shows
+  the padlock body (run 20261017 frames 00285 r2c1, 00304 r3c5) and is read as a bucket of the
+  LOCK's colour. 00285 used to read "orange" only because yellow was missing (nearest colour);
+  now it reads yellow. `test_bucket_under_an_opened_lock_is_tappable_at_once[00278...]` is a
+  strict xfail until the user decides: wait until the padlock is gone and the real bucket
+  colour shows (likely < 1-2 s), or tap at once with the colour unknown.
+
 ## Phase 6 — level after level (2026-10-19) — done offline, awaiting the user's live check
 - Screens: win -> **NEXT** (template `next`; `watch_ad` is forbidden), menu -> red ✕ of a popup
   else **PLAY**, revive -> **Quit** else the popup's red ✕ (038; same as Quit -> LEVEL FAILED,

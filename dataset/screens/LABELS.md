@@ -52,3 +52,4 @@ to an ad break). Their capture session numbered them 001-005, renamed to 059-063
 | 20261019-171510-884-061-snap.png | level_complete | same screen |
 | 20261019-171512-124-062-auto.png | level_complete | same screen |
 | 20261019-171515-475-063-auto.png | level_complete | same screen, confetti, 27 % |
+| 20261020-120606-000-064-live.png | gameplay | L187 (HARD) start, 0/5, dry run 20261020-120601: new colours yellow + purple (buckets and sand, purple sky 28 %), yellow + BLUE locks and keys, walls every two columns (the 2x column pitch won the lattice: 4x4 instead of 7x7; regression) |

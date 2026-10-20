@@ -154,7 +154,7 @@ def build_icons(dataset: Path, ann: dict, pal: Palette, v: VisionConfig, out: Pa
 
     from cells import icon_lab
     from icons import icon_grey
-    from vision import cell_crop, find_lattice
+    from vision import find_lattice, icon_crop
 
     out.mkdir(parents=True, exist_ok=True)
     for old in out.glob("*.png"):
@@ -168,7 +168,7 @@ def build_icons(dataset: Path, ann: dict, pal: Palette, v: VisionConfig, out: Pa
                 kind, colour, _, _, _ = parse_label(label)
                 if kind not in ("lock", "key"):
                     continue
-                crop = cell_crop(img, lat, r, c, v)
+                crop = icon_crop(img, lat, r, c, v)
                 name = f"{kind}-{colour}-{seq}-r{r}c{c}"
                 cv2.imwrite(str(out / f"{name}.png"), icon_grey(crop))
                 names.append(name)

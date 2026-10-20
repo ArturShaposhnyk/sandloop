@@ -62,6 +62,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
   counter: [0.42, 0.505, 0.58, 0.548]
   grid_zone: [0.0, 0.52, 1.0, 0.88]
   cell_aspect: 0.885         # cell height / width (fixed camera perspective)
+  pitch_harmonic_ratio: 0.8  # column pitch: a peak at 1/2 or 1/3 of the strongest one, at least this strong, wins (L187 walls every 2 columns: 2x pitch 0.511 vs real 0.502)
   cell_shift_up: 0.1         # objects are drawn overhanging into the row above
   unlock_trust_s: 10.0       # a key lock just opened: its cells follow the path rule alone this long (padlock animation hides the face)
   cell_inset: 0.125          # crop inset per side, share of the cell size
@@ -71,7 +72,8 @@ vision:                      # vision.py / screens.py; colours come from dataset
   counter_search: 0.02       # share of height the "k/5" search extends the counter zone up/down
   disc_min_dist: 20.0        # face-down tower = centre disc this far (LAB) from the ring around it (open bucket: <= 5, disc: >= 76)
   unknown_sand_min: 0.03     # unknown sand colour = a compact cluster of unmatched pixels >= this share of the picture
-  icon_threshold: 0.75       # lock / key icon match (grey shape; L183: icons >= 0.82, other cells <= 0.62)
+  icon_threshold: 0.75       # lock / key icon match (grey shape on icon_inset crops; L187 icons >= 0.88 with their own template left out, other cells <= 0.65)
+  icon_inset: 0.05           # icons are matched on the cell's own rect (not shifted up like buckets) minus this per side
   # L186 chest (wooden box with a number) and mystery bucket (grey with "?"): colour shares
   # against palette ui chest_wood / mystery_grey (chests 0.33-0.35 vs <= 0.06; mystery ~0.5)
   chest_tol: 12.0

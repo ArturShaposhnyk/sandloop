@@ -19,7 +19,7 @@
   Under the curtain there are **buckets**, colours unknown until it opens. When it opens they
   become regular buckets and follow the path rule.
 - **Locks and keys** (L183, confirmed by the user):
-  - A **key** (yellow, red, ...) sits in its own grid cell. It is an obstacle for the path rule
+  - A **key** (yellow, red, blue (L187), ...) sits in its own grid cell. It is an obstacle for the path rule
     until a path opens to it.
   - When the key's cell connects to the exit by the path rule (e.g. the bucket in front of it is
     released), the key flies by itself to the **lock of the same colour** and opens it.
@@ -64,6 +64,12 @@
     cream on red, red on orange); the fill % is the collecting stage's.
   - Seen in the grid from above: face-up = the top stage's opening; face-down = a disc of the
     top stage's colour on the dome of the stage below.
+- Vision (L187): columns can come in groups separated by walls; the column pitch is the cell
+  pitch, never a multiple of it (`vision.pitch_harmonic_ratio`). Lock / key icons are matched
+  on the cell's own rectangle (`vision.icon_inset`), not on the bucket crop shifted up into the
+  row above.
+- Colours seen so far: blue, cream, cyan, darkgreen, darkred, green, magenta, orange, pink, red,
+  and from L187 **yellow** and **purple** (buckets and sand; purple = the sky there).
 - Colour of an **open (face-up) bucket** = its **rim**: the inside is shaded darker, so a light
   green open bucket reads dark green from its inside (user, L183 shot 055 r4c0). The bot takes
   the brightest top-stage pixels (`vision.rim_percentile`) and the palette has a rim look per

@@ -80,6 +80,7 @@ class VisionConfig:
     counter: List[float] = field(default_factory=lambda: [0.42, 0.505, 0.58, 0.548])
     grid_zone: List[float] = field(default_factory=lambda: [0.0, 0.52, 1.0, 0.88])
     cell_aspect: float = 0.885        # cell height / width (fixed camera perspective)
+    pitch_harmonic_ratio: float = 0.8   # a peak at 1/2 or 1/3 of the best this strong = the pitch
     cell_shift_up: float = 0.1        # objects are drawn overhanging into the row above
     unlock_trust_s: float = 10.0      # after a key lock opens, its cells follow the path rule alone
     cell_inset: float = 0.125         # crop inset per side, share of the cell size
@@ -88,7 +89,8 @@ class VisionConfig:
     counter_search: float = 0.02      # share of height the k/5 search extends the counter zone
     disc_min_dist: float = 20.0       # face-down tower: LAB distance disc vs the ring around it
     unknown_sand_min: float = 0.03    # share of the picture for an unknown sand colour
-    icon_threshold: float = 0.75      # lock / key icon template match (other cells <= 0.62)
+    icon_threshold: float = 0.75      # lock / key icon template match (other cells <= 0.65)
+    icon_inset: float = 0.05             # icon crop = the cell's own rect minus this per side
     chest_tol: float = 12.0           # LAB distance to palette ui "chest_wood"
     chest_min_wood: float = 0.2       # chest: wood share (L186 chests 0.33, others <= 0.06)
     mystery_tol: float = 10.0         # LAB distance to palette ui "mystery_grey"
