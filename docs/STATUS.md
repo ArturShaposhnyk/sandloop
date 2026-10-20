@@ -20,7 +20,7 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | run 171133: sand read to the picture's bottom edge, key-colour reserve, plans ranked by dead buckets, ad skip | `6198f3b` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 731 pass.
+Tests: `python -m pytest -q` - all 735 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-20)
@@ -47,6 +47,21 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
 - Untracked `dataset/unknown/`, `dataset/unknown_colours/`: unlabeled crops from runs, kept out
   of git on purpose (never committed this session).
 
+- **L187 run `20261020-224631`** (`--levels 3`, `d1cd250`): lost once more in the endgame (27
+  taps, 6th attempt), then the revive -> "give up" -> Try Again flow worked, the Kingshot ad
+  was skipped (▶|) and its App Store sheet closed (✕), but its end card (small white ✕ on a
+  yellow disc top right, 0.017 x the screen width) was never found: 100 s "unknown screen"
+  until the user quit. **Fixed**: `adclose.find_skip` also accepts a ✕ on such a disc
+  (`CloseMark.kind`, logged "ad ✕ on a disc"). **Fixed**: "iPhone Mirroring is not frontmost
+  2.0s after activating it" before every tap from 138 s on (+2.6 s per tap) while every tap
+  worked: `NSWorkspace.frontmostApplication()` is stale without a run loop (verified: it kept
+  saying "Code" after Finder was activated); `actions.frontmost_pid` now pumps the run loop.
+  **Endgame (open, question to the user)**: the last-slot gamble (#27) took purple r5c6
+  (exposed 22 %, sand left 1.95 % < one bucket 3.67 %: could never fill) over yellow r2c2
+  (avail 22.9 % < 25 %, yellow 30 % of the contact layer, ~1.6 buckets of sand: would fill
+  and free the slot), because the gamble ranks only by "uncovers for the belt". Proposed:
+  a gamble move that can fill itself ranks first. Also #24 the plan tapped the
+  orange/darkgreen tower that the rules rejected (avail -5 %); orange stalled at 36 % / 26 %.
 - **L187 run `20261020-171133`** (`--levels 3`, `d130e6d`): lost twice in the endgame, then an
   ad stopped the session. Endgame: belt full of buckets at 96-99 % while darkred r3c2 (tappable:
   r3c3 is empty, so not 2 slots away) was rejected "not enough sand (0.0 %)". **Root cause of the
@@ -257,6 +272,10 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L187 live run 20261020-224631 (2026-10-20): endgame lost, ad end card ✕ missed
+- See "Where it stands". Tests: `tests/test_run_20261020_224631.py` (frames 00427 end card,
+  00313 App Store sheet).
 
 ## L187 live run 20261020-171133 (2026-10-20): endgame lost twice, ad stop
 - 54 taps over 2 attempts; both ended 5/5 with buckets at 96-99 %, contact layer darkred 54 % /

@@ -7,7 +7,7 @@ GAME_RULES.md "Bot behaviour outside gameplay" as data (``plan``):
     revive          Quit, else the popup's red ✕ (never Keep Playing: coins)
     fail            Try Again
     ad              "Take a break!" -> wait; else the generic ✕ (adclose.py) once it shows,
-                    else an ad's skip button (▶|, adclose.find_skip); never Download / install
+                    else an ad's disc button (▶| skip / small ✕, adclose.find_skip); never Download / install
     other           wait (maybe an ad: ✕ / skip too, within flow.ad_context_s of an ad or
                     flow.ad_after_tap_s of a screen tap - run 171133: ads without any anchor
                     after Try Again)
@@ -81,8 +81,8 @@ def plan(res: ScreenResult, img: np.ndarray, lives: Optional[int], fc: FlowConfi
             break
         if act is None:
             for mark in find_skip(img, fc):
-                act = ScreenAction("tap", s, f"ad skip {mark.score:.2f}", AD_SKIP,
-                                   mark.center_rel, mark.score)
+                act = ScreenAction("tap", s, f"ad {'skip' if mark.kind == 'skip' else '✕ on a disc'}"
+                                   f" {mark.score:.2f}", AD_SKIP, mark.center_rel, mark.score)
                 break
     if act is None:
         return ScreenAction("wait", s, "unknown screen" if s == "other" else

@@ -82,8 +82,13 @@ def make_clicker(cfg: Config, backend: Optional[str] = None) -> Clicker:
 def frontmost_pid() -> Optional[int]:
     try:
         from AppKit import NSWorkspace
+        from Foundation import NSDate, NSRunLoop
     except ImportError:
         return None
+    # NSWorkspace only learns about app switches from notifications on the run loop; without a
+    # run loop the answer stays stale (run 224631: "not frontmost" before every tap from 138 s
+    # on while every tap worked)
+    NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.01))
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
     return int(app.processIdentifier()) if app is not None else None
 

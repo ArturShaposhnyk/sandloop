@@ -8,7 +8,8 @@ arms (corners), a filled centre and empty edge midpoints. Dataset: the App Store
 0.75, popup ✕s 0.76-0.86; the mute icon's small "x" is below the size limit; no hit on
 gameplay / menu / win screens. Only flow.py calls it, and only on ad screens.
 
-``find_skip``: the skip button of some ads (▶| on a filled disc, top right; run 171133).
+``find_skip``: the button on a filled disc, top right, of some ads: ▶| skip (run 171133) or a
+✕ too small for ``find_close`` (Kingshot end card, run 224631: 0.017 x the screen width).
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ class CloseMark:
     score: float                               # overlap with a drawn X
     center_rel: Tuple[float, float]
     size_rel: float                            # glyph width, share of the screen width
+    kind: str = "close"                        # "close" (✕) | "skip" (▶|)
 
 
 def _x_mask(w: int, h: int, thickness: float) -> np.ndarray:
@@ -109,7 +111,8 @@ def skip_score(glyph: np.ndarray) -> float:
 
 
 def find_skip(img: np.ndarray, fc: FlowConfig) -> List[CloseMark]:
-    """Skip buttons (▶| on a filled disc, ``flow.skip_zone``), best first."""
+    """Buttons on a filled disc in ``flow.skip_zone`` - ▶| skip or ✕ (``close_min_iou``), best
+    first."""
     import cv2
 
     H, W = img.shape[:2]
@@ -131,8 +134,12 @@ def find_skip(img: np.ndarray, fc: FlowConfig) -> List[CloseMark]:
         ys, xs = np.nonzero(light)
         if len(ys) < 6:
             continue
-        score = skip_score(light[ys.min():ys.max() + 1, xs.min():xs.max() + 1])
-        if score > 0:
-            out.append(CloseMark(round(score, 3), (float((x0 + x + w / 2) / W),
-                                                   float((y0 + y + h / 2) / H)), float(w / W)))
+        glyph = light[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+        score, kind = skip_score(glyph), "skip"
+        if score == 0:
+            score, kind = x_score(glyph), "close"
+            if score < fc.close_min_iou:
+                continue
+        out.append(CloseMark(round(score, 3), (float((x0 + x + w / 2) / W),
+                                               float((y0 + y + h / 2) / H)), float(w / W), kind))
     return sorted(out, key=lambda m: -m.score)

@@ -292,7 +292,8 @@ flow:                        # flow.py: screens outside gameplay (docs/GAME_RULE
   close_max_size: 0.09
   close_min_iou: 0.5         # overlap with a drawn X (real ✕ 0.75-0.86)
   # ad skip (adclose.find_skip): ▶| on a filled disc (run 171133 Trade Republic ad: yellow, top
-  # right; its top-left twin is the mute speaker - never tapped). Never Download / install buttons.
+  # right; its top-left twin is the mute speaker - never tapped) or a small ✕ on such a disc (run
+  # 224631 Kingshot end card, too small for close_min_size). Never Download / install buttons.
   skip_zone: [0.75, 0.0, 1.0, 0.15]
   skip_min_size: 0.035
   skip_max_size: 0.09
