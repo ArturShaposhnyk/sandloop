@@ -218,8 +218,8 @@ must be extensible:
 - Home map: tap **PLAY**. Popups on it (shop offers, passes, events): close with the red **✕**
   only (it wins over PLAY when both are seen).
 - Revive ("OUT OF SLOT" / "Keep Playing"): always press **Quit** (never spend coins); when Quit
-  is not visible, the popup's red ✕ (shot 038; assumed to decline like Quit - to be confirmed
-  by the user). Then **Try Again** on LEVEL
+  is not visible, the popup's red ✕ (shot 038): it does the same as Quit, LEVEL FAILED
+  follows (user, 2026-10-20). Then **Try Again** on LEVEL
   FAILED. A revive / fail screen = the level is lost (counted once).
 - Ads / popups: only tap ✕, and wait for it to appear. Never tap "Get App", purchases or
   "Activate". If an App Store sheet opens, close it (its ✕). "Take a break!" = wait.

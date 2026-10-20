@@ -20,7 +20,8 @@ depends on machine load (052 used to fail under load).
 
 ## Phase 6 — level after level (2026-10-19) — done offline, awaiting the user's live check
 - Screens: win -> **NEXT** (template `next`; `watch_ad` is forbidden), menu -> red ✕ of a popup
-  else **PLAY**, revive -> **Quit** else the popup's red ✕ (038; assumption, ask the user),
+  else **PLAY**, revive -> **Quit** else the popup's red ✕ (038; same as Quit -> LEVEL FAILED,
+  user-confirmed 2026-10-20),
   fail -> **Try Again**, ads -> "Take a break" wait / generic ✕ (`adclose.py`, X-shaped glyph
   in corner zones; 018's App Store ✕ found, no hits on gameplay / menu / win shots), unknown ->
   wait (✕ search too within `flow.ad_context_s` after an ad). `screens.FORBIDDEN`: no tap inside
@@ -131,8 +132,6 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 ## Open questions / known gaps
-- **Revive ✕**: when Quit is not visible the bot taps the OUT OF SLOT popup's red ✕ (038),
-  assumed to decline without coins. Ask the user.
 - **Shot 010, cell r4c4 (0-based)**: blue bucket looks face-down although the path rule says
   playable. Asked the user whether flips are delayed or the rule has a nuance. Bot doesn't tap it.
 - Popup ✕ template threshold is tight (real 0.96–1.00 vs false up to 0.93).
