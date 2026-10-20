@@ -49,8 +49,13 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   cream left anyway. At #27 (1 free) yellow was a key (22.9 %) and the reserve did keep the last
   slot, but the last-slot minimum (25 %) rejected yellow itself. Fixed: a key colour's own
   bucket takes the last slot at `key_min_exposed` (20 %). At #27 the lookahead then still
-  calls the belt jammed (yellow 3.82 % left < a 4.07 % bucket at `look_sand_margin` 1.0);
-  at 0.9 the bot taps yellow. Lookahead-jam moves now count for the last-slot gamble too.
+  calls the belt jammed (yellow 3.82 % left < a 4.07 % bucket at `look_sand_margin` 1.0).
+  **Margins stay 1.0** (user, 2026-10-21, after the evidence): 0.9 was proposed because sand
+  reads ran low, but run 171133 #54 tapped yellow with 3.88 % left vs a 4.06 % bucket (95.5 %)
+  and that bucket ended at exactly 95 % - the read was right; the darkred / cream under-reads
+  were the cut picture edge (fixed in `6198f3b`). At 0.9 the bot repeats that tap (171133
+  regression test). `sufficiency_margin` (0.5) untouched. tap_s not scaled at 2x (user
+  agreed). Lookahead-jam moves now count for the last-slot gamble too.
 ### Handoff summary (before /clear, `d1cd250`)
 - **Planner** (`levelplan.py`, `sim.py`, `planner:` in config.yaml): beam search over tap / wait
   sequences at level start and on every unmatched board; ranked win > fewer dead belt buckets >
@@ -216,8 +221,7 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
 0. Live L187 `--levels 3` with the run-224631 fixes (ad end card ✕, frontmost check, gamble /
    plan / tower sand rules) and 2x: check "belt speed 2x: on" after the SPEED TAP on every
    level start and Try Again; then `python -m tools.belt_speed debug/runs/<new run>` (2x
-   samples) and set `planner.speed_x2_fill_*`. Open: `look_sand_margin` / `gamble_fill_margin`
-   1.0 vs 0.9 (#27 yellow). Watch for "skipped: ... re-planning without it", "tower: ... cannot
+   samples) and set `planner.speed_x2_fill_*`. Watch for "skipped: ... re-planning without it", "tower: ... cannot
    fill", "last-slot gamble: ... fills itself / opens ...", and whether the Kingshot-style end
    card is closed ("ad ✕ on a disc"). Open: `gamble_fill_margin` 1.0 vs 0.9 (#27 yellow).
 1. Live L187 `--levels 3` (sand to the bottom edge changes every sand share: watch "not enough
