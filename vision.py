@@ -281,16 +281,19 @@ class GameView:
     hints: List[Tuple[int, int, int, int]] = field(default_factory=list)  # hint arrow boxes
     colour_notes: List[str] = field(default_factory=list)   # close colour calls (debug)
     unlocked: Set[Tuple[int, int]] = field(default_factory=set)  # key lock just opened
+    unsure: Set[Tuple[int, int]] = field(default_factory=set)    # ... colour not sure yet
 
     def labels(self) -> List[str]:
         return [" ".join("x" if c is None else c.label() for c in row) for row in self.grid]
 
     def tappable(self) -> List[Tuple[int, int]]:
         """Buckets that are playable by the path rule AND look face-up (both must agree; in a
-        cell whose key lock just opened the padlock animation hides the face: path rule alone)."""
+        cell whose key lock just opened the padlock animation hides the face: path rule alone,
+        but only with a confident colour - ``unsure`` cells wait, vision.unlock_unsure)."""
         return [(r, c) for r, row in enumerate(self.grid) for c, cell in enumerate(row)
                 if cell is not None and cell.kind is Kind.BUCKET and self.playable[r][c]
-                and (cell.face_up or (r, c) in self.unlocked) and not cell.occluded]
+                and (cell.face_up or (r, c) in self.unlocked) and not cell.occluded
+                and (r, c) not in self.unsure]
 
     def cell_center_rel(self, r: int, c: int) -> Tuple[float, float]:
         x0, y0, x1, y1 = self.lattice.rect(r, c)
@@ -382,6 +385,14 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
         memory.store(lat, grid)
     playable = path_playable(grid, lat.exits())
     unlocked = unlocks.update(lat, grid, now) if unlocks is not None else set()
+    unsure = set()
+    for r, c in sorted(unlocked):
+        why = unlock_unsure(grid[r][c], unlocks.lock_colour.get((r, c)),
+                            now - unlocks.opened_at((r, c)), palette, v)
+        if why is not None:
+            unsure.add((r, c))
+            log(f"r{r}c{c} just unlocked, colour not sure yet: {why} - waiting up to "
+                f"{v.unlock_wait_s:.0f}s for the padlock to go")
     disagree = []
     for r, row in enumerate(grid):
         for c, cell in enumerate(row):
@@ -404,7 +415,25 @@ def read_gameplay(img: np.ndarray, palette: Palette, v: VisionConfig,
             f"python -m tools.add_colour)")
     return GameView(lat, grid, regions, playable, disagree, k, slots, sand, exposed, lower,
                     (img.shape[1], img.shape[0]), unknown, [b for b, _ in arrows],
-                    colour_notes(grid, palette, v), unlocked)
+                    colour_notes(grid, palette, v), unlocked, unsure)
+
+
+def unlock_unsure(cell: Cell, lock_colour: Optional[str], age: float, palette: Palette,
+                  v: VisionConfig) -> Optional[str]:
+    """Why the colour read in a cell whose key lock opened ``age`` s ago may not be the bucket's
+    yet (the padlock still fades out over it: run 20261017 00285 read the yellow padlock), or
+    None when it can be tapped now. User rule (2026-10-20): tap at once only with a confident
+    colour, else wait until the padlock is gone (``unlock_wait_s``, then the reading counts)."""
+    if cell is None or cell.kind is not Kind.BUCKET or age >= v.unlock_wait_s:
+        return None
+    if lock_colour is not None and cell.color == lock_colour:
+        return f"reads {cell.color} = the lock's colour (padlock?)"
+    if cell.seen_lab is None:
+        return "no colour reading"
+    (d1, best), (d2, _) = colour_distances(cell.seen_lab, palette)[:2]
+    if d1 > v.unlock_confident_dist or d2 - d1 < v.unlock_confident_margin:
+        return f"{best} not clear (dist {d1:.1f}, runner-up +{d2 - d1:.1f})"
+    return None
 
 
 def colour_notes(grid: Grid, palette: Palette, v: VisionConfig) -> List[str]:

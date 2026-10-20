@@ -1,22 +1,132 @@
 # Sand Loop bot — status / handoff
 
 Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and `PROMPT.md`
-(full brief and phase plan). Work phase by phase; after each phase stop and wait for the user's OK.
+(full brief and phase plan). Work phase by phase; after each phase stop and wait for the user's
+OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 
-## Done
-| Phase | What | Commit |
+## Done (phases 0-6)
+| Phase | What | Commits |
 |---|---|---|
 | 0 | setup, config, permission check | `3b5b8f7` |
 | 1 | capture (window + screen rect, hover chrome handled), taps, overlay | `3b5b8f7`, `ba16f6d`, `9cf1d40` |
-| 2 | `tools/collect.py`, 32 labeled screenshots in `dataset/screens/` (`LABELS.md`) | `385c523`, `015ab26` |
-| 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py`, `tools/show_annotations.py` | `5d8dd41` |
-| 4 | `state.py`, `strategy.py` (greedy), `tools/overlay.py --dry-run`, `config.yaml` `strategy:` | `6ff1c26`, `9f2b4e7`, `774d07e`, + misread safeguards |
-| 5 | `bot.py` plays one level with real taps; **won L186 live by itself** (run 20261019-171033, 21 taps, 118 s) | `4b1883a`, `4f297f2`, `00daa0e` |
-| 6 | non-gameplay screens (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `bot.py --levels N`; offline only, **not live-tested** | (uncommitted) |
+| 2 | `tools/collect.py`, labeled screenshots in `dataset/screens/` (`LABELS.md`) | `385c523`, `015ab26` |
+| 3 | `screens.py`, `vision.py`, `cells.py`, `palette.py`, `digits.py`, `tools/build_palette.py` | `5d8dd41` |
+| 4 | `state.py`, `strategy.py` (greedy + path planning), `tools/overlay.py --dry-run` | `6ff1c26`, `9f2b4e7`, `774d07e`, ... |
+| 5 | `bot.py` plays a level with real taps | `4b1883a`, `4f297f2`, `00daa0e` |
+| 6 | screens outside gameplay (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `--levels N`, session limits | `a07c297`, `c1b1423` |
+| fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule (this commit) | |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: see the last commit; the shared test
-Analyzers use a frozen fake clock (`Analyzer(cfg, clock=...)`), so belt stall timing never
-depends on machine load (052 used to fail under load).
+Tests: `python -m pytest -q` - all pass except 1 documented strict xfail (open tower, below).
+The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
+
+## Where it stands (2026-10-20)
+- **Live wins: L186** by itself (run `20261019-171033`, 21 taps, 118 s). **L187 (HARD)**: one
+  live run (`20261020-122638`) got STUCK at 3/5 on a lattice misread - fixed offline (below),
+  not live-tested again yet. No full L187 win yet.
+- **Phase 6 is not exercised live yet**: the only `--levels` run so far was L187 with
+  `--levels 1` (stopped by the stuck lattice / window loss), so no NEXT / PLAY / Quit /
+  Try Again / ad ✕ tap has happened live. Revive popup ✕ = Quit (user-confirmed).
+- **L187 grid fix**: lane walls every two columns made 2x the cell pitch win the column
+  autocorrelation, and as the lanes emptied the bot switched to 4x4 mid-level (fake towers,
+  phantom colour LAB 74/19/0, STUCK). Now: walls must sit on cell boundaries
+  (`vision.pitch_wall_align`), `LatticeLock` refuses the same outline with another cell size,
+  and a cell with background between two objects is UNKNOWN (`vision.split_bg_max`).
+- **L187 colours / icons**: yellow + purple (sand via `tools.add_colour` ->
+  `dataset/extra_colours.json`, buckets from annotated shot 064); blue locks / keys; icons are
+  matched on the cell's own rect (`vision.icon_crop`).
+- **Unlock rule (user, 2026-10-20, this commit)**: a bucket under a just-opened lock is tapped
+  at once only with a confident colour (not the lock's colour, nearest <=
+  `vision.unlock_confident_dist`, runner-up >= `unlock_confident_margin` further); else it
+  waits until the padlock is gone (`vision.unlock_wait_s` 2 s). `vision.unlock_unsure`,
+  `GameView.unsure`, logged as "just unlocked, colour not sure yet". The old frames read the
+  padlock's colour (00285 "orange" was only luck before yellow existed).
+
+## NEXT
+1. Live: `python -m bot --levels 1` on L187 - expect no `lattice: new grid geometry` /
+   `same outline` lines; then `--levels 2`-`3` to exercise phase 6 (watch it).
+2. Answers on phase-5 issues A / B, then fixes A-D (see "Phase 5 state" below).
+3. Separate fix later (user): the open-tower gap.
+
+## Open gaps / questions
+- **Open tower in a tall lane** (strict xfail `test_open_tower_keeps_its_lower_stage`): L187
+  r1c0 orange-on-cream reads `orange-up`, the cream stage is drawn below the bucket crop. The
+  belt reader sees the stage once it is on the belt; the lookahead under-counts it.
+- **Two touching buckets in one cell** score ~0.1 on the split check (not caught); only the
+  lattice checks prevent such cells.
+- **Chest-opening flash now reads yellow** (was an unknown colour, LAB ~98/-18/68: 11-15 from
+  palette yellow). Seen only inside the chest-settle window (no decisions for
+  `strategy.chest_settle_s` after a chest opens; the flash lasted <= ~1 s) - watch it on a
+  level with chests AND yellow sand.
+- Yellow / purple: only face-down looks learned (no open bucket of them seen yet).
+- Phase 6 not covered by shots: lives 0, a real ad ✕ in a corner (only the App Store sheet's),
+  "no lives" popups, ad end cards outside `flow.close_zones`.
+- A window dragged partly off-screen can still give full-size frames with shifted content
+  (run 122638 frame 00058); the bot ended on "window lost" there.
+- Phase-5 issues A-D (exposure-0 opener, negative-score bursts, false no-effect, chest flash
+  logging) - waiting for the user's answers on A / B.
+- Older questions: shot 010 r4c4 face-down although playable; shot 035 buckets face-up although
+  closed; what is under ice; L186 chest landing cells; popup ✕ threshold tight (0.96 vs 0.93);
+  screen classification ~0.7 s/frame.
+
+## Key commands
+```bash
+cd ~/Documents/GitHub/sandloop && source .venv/bin/activate
+python -m permissions                    # Screen Recording / Accessibility / Input Monitoring
+python -m capture list                   # on-screen windows (find "iPhone Mirroring")
+python -m capture info                   # window + detected screen rect + scale
+python -m tools.overlay --window         # live view, rel coords under cursor (q/Esc, s = save)
+python -m actions tap 0.5 0.8 --dry-run  # tap a relative point (drop --dry-run for a real tap)
+python -m tools.collect --max 40         # screenshots -> dataset/screens (ctrl+alt+s snap, ctrl+alt+q quit)
+python -m tools.build_palette            # rebuild palette.json, digits.npz, templates/ from annotations.json
+python -m tools.show_annotations         # draw annotated grids -> debug/annotations/
+python -m vision dataset/screens/*-043-auto.png   # read a gameplay frame -> debug/vision-*.png
+python -m screens dataset/screens/*.png  # classify screen types
+python -m strategy dataset/screens/*.png # greedy decision per shot -> debug/strategy-*.png
+python -m tools.overlay --dry-run        # live: detections + chosen move, never clicks
+python -m bot --dry-run                  # phase 5 loop, logs to debug/runs/, never clicks
+python -m bot --max-taps 3               # real taps, stop after 3
+python -m bot --levels 3                 # phase 6: 3 levels in a row (NEXT / PLAY / Quit / Try Again / ad ✕)
+python -m tools.analyze_run              # post-mortem of the latest run
+python -m pytest -q                      # all tests, no live game needed
+```
+Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner = failsafe stop.
+
+## Known decisions
+- Playability = **path rule** via BFS (`cells.path_playable`): a bucket is playable iff a
+  4-neighbour path of empty cells connects it to the exit (front row at the conveyor side).
+- **Tap only when BFS and the visual face-up state agree**; otherwise log a warning, don't tap
+  (`GameView.tappable()`).
+- Every cell: empty / bucket / known lock / UNKNOWN. UNKNOWN is never tapped; frame + crop go to
+  `dataset/unknown/` (`vision.save_unknown`). Lock types are data-driven (`cells.CELL_LOCKS`,
+  region detectors such as `vision.find_curtains`).
+- **Towers**: tapping sends the whole tower to the belt (cell empty at once, one belt slot); its
+  stages collect in order on the belt (next stage starts when the current one is 100%).
+- **Curtains**: size varies, detected from the gold frame; buckets underneath (colours unknown
+  until it opens), then regular buckets under the path rule. Opens after N buckets reach 100%.
+- **Ice N**: opens after N more buckets are tapped.
+- Outside gameplay: **revive → Quit**, then **Try Again** on LEVEL FAILED; **ads/popups → only ✕**
+  (wait for it; never Get App / purchases / Activate; close App Store sheets); **no boosters**;
+  **stop at 0 lives**.
+- No hardcoded RGB: colours come from `dataset/palette.json`; tunables live in `config.yaml`.
+  The k/5 counter is authoritative for conveyor fullness (edge slots may be `uncertain`).
+- **Key locks**: buckets under a lock are playable as soon as it opens; for
+  `vision.unlock_trust_s` the path rule alone decides there (padlock animation reads face-down);
+  tapped at once only with a confident colour, else after `vision.unlock_wait_s`.
+- **Stalled colour** = lost slot: rejected while another belt bucket collects, else a penalised
+  last resort (`weight_stalled_colour`; path steps cost `path_cost_stalled`).
+- **Chests / mystery / walls** (L186): `chestN` and `mystery` are single-cell locks
+  (`cells.CELL_LOCKS`, palette ui `chest_wood` / `mystery_grey`); walls are `x`. Opening a chest
+  is priced by `planner.scatter_risk`; after one opens the Analyzer waits `chest_settle_s` and
+  re-reads the whole grid.
+- **Grid geometry** is fixed per level (`hints.LatticeLock`, enabled by
+  `Analyzer.reset_level()` in bot.py / overlay; off for unrelated screenshots). The column
+  pitch must fit the walls inside the grid; the same outline with another cell size is refused.
+- Outside gameplay: `flow.py` picks the only allowed button (NEXT / PLAY / Quit / Try Again /
+  ✕); never inside Keep Playing / Watch Ad / Get App / App Store boxes; every tap logged.
+- Frame -> decision lives in `analyzer.py` (Analysis, Analyzer, DecisionGate); `strategy.py`
+  is the greedy choice only.
+
+# History (newest first)
 
 ## L187 live run 20261020-122638 (2026-10-20): STUCK at 3/5 — fixed, awaiting live check
 - Started right (7x7), 10 good taps; at 29 s the lattice turned 4x4 and LatticeLock took it
@@ -63,9 +173,9 @@ depends on machine load (052 used to fail under load).
 - **Open question (found through yellow)**: right after a key opens a lock, the cell still shows
   the padlock body (run 20261017 frames 00285 r2c1, 00304 r3c5) and is read as a bucket of the
   LOCK's colour. 00285 used to read "orange" only because yellow was missing (nearest colour);
-  now it reads yellow. `test_bucket_under_an_opened_lock_is_tappable_at_once[00278...]` is a
-  strict xfail until the user decides: wait until the padlock is gone and the real bucket
-  colour shows (likely < 1-2 s), or tap at once with the colour unknown.
+  now it reads yellow. RESOLVED 2026-10-20 (user): tap at once only with a confident colour,
+  else wait until the padlock is gone (`vision.unlock_unsure`, test
+  `test_opened_lock_waits_for_a_confident_colour`; the xfail is gone).
 
 ## Phase 6 — level after level (2026-10-19) — done offline, awaiting the user's live check
 - Screens: win -> **NEXT** (template `next`; `watch_ad` is forbidden), menu -> red ✕ of a popup
@@ -125,77 +235,6 @@ depends on machine load (052 used to fail under load).
   (`hints.RecentUnlocks`); a colour stalled on the belt = lost slot (wait while the belt
   collects, else a penalised last resort; jitter-proof stall clock).
 - **NEXT**: the user's live check of phase 6; answers on A / B, then fixes A-D.
-
-## Key commands
-```bash
-cd ~/Documents/GitHub/sandloop && source .venv/bin/activate
-python -m permissions                    # Screen Recording / Accessibility / Input Monitoring
-python -m capture list                   # on-screen windows (find "iPhone Mirroring")
-python -m capture info                   # window + detected screen rect + scale
-python -m tools.overlay --window         # live view, rel coords under cursor (q/Esc, s = save)
-python -m actions tap 0.5 0.8 --dry-run  # tap a relative point (drop --dry-run for a real tap)
-python -m tools.collect --max 40         # screenshots -> dataset/screens (ctrl+alt+s snap, ctrl+alt+q quit)
-python -m tools.build_palette            # rebuild palette.json, digits.npz, templates/ from annotations.json
-python -m tools.show_annotations         # draw annotated grids -> debug/annotations/
-python -m vision dataset/screens/*-043-auto.png   # read a gameplay frame -> debug/vision-*.png
-python -m screens dataset/screens/*.png  # classify screen types
-python -m strategy dataset/screens/*.png # greedy decision per shot -> debug/strategy-*.png
-python -m tools.overlay --dry-run        # live: detections + chosen move, never clicks
-python -m bot --dry-run                  # phase 5 loop, logs to debug/runs/, never clicks
-python -m bot --max-taps 3               # real taps, stop after 3
-python -m bot --levels 3                 # phase 6: 3 levels in a row (NEXT / PLAY / Quit / Try Again / ad ✕)
-python -m tools.analyze_run              # post-mortem of the latest run
-python -m pytest -q                      # all tests, no live game needed
-```
-Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner = failsafe stop.
-
-## Known decisions
-- Playability = **path rule** via BFS (`cells.path_playable`): a bucket is playable iff a
-  4-neighbour path of empty cells connects it to the exit (front row at the conveyor side).
-- **Tap only when BFS and the visual face-up state agree**; otherwise log a warning, don't tap
-  (`GameView.tappable()`).
-- Every cell: empty / bucket / known lock / UNKNOWN. UNKNOWN is never tapped; frame + crop go to
-  `dataset/unknown/` (`vision.save_unknown`). Lock types are data-driven (`cells.CELL_LOCKS`,
-  region detectors such as `vision.find_curtains`).
-- **Towers**: tapping sends the whole tower to the belt (cell empty at once, one belt slot); its
-  stages collect in order on the belt (next stage starts when the current one is 100%).
-- **Curtains**: size varies, detected from the gold frame; buckets underneath (colours unknown
-  until it opens), then regular buckets under the path rule. Opens after N buckets reach 100%.
-- **Ice N**: opens after N more buckets are tapped.
-- Outside gameplay: **revive → Quit**, then **Try Again** on LEVEL FAILED; **ads/popups → only ✕**
-  (wait for it; never Get App / purchases / Activate; close App Store sheets); **no boosters**;
-  **stop at 0 lives**.
-- No hardcoded RGB: colours come from `dataset/palette.json`; tunables live in `config.yaml`.
-  The k/5 counter is authoritative for conveyor fullness (edge slots may be `uncertain`).
-- **Key locks**: buckets under a lock are playable as soon as it opens; for
-  `vision.unlock_trust_s` the path rule alone decides there (padlock animation reads face-down).
-- **Stalled colour** = lost slot: rejected while another belt bucket collects, else a penalised
-  last resort (`weight_stalled_colour`; path steps cost `path_cost_stalled`).
-- **Chests / mystery / walls** (L186): `chestN` and `mystery` are single-cell locks
-  (`cells.CELL_LOCKS`, palette ui `chest_wood` / `mystery_grey`); walls are `x`. Opening a chest
-  is priced by `planner.scatter_risk`; after one opens the Analyzer waits `chest_settle_s` and
-  re-reads the whole grid.
-- **Grid geometry** is fixed per level (`hints.LatticeLock`, enabled by
-  `Analyzer.reset_level()` in bot.py / overlay; off for unrelated screenshots).
-- Frame -> decision lives in `analyzer.py` (Analysis, Analyzer, DecisionGate); `strategy.py`
-  is the greedy choice only.
-
-## Open questions / known gaps
-- **Shot 010, cell r4c4 (0-based)**: blue bucket looks face-down although the path rule says
-  playable. Asked the user whether flips are delayed or the rule has a nuance. Bot doesn't tap it.
-- Popup ✕ template threshold is tight (real 0.96–1.00 vs false up to 0.93).
-- **Shot 035**: darkred r2c3, darkred r4c1, cream r4c3 look face-up although BFS says closed
-  (they were face-up in 033), and an orange bucket sits in r2c2 that was empty in 033. Do
-  buckets stay face-up once opened? Can buckets move/appear in empty cells? Asked the user.
-- **Ice**: what is under an ice block once it opens (a bucket? empty?) is unknown, so ice cells
-  are not counted as pending buckets in the capacity estimate.
-- Screen classification costs ~0.7 s per frame (template matching at 8 scales); the overlay runs
-  the analysis on a worker thread. Phase 5 may want a cheap gameplay pre-check.
-- **L186 chest**: where exactly the scattered buckets land (can one land in the chest's own
-  cell?) and how the risk weights play out live are not known yet. The chest-opening flash reads
-  as an unknown yellow (`dataset/unknown_colours/20261019-*`, untracked): not a bucket colour.
-- No frame of the actual 7-row misread was saved (the run log saves frames on decision changes
-  only); its regression uses a synthetic booster bridge on shot 058.
 
 ## Phase 4 — greedy strategy (done, awaiting OK)
 - `state.LevelState.from_view(GameView)`: grid, tappable, locks (ice / curtain regions with

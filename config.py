@@ -84,6 +84,9 @@ class VisionConfig:
     pitch_wall_align: float = 0.8      # share of inner grid walls that must sit on cell boundaries
     cell_shift_up: float = 0.1        # objects are drawn overhanging into the row above
     unlock_trust_s: float = 10.0      # after a key lock opens, its cells follow the path rule alone
+    unlock_wait_s: float = 2.0           # ... colour not confident: wait this long for the padlock
+    unlock_confident_dist: float = 12.0  # confident colour: nearest bucket colour this close
+    unlock_confident_margin: float = 8.0  # ... and the runner-up at least this much further
     cell_inset: float = 0.125         # crop inset per side, share of the cell size
     panel_tol: float = 12.0           # LAB distance to the panel background colour
     edge_margin: float = 0.03         # share of width ignored at the frame's left/right edge
@@ -322,7 +325,8 @@ def validate(cfg: Config) -> Config:
                                         for s in v.template_scales):
         raise ConfigError("vision.template_scales must be a non-empty list of numbers > 0")
     if min(v.chest_tol, v.chest_min_wood, v.mystery_tol, v.mystery_min_grey,
-           v.unlock_trust_s) < 0 or v.lattice_switch_frames < 1:
+           v.unlock_trust_s, v.unlock_wait_s, v.unlock_confident_dist,
+           v.unlock_confident_margin) < 0 or v.lattice_switch_frames < 1:
         raise ConfigError("vision chest / mystery / unlock settings must be >= 0 and "
                           "lattice_switch_frames >= 1")
     st = cfg.strategy

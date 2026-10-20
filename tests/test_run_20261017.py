@@ -7,6 +7,7 @@ Frames in tests/data/run-20261017-103804/ (raw frames the run saved):
 """
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from state import LevelState
@@ -31,38 +32,56 @@ def read(an, img, unlocks=None, now=0.0):
                          icons=an.icons, hints=an.hints, unlocks=unlocks, now=now)
 
 
-@pytest.mark.parametrize("before, after, pos, colour", [
-    # 00285 shows the yellow padlock body still fading out, not the bucket: "orange" was only the
-    # nearest colour while the palette had no yellow (L187 added it: now it reads yellow). The
-    # red case below reads the red padlock too (same colour by chance). Open question to the
-    # user: how to treat a cell that still shows the opened lock's colour (docs/STATUS.md).
-    pytest.param("00278-tap", "00285-wait", (2, 1), "orange", marks=pytest.mark.xfail(
-        strict=True, reason="padlock body read, not the bucket under it (yellow since L187)")),
+@pytest.mark.parametrize("before, after, pos, lock_colour", [
+    ("00278-tap", "00285-wait", (2, 1), "yellow"),
     ("00296-tap", "00304-tap", (3, 5), "red"),
 ])
-def test_bucket_under_an_opened_lock_is_tappable_at_once(analyzer, before, after, pos,  # noqa: F811
-                                                          colour):
-    """The user tapped both right away: buckets under an opened lock are playable at once,
-    although the padlock animation makes them read face-down. Path rule alone decides there."""
+def test_opened_lock_waits_for_a_confident_colour(analyzer, before, after, pos,  # noqa: F811
+                                                  lock_colour):
+    """Buckets under an opened lock are playable at once (user, 2026-10-19), but right after
+    opening the cell still shows the padlock fading out: both frames read the LOCK's colour
+    (00285 used to read "orange" only because yellow was missing from the palette). User rule
+    (2026-10-20): tap at once only with a confident colour, else wait until the padlock is gone
+    (vision.unlock_wait_s); the path rule alone decides the face for unlock_trust_s."""
     from cells import Kind
     from hints import RecentUnlocks
 
+    v = analyzer.cfg.vision
     img0, img1 = frame(before), frame(after)
     alone = read(analyzer, img1)
     cell = alone.grid[pos[0]][pos[1]]
-    assert cell.kind is Kind.BUCKET and cell.color == colour and not cell.face_up
+    assert cell.kind is Kind.BUCKET and cell.color == lock_colour and not cell.face_up
     assert alone.playable[pos[0]][pos[1]]
     assert pos not in alone.tappable() and pos in alone.disagreements   # without the history
 
-    unlocks = RecentUnlocks(trust_s=10.0)
+    unlocks = RecentUnlocks(trust_s=v.unlock_trust_s)
     gv0 = read(analyzer, img0, unlocks, now=0.0)
     lock = gv0.grid[pos[0]][pos[1]]
-    assert lock.kind is Kind.LOCK and lock.unlock == "key"
-    gv1 = read(analyzer, img1, unlocks, now=4.0)
-    assert pos in gv1.unlocked and pos in gv1.tappable() and pos not in gv1.disagreements
+    assert lock.kind is Kind.LOCK and lock.unlock == "key" and lock.color == lock_colour
+    gv1 = read(analyzer, img1, unlocks, now=4.0)        # opens here: reads the padlock's colour
+    assert pos in gv1.unlocked and pos in gv1.unsure and pos not in gv1.tappable()
+    assert pos not in gv1.disagreements
+    t = 4.0 + v.unlock_wait_s + 0.1                     # padlock gone: the reading counts
+    gv2 = read(analyzer, img1, unlocks, now=t)
+    assert pos in gv2.unlocked and pos not in gv2.unsure and pos in gv2.tappable()
 
     late = read(analyzer, img1, unlocks, now=20.0)   # after trust_s: the face reading counts again
     assert pos not in late.unlocked and pos not in late.tappable()
+
+
+def test_unlock_unsure_rules(analyzer):  # noqa: F811
+    from cells import Cell, Kind
+    from vision import unlock_unsure
+
+    pal, v = analyzer.palette, analyzer.cfg.vision
+    orange = tuple(pal.buckets["orange"][0])
+    clear = Cell(2, 1, Kind.BUCKET, color="orange", face_up=False, seen_lab=orange)
+    assert unlock_unsure(clear, "yellow", 0.1, pal, v) is None          # confident: tap at once
+    assert "lock's colour" in unlock_unsure(clear, "orange", 0.1, pal, v)
+    assert unlock_unsure(clear, "orange", v.unlock_wait_s, pal, v) is None   # waited long enough
+    blurred = Cell(2, 1, Kind.BUCKET, color="orange", face_up=False,
+                   seen_lab=tuple(np.add(orange, (0.0, 0.0, 15.0))))
+    assert "not clear" in unlock_unsure(blurred, "yellow", 0.1, pal, v)
 
 
 def end_state(an, stalled):

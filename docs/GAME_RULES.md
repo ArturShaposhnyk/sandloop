@@ -29,6 +29,11 @@
     2026-10-19; run 20261017-103804 r2c1, r3c5). They read face-down meanwhile, so for
     `vision.unlock_trust_s` after a key lock cell reads as a bucket / empty, the path rule
     alone decides there (`hints.RecentUnlocks`).
+  - Bot rule (user, 2026-10-20): tap such a bucket at once **only if its colour is read
+    confidently** - not the lock's own colour (the fading padlock reads as a bucket of the
+    lock's colour), nearest colour within `vision.unlock_confident_dist` and the runner-up at
+    least `vision.unlock_confident_margin` further. Otherwise wait until the padlock is gone
+    (`vision.unlock_wait_s`, ~2 s), then the reading counts (`vision.unlock_unsure`).
   - After the key flies, its cell is **empty** (confirmed).
   - Several locks of the same colour: not seen yet (open question). Until then the bot credits
     no unlock when a key's colour has several separate locks.

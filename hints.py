@@ -207,13 +207,19 @@ class RecentUnlocks:
     """Cells whose key lock opened in the last ``trust_s`` seconds. The buckets under a lock are
     playable at once (GAME_RULES "Locks and keys"), but the padlock animation still covers them
     and they read face-down: for these cells the path rule alone decides. A lock cell counts as
-    opened once it reads as a bucket or empty; same lattice rule as CellMemory."""
+    opened once it reads as a bucket or empty; same lattice rule as CellMemory. ``opened_at`` /
+    ``lock_colour`` tell vision.unlock_unsure whether the colour read there may still be the
+    fading padlock (user, 2026-10-20: tap at once only with a confident colour)."""
 
     def __init__(self, trust_s: float = 10.0) -> None:
         self.trust_s = trust_s
         self._key: Optional[Tuple[int, int, int, int]] = None
-        self._locked: set = set()
+        self._locked: Dict[Tuple[int, int], Optional[str]] = {}   # lock cell -> its colour
         self._opened: Dict[Tuple[int, int], float] = {}
+        self.lock_colour: Dict[Tuple[int, int], Optional[str]] = {}
+
+    def opened_at(self, pos: Tuple[int, int]) -> Optional[float]:
+        return self._opened.get(pos)
 
     def update(self, lat, grid, now: float) -> set:
         """Feed one frame's grid; returns the cells unlocked within ``trust_s``."""
@@ -221,19 +227,20 @@ class RecentUnlocks:
 
         k = CellMemory.key(lat)
         if k != self._key:
-            self._key, self._locked, self._opened = k, set(), {}
+            self._key, self._locked, self._opened, self.lock_colour = k, {}, {}, {}
         for row in grid:
             for cell in row:
                 if cell is None or cell.occluded:
                     continue
                 pos = (cell.row, cell.col)
                 if cell.kind is Kind.LOCK and cell.unlock == "key":
-                    self._locked.add(pos)
+                    self._locked[pos] = cell.color
                     self._opened.pop(pos, None)
                 elif pos in self._locked and cell.kind in (Kind.BUCKET, Kind.EMPTY):
-                    self._locked.discard(pos)
+                    self.lock_colour[pos] = self._locked.pop(pos)
                     self._opened[pos] = now
         self._opened = {p: t for p, t in self._opened.items() if now - t <= self.trust_s}
+        self.lock_colour = {p: c for p, c in self.lock_colour.items() if p in self._opened}
         return set(self._opened)
 
 
