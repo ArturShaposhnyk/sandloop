@@ -225,6 +225,8 @@
   `vision.picture` zone, and the colours that settle at the bottom (darkred, cream) were cut off
   (L187 end: darkred 0.17 % in the zone, 1.3 % down to the edge). Sand is now read down to the
   picture's real bottom edge, and colours down to `vision.sand_min_share` (0.05 %) are reported.
+- "Sand left" of a colour counts all its sand in the picture, buried included (user, run
+  20261020-171133): buckets at 96-99 % with "0 % left" was a misread, the rest was buried.
 
 ## Lookahead (phase 7, `lookahead.py`; weights in `config.yaml` `strategy:`)
 - Before each tap the bot simulates up to `look_depth` (3) taps: the candidate, then the
@@ -331,6 +333,9 @@ must be extensible:
 - Ads / popups: only tap ✕, and wait for it to appear. Never tap "Get App", purchases or
   "Activate". If an App Store sheet opens, close it (its ✕). "Take a break!" = wait.
   Ads are recognised by their anchors or the iOS status bar (the game hides it).
+- iPhone Mirroring window (user, run 20261020-161536): activate it before the first tap (the
+  first click must not be spent on focusing); if it disappears, wait up to ~30 s
+  (`bot.window_lost_max_s`) for it to come back before stopping.
 - Ads may have no known anchor at all (run 20261020-171133 after Try Again: Trade Republic
   "6 %" with a yellow "Download" button and two small yellow discs top left (mute) / top right
   (▶| skip); Netflix). An unknown screen within `flow.ad_after_tap_s` of a screen tap is

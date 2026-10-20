@@ -24,6 +24,29 @@ Tests: `python -m pytest -q` - all 731 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-20)
+### Handoff summary (before /clear, `d1cd250`)
+- **Planner** (`levelplan.py`, `sim.py`, `planner:` in config.yaml): beam search over tap / wait
+  sequences at level start and on every unmatched board; ranked win > fewer dead belt buckets >
+  sand collected; full belts of dead buckets dropped; unread belt buckets keep their slots; a
+  step that breaks the endgame / key reserve is not tapped; waits give up after 5 s without
+  sand gain or 5 s behind plan -> re-plan, else the greedy strategy. Plan checks (predicted vs
+  real belt) go to bot.log and `levels.jsonl`. Hidden colours end the plan ("horizon").
+- **Level memory** (`debug/levels.jsonl`): Try Again = same board signature; failed sequences
+  are banned, per-colour capacity corrected from what the attempts used.
+- **Belt speed model**: fill %/s = `fill_rate` 100 x (contact share - `fill_min_exposed` 0.08),
+  capped at `fill_max` 30; `tap_s` 4.2. Fitted on runs 142035 / 145310 / 161536 with sand cut at
+  the zone bottom - **re-fit after the next run** (sand is now read to the picture edge).
+- **Ads**: known anchors -> ✕; anchorless screen within 120 s of a screen tap -> ✕ or the ▶|
+  skip disc top right (user-confirmed for Trade Republic); never Download; wait 3 min, frame
+  every 10 s.
+- **Open on L187**: (1) not yet checked live whether the darkred fix + key reserve win the
+  endgame; (2) the Netflix ad showed no ✕ / skip - how it ends is unknown; (3) the user's answer
+  on whether the first ad (window lost 1.2 s, then splash) closed by itself is still open, and
+  whether some ads need waiting for a ✕ / close by themselves; (4) belt fit uses old sand reads;
+  (5) a `darkgreen/cream` belt read may be wrong.
+- Untracked `dataset/unknown/`, `dataset/unknown_colours/`: unlabeled crops from runs, kept out
+  of git on purpose (never committed this session).
+
 - **L187 run `20261020-171133`** (`--levels 3`, `d130e6d`): lost twice in the endgame, then an
   ad stopped the session. Endgame: belt full of buckets at 96-99 % while darkred r3c2 (tappable:
   r3c3 is empty, so not 2 slots away) was rejected "not enough sand (0.0 %)". **Root cause of the
