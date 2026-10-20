@@ -20,7 +20,7 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | run 171133: sand read to the picture's bottom edge, key-colour reserve, plans ranked by dead buckets, ad skip | `6198f3b` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 735 pass.
+Tests: `python -m pytest -q` - all 740 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-20)
@@ -56,12 +56,18 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   2.0s after activating it" before every tap from 138 s on (+2.6 s per tap) while every tap
   worked: `NSWorkspace.frontmostApplication()` is stale without a run loop (verified: it kept
   saying "Code" after Finder was activated); `actions.frontmost_pid` now pumps the run loop.
-  **Endgame (open, question to the user)**: the last-slot gamble (#27) took purple r5c6
-  (exposed 22 %, sand left 1.95 % < one bucket 3.67 %: could never fill) over yellow r2c2
-  (avail 22.9 % < 25 %, yellow 30 % of the contact layer, ~1.6 buckets of sand: would fill
-  and free the slot), because the gamble ranks only by "uncovers for the belt". Proposed:
-  a gamble move that can fill itself ranks first. Also #24 the plan tapped the
-  orange/darkgreen tower that the rules rejected (avail -5 %); orange stalled at 36 % / 26 %.
+  **Endgame (user rules, done)**: #27 the last-slot gamble took purple r5c6 (3.2 % sand
+  left < a 3.67 % bucket) because it uncovered the most for the belt; #24 the plan tapped the
+  orange/darkgreen tower the rules rejected (avail -5 %, orange 6.6 % left < 7.1 % needed).
+  Now: (1) the gamble only takes a bucket that can fill (`endgame.can_fill`: sand left >=
+  `gamble_fill_margin` 1.0 x (belt need + 1 bucket)) or opens the path to one; fillers first,
+  "uncovers" breaks ties. (2) a plan step the sand rules reject (exposure as a path step, sand,
+  tower top) is skipped and re-planned with it forbidden on that board (`PlanRunner._skip`,
+  log "skipped: ... - re-planning without it"). (3) a tower only when its top can fill
+  (`evaluate`: "tower: X cannot fill"; never a sacrifice). Replay: #24 skipped; #27 gambles
+  nothing - at that moment yellow had 3.82 % left vs a 4.07 % bucket (my earlier "~1.6
+  buckets" was the 141 s figure); with `gamble_fill_margin` 0.9 it gambles yellow. Run
+  142035's end now gambles cream r1c6 (opens purple r3c6) instead of darkred (1.2 % left).
 - **L187 run `20261020-171133`** (`--levels 3`, `d130e6d`): lost twice in the endgame, then an
   ad stopped the session. Endgame: belt full of buckets at 96-99 % while darkred r3c2 (tappable:
   r3c3 is empty, so not 2 slots away) was rejected "not enough sand (0.0 %)". **Root cause of the
@@ -180,6 +186,10 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
+0. Live L187 `--levels 3` with the run-224631 fixes (ad end card ✕, frontmost check, gamble /
+   plan / tower sand rules). Watch for "skipped: ... re-planning without it", "tower: ... cannot
+   fill", "last-slot gamble: ... fills itself / opens ...", and whether the Kingshot-style end
+   card is closed ("ad ✕ on a disc"). Open: `gamble_fill_margin` 1.0 vs 0.9 (#27 yellow).
 1. Live L187 `--levels 3` (sand to the bottom edge changes every sand share: watch "not enough
    sand", the capacity line, and how ads end - frames every 10 s); after it `python -m tools.belt_speed`
    (adds the new run's samples if passed, and lists the plan checks) and re-tune `planner.fill_*`.
@@ -275,7 +285,8 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
 
 ## L187 live run 20261020-224631 (2026-10-20): endgame lost, ad end card ✕ missed
 - See "Where it stands". Tests: `tests/test_run_20261020_224631.py` (frames 00427 end card,
-  00313 App Store sheet).
+  00313 App Store sheet, 00228 tap #24, 00262 tap #27); gamble tests in `tests/test_lookahead.py`
+  updated to the fill rule.
 
 ## L187 live run 20261020-171133 (2026-10-20): endgame lost twice, ad stop
 - 54 taps over 2 attempts; both ended 5/5 with buckets at 96-99 %, contact layer darkred 54 % /

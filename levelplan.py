@@ -24,6 +24,10 @@ that never jams the belt:
   Every tap logs the plan's predicted belt and time next to the real ones ("plan check").
 * **Reserves first**: a step that the strategy's slot reserves reject (endgame reserve, key
   colours: endgame.py) is not tapped; the strategy decides until the board changes.
+* **No step against the sand rules** (user, run 20261020-224631: #24 the plan tapped an
+  orange/darkgreen tower at avail -5 %, orange never filled): a step the strategy rejects for
+  lack of sand (exposure as for a planned path, enough sand left, a tower whose top cannot
+  fill) is skipped - re-planned at once with that tap forbidden on this board.
 * **Level memory** (``LevelMemory``, debug/levels.jsonl): attempts of the same board (same
   start signature) that did not win ban their tap sequence; their sand use calibrates the
   bucket capacity of the simulator.
@@ -101,8 +105,10 @@ def _rank(s: Sim, total: int, pc: Any) -> Tuple[bool, int, float]:
 
 def plan_level(state: LevelState, pic: Picture, pc: Any,
                banned: Set[Tuple[Pos, ...]] = frozenset(),
-               capacity: Optional[Dict[str, int]] = None) -> Plan:
-    """Beam search from ``state`` (+ its picture); ``pc``: PlannerConfig."""
+               capacity: Optional[Dict[str, int]] = None,
+               forbid: Set[Pos] = frozenset()) -> Plan:
+    """Beam search from ``state`` (+ its picture); ``pc``: PlannerConfig. ``forbid``: taps not
+    allowed before the first tap (the live rules reject them on this board)."""
     t0 = time.monotonic()
     root = Sim.start(state, pic, sim_config(pc, state.conveyor_slots), capacity)
     root.grid.disagreements = []
@@ -112,7 +118,8 @@ def plan_level(state: LevelState, pic: Picture, pc: Any,
     for _ in range(pc.max_depth):
         children: List[Sim] = []
         for s in beam:
-            nxt = [s.tap(p) for p in s.moves() if tuple(s.taps + [p]) not in banned]
+            nxt = [s.tap(p) for p in s.moves() if tuple(s.taps + [p]) not in banned
+                   and (s.taps or p not in forbid)]
             if s.belt:
                 w = s.wait()
                 if w is not None:
@@ -248,6 +255,7 @@ class PlanRunner:
         self.at_since = 0.0                     # ... since
         self.checked: Set[int] = set()          # steps whose tap was compared with the plan
         self.given_up: Optional[Sig] = None     # board on which the strategy decides
+        self.forbid: Dict[Sig, Set[Pos]] = {}   # per board: plan taps the sand rules rejected
 
     def decide(self, img, gv, state: LevelState, fallback, now: float, log=print):
         """The decision for this frame: the plan's step, a wait for it, or ``fallback``."""
@@ -287,6 +295,9 @@ class PlanRunner:
                 f"{step.colour}) breaks a slot reserve: {reserve} - the strategy decides until "
                 "the board changes")
             return fallback
+        short = evaluate(state, step.pos, self.cfg.strategy, opener=True)
+        if short.low_exposure or short.sand_short:
+            return self._skip(img, state, board, step_i, short.rejected, fallback, now, log)
         self._check(state, step_i, now, log)
         cand = evaluate(state, step.pos, self.cfg.strategy, gamble=True)
         cand.rejected = None
@@ -294,6 +305,23 @@ class PlanRunner:
         cand.level_plan = f"{step_i + 1}/{n}"
         return Decision(cand, f"tap r{step.pos[0]}c{step.pos[1]} {step.colour} (level plan step "
                               f"{step_i + 1}/{n}, {self.plan.result})", fallback.candidates)
+
+    def _skip(self, img, state: LevelState, board: Sig, i: int, why: str, fallback, now: float,
+              log):
+        """A step the sand rules reject: forbid it on this board and re-plan at once; if the
+        new plan has no step here, the strategy decides until the board changes."""
+        step, n = self.plan.steps[i], len(self.plan.steps)
+        forbid = self.forbid.setdefault(board, set())
+        forbid.add(step.pos)
+        log(f"level plan step {i + 1}/{n} (tap r{step.pos[0]}c{step.pos[1]} {step.colour}) "
+            f"skipped: {why} - re-planning without it")
+        self._replan(img, state, now, log, "step rejected", forbid)
+        if self._step(board) is None:
+            self.given_up = board
+            log("level plan: no step on this board - the strategy decides until the board "
+                "changes")
+            return fallback
+        return self.decide(img, None, state, fallback, now, log)
 
     def _step(self, board: Sig) -> Optional[int]:
         if self.plan is None:
@@ -357,7 +385,8 @@ class PlanRunner:
              "belt": [[c, f] for c, f in real], "belt_plan": [[c, f] for c, f in step.belt],
              **({"gave_up": gave_up} if gave_up else {})})
 
-    def _replan(self, img, state: LevelState, now: float, log, why: str) -> None:
+    def _replan(self, img, state: LevelState, now: float, log, why: str,
+                forbid: Set[Pos] = frozenset()) -> None:
         mem = LevelMemory(self.memory_path) if self.memory_path else None
         banned = mem.banned(self.signature) if mem else set()
         pic = picture_from_frame(img, _palette(self.cfg), self.cfg.vision, self.pc.cell_px)
@@ -366,7 +395,8 @@ class PlanRunner:
         sand = sum(state.sand.values())
         if shares and sand > 0:   # picture share -> cells, at this frame's cells per share
             cap = {c: max(1, round(v * pic.total() / sand)) for c, v in shares.items()}
-        self.plan = plan_level(state, pic, self.pc, banned, cap)
+        self.plan = plan_level(state, pic, self.pc, banned, cap,
+                               forbid or self.forbid.get(grid_signature(state.grid), set()))
         self.last_plan_t = now
         self.at, self.checked = None, set()
         self.replans += why != "start"

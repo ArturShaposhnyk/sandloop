@@ -58,29 +58,59 @@ def uncovers_for_belt(state: LevelState, colour: str) -> float:
                if d in belt and d != colour)
 
 
+def can_fill(state: LevelState, colour: str, sc: StrategyConfig) -> bool:
+    """User (run 20261020-224631): a bucket of ``colour`` can fill when its colour's sand left
+    covers one more bucket plus what same-colour belt buckets still need
+    (``gamble_fill_margin`` x capacity; colours without a capacity count as able)."""
+    cap = state.capacity_for(colour)
+    if not cap:
+        return True
+    need = (state.conveyor_need(colour) + 1) * cap * sc.gamble_fill_margin
+    return state.sand.get(colour, 0.0) >= need
+
+
+def gamble_fill(state: LevelState, pos, colour: str, sc: StrategyConfig) -> Optional[str]:
+    """Why the bucket at ``pos`` may take the last slot: it can fill itself (a tower: its top
+    colour), or the tap opens the path to a bucket that can - else None."""
+    if can_fill(state, colour, sc):
+        return "fills itself"
+    after = state.after_tap(pos)
+    for p in state.opened_by(pos)[0]:
+        c = after.cell(p).color
+        if c and can_fill(after, c, sc):
+            return f"opens r{p[0]}c{p[1]} {c}"
+    return None
+
+
 def last_slot_gamble(state: LevelState, cands: List["Candidate"], sc: StrategyConfig
                      ) -> Optional["Candidate"]:
     """User rule (2026-10-20): the belt is stuck (no belt bucket gained sand for
     ``gamble_stuck_s``), one slot is left and every remaining move breaks the last-slot exposure
-    minimum. Waiting changes nothing, the level is lost otherwise: take the last slot with the
-    move that uncovers the most sand for the belt's colours, ties by its own exposed sand. Only
-    moves rejected for that minimum count; one short of sand is allowed too (same reasoning:
-    the level is lost otherwise), a colour stalled on the belt never (it uncovers nothing)."""
+    minimum (or the sand rule). Waiting changes nothing, the level is lost otherwise: take the
+    last slot. User (run 20261020-224631, purple at 1.95 % sand < a 3.67 % bucket took the slot
+    from yellow, which would have filled): never a bucket that cannot fill (``can_fill``) unless
+    the tap opens the path to one that can; buckets that fill themselves rank first, then the
+    sand uncovered for the belt's colours, then their own exposed sand. A colour stalled on the
+    belt never (it uncovers nothing)."""
     from strategy import _score, evaluate
 
     stuck = belt_stuck(state, sc)
     if state.free_slots != 1 or stuck is None:
         return None
     pool = []
-    for c in (c for c in cands if c.low_exposure or c.reserved):
+    for c in (c for c in cands if c.low_exposure or c.reserved or c.sand_short):
         g = evaluate(state, c.pos, sc, gamble=True)
-        if g.rejected is None and g.color not in state.belt_stalled:
-            g.gamble, g.uncovers = True, uncovers_for_belt(state, g.color)
-            pool.append(g)
+        if g.rejected is not None or g.color in state.belt_stalled:
+            continue
+        g.fills = gamble_fill(state, c.pos, g.color, sc)
+        if g.fills is None:
+            continue
+        g.gamble, g.uncovers = True, uncovers_for_belt(state, g.color)
+        pool.append(g)
     if not pool:
         return None
-    best = max(pool, key=lambda c: (round(c.uncovers, 6), round(c.exposed, 6),
-                                    -c.pos[0], -c.pos[1]))
+    best = max(pool, key=lambda c: (c.fills == "fills itself", round(c.uncovers, 6),
+                                    round(c.exposed, 6), -c.pos[0], -c.pos[1]))
     _score(state, best, sc)
     return best
 

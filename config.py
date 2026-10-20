@@ -163,6 +163,7 @@ class StrategyConfig:
     path_step_cost: float = 0.02          # plan rank = target value - this x path cost
     weight_path_bonus: float = 1.0        # bonus for the first step = this x plan rank
     gamble_stuck_s: float = 5.0           # belt stuck this long: last-slot gamble (strategy)
+    gamble_fill_margin: float = 1.0       # gamble: sand left >= this x the buckets it must fill
     look_depth: int = 3                   # lookahead: taps per continuation (0 = off)
     look_width: int = 3                   # ... follow-ups tried per step (best exposed first)
     look_min_exposed: float = 0.03        # a belt colour this exposed collects
@@ -392,8 +393,8 @@ def validate(cfg: Config) -> Config:
     st = cfg.strategy
     if st.conveyor_slots < 1 or st.confirm_frames < 1:
         raise ConfigError("strategy.conveyor_slots and confirm_frames must be >= 1")
-    if (min(st.gamble_stuck_s, st.look_min_exposed, st.look_min_gain, st.look_sand_margin,
-            st.weight_lookahead) < 0 or st.look_depth < 0 or st.look_width < 1):
+    if (min(st.gamble_stuck_s, st.gamble_fill_margin, st.look_min_exposed, st.look_min_gain,
+            st.look_sand_margin, st.weight_lookahead) < 0 or st.look_depth < 0 or st.look_width < 1):
         raise ConfigError("strategy gamble / look_* settings must be >= 0 (look_width >= 1)")
     if st.vision_fail_max_saves < 0:
         raise ConfigError("strategy.vision_fail_max_saves must be >= 0")

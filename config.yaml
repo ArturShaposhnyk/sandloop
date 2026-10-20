@@ -181,8 +181,11 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   # last-slot gamble (user, 2026-10-20): every unfinished belt bucket gained no sand for this
   # long, one slot left, every move rejected only by the last-slot minimum -> take the slot
   # with the move that uncovers the most sand for the belt (sand.contact_layers), ties by its
-  # own exposure. Logged "last-slot gamble".
+  # own exposure. Logged "last-slot gamble". User (run 224631): only a bucket that can fill
+  # (sand left >= gamble_fill_margin x (belt need + 1 bucket)) or opens the path to one; those
+  # that fill themselves rank first.
   gamble_stuck_s: 5.0
+  gamble_fill_margin: 1.0
   # phase 7 lookahead (lookahead.py): best continuation of up to look_depth taps (look_width
   # best-exposed follow-ups per step); value = (free slots + live belt buckets) / slots after it.
   # Live = sand >= look_sand_margin x need x capacity and (exposed >= look_min_exposed and not

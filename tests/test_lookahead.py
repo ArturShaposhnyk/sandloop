@@ -25,6 +25,7 @@ def stuck_state(row="darkred cream", exposed=None, stalled=STALLED, k=4):
     st = make_state([row], k=k, conveyor=STUCK_BELT, sand=dict(SAND),
                     exposed=exposed or {"darkred": .09, "cream": .06, "purple": .5})
     st.belt_stalled = dict(stalled)
+    st.colour_capacity = {c: .04 for c in SAND}             # one bucket: 4 % of the picture
     st.above = {"darkred": {"orange": .09, "blue": .04, "darkred": .02},
                 "cream": {"orange": .03, "purple": .01}}
     return st
@@ -58,19 +59,39 @@ def test_the_25_percent_rule_holds_in_normal_cases():
     assert all("25%" in c.rejected for c in d.candidates)
 
 
-def test_gamble_never_adds_a_stalled_colour_but_may_be_short_of_sand():
-    """The run's end: cream and darkred had 0.8 % sand left (< half a bucket), yellow was
-    stalled on the belt. Waiting loses the level anyway, so a short colour may go; a stalled
-    one uncovers nothing."""
+def test_gamble_never_adds_a_stalled_colour_nor_one_that_cannot_fill():
+    """Run 142035's end: yellow stalled on the belt (uncovers nothing). User (run 224631): a
+    bucket whose colour has less sand left than a bucket takes never gets the last slot."""
     st = stuck_state(row="yellow darkred")
     st.exposed = {"yellow": .2, "darkred": .09, "purple": .5}
     st.above["yellow"] = {"orange": .5}
     st.sand["darkred"] = .001                                # darkred would never fill
-    d = choose(st, SC)
-    assert d.move.gamble and d.move.color == "darkred"
+    assert choose(st, SC).move is None
     only = stuck_state(row="yellow")                         # only the stalled yellow left
     only.exposed = {"yellow": .2, "purple": .5}
     assert choose(only, SC).move is None
+
+
+def test_gamble_short_bucket_only_when_it_opens_one_that_fills():
+    st = stuck_state(row="darkred")
+    st.sand["darkred"] = .001
+    assert choose(st, SC).move is None                       # opens nothing
+    st = make_state(["darkred", "cream"], k=4, conveyor=STUCK_BELT, sand=dict(SAND),
+                    exposed={"darkred": .09, "cream": .06, "purple": .5})
+    st.belt_stalled, st.colour_capacity = dict(STALLED), {c: .04 for c in SAND}
+    st.sand["darkred"] = .001
+    d = choose(st, SC)
+    assert d.move.gamble and d.move.color == "darkred" and d.move.fills == "opens r1c0 cream"
+    assert "opens r1c0 cream" in d.reason
+
+
+def test_gamble_prefers_a_bucket_that_fills_over_more_uncovered_sand():
+    """Run 224631 #27: purple (1.95 % left, a bucket 3.67 %) uncovered more for the belt than
+    yellow, which had ~1.6 buckets of sand: yellow must win."""
+    st = stuck_state()                                       # darkred uncovers 13 %, cream 4 %
+    st.sand["darkred"] = .03                                 # < one 4 % bucket
+    d = choose(st, SC)
+    assert d.move.gamble and d.move.color == "cream" and d.move.fills == "fills itself"
 
 
 def test_gamble_needs_the_last_slot():
@@ -182,15 +203,18 @@ def run_state(analyzer, name, stalled):  # noqa: F811
     return LevelState.from_view(gv, 5, analyzer.cfg.strategy.unknown_fill_need, stalled)
 
 
-def test_run_end_gambles_on_the_move_that_uncovers_most_for_the_belt(analyzer):  # noqa: F811
+def test_run_end_gambles_on_the_move_that_opens_a_bucket_that_fills(analyzer):  # noqa: F811
     """00136 with the belt as at 118 s (every colour stalled >= 6 s, 4/5): the run waited 50 s.
-    darkred r3c2 uncovers ~6 % orange / blue / darkgreen, cream r1c6 ~4 %."""
+    darkred r3c2 uncovers more for the belt (~6 % vs cream r1c6 ~4 %) but cannot fill (1.2 %
+    sand left, a bucket 3.2 %); cream cannot either, but it opens purple r3c6, which can (the
+    move the run's analysis called right: it drains the purple sky)."""
     pytest.importorskip("cv2")
     st = run_state(analyzer, "00136-wait",
                    {"yellow": 25.0, "orange": 6.0, "darkgreen": 9.0, "blue": 28.0})
     d = choose(st, analyzer.cfg.strategy)
     assert d.move is not None and d.move.gamble, d.reason
-    assert (d.move.pos, d.move.color) == ((3, 2), "darkred")
+    assert (d.move.pos, d.move.color) == ((1, 6), "cream")
+    assert d.move.fills == "opens r3c6 purple"
     assert d.reason.startswith("last-slot gamble")
     st.belt_stalled["orange"] = 1.0                          # orange still creeping up: wait
     assert choose(st, analyzer.cfg.strategy).move is None

@@ -69,6 +69,9 @@
     cream on red, red on orange); the fill % is the collecting stage's.
   - Seen in the grid from above: face-up = the top stage's opening; face-down = a disc of the
     top stage's colour on the dome of the stage below.
+  - Bot rule (user, run 20261020-224631): a tower is tapped only when its **top colour can
+    fill** (sand left >= the belt's need of it + one bucket), else its lower stage is never
+    released.
 - Vision (L187): columns can come in groups separated by walls; the column pitch is the cell
   pitch, never a multiple of it (`vision.pitch_harmonic_ratio`; the walls inside the grid sit
   on cell boundaries, `vision.pitch_wall_align`). The grid geometry never changes within a
@@ -188,8 +191,13 @@
 - **Best** = the move whose colour, once collected, uncovers the most sand of the belt's colours
   (`sand.contact_layers`: per picture column the sand right above the contact layer);
   tie-break: the bucket's own exposed sand. Logged as "last-slot gamble".
-- The 25 % rule stays for normal cases. A move short of sand may be gambled too (the level is
-  lost otherwise; user-confirmed 2026-10-20), a colour stalled on the belt never.
+- The 25 % rule stays for normal cases. A colour stalled on the belt never.
+- **Only buckets that can fill** (user, run 20261020-224631, replaces "a move short of sand may
+  be gambled"): a bucket whose colour has less sand left than one bucket's capacity (plus what
+  same-colour belt buckets still need; `strategy.gamble_fill_margin` x that) never takes the
+  last slot, unless its tap opens the path to a bucket that can fill. Buckets that fill
+  themselves rank first; "uncovers for the belt" only breaks ties among them (then exposure).
+  Logged "fills itself" / "opens r..c.. <colour>".
 
 ## Sacrifice (user, 2026-10-20)
 - A bucket that cannot fill now (not enough sand of its colour) may take a slot if the lookahead
@@ -259,6 +267,10 @@
   the contact layer - 8 %), at most ~30 %/s; below ~10 % it gets almost nothing (L187 run
   161536: orange at 7 % of the contact layer stayed 0 % for 30 s). The simulator uses this
   (`planner.fill_*`); the bot needs ~4 s per tap (`planner.tap_s`).
+- A plan step never overrides the sand rules (user, run 20261020-224631: #24 orange/darkgreen
+  tower at avail -5 %): a step the strategy rejects for lack of sand (exposure as for a planned
+  path, enough sand left, a tower whose top cannot fill) is skipped and the bot re-plans at once
+  with that tap forbidden on this board; no plan step left -> the strategy decides.
 - A plan's wait for the belt never stalls: given up when the belt is `planner.wait_grace_s`
   behind the plan's predicted time or no belt bucket gained sand for `planner.wait_stall_s`
   -> re-plan from the real belt; if that plan waits too, the greedy strategy decides until the

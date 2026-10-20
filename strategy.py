@@ -37,7 +37,8 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from cells import Kind
 from config import StrategyConfig
-from endgame import belt_stuck, endgame_reserve, key_reserve, last_slot_gamble, sacrifice
+from endgame import (belt_stuck, can_fill, endgame_reserve, key_reserve, last_slot_gamble,
+                     sacrifice)
 from lookahead import Outlook, belt_outlook, outlook
 from planner import Opened, Plan, ScatterRisk, opened_value, plan, scatter_risk
 from state import LevelState, Pos
@@ -76,6 +77,7 @@ class Candidate:
     look_bonus: float = 0.0
     gamble: bool = False                       # last-slot gamble on a stuck belt
     uncovers: float = 0.0                      # ... contact share it uncovers for the belt
+    fills: Optional[str] = None                # ... why it can fill ("fills itself" / "opens ...")
     level_plan: Optional[str] = None           # "i/n": a step of the level plan (levelplan.py)
     sacrifice: bool = False                    # can't fill now, opens what unblocks the belt
     sand_short: bool = False                   # rejected only for "not enough sand"
@@ -195,6 +197,12 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig, opener: bool = Fal
     elif have < need and not gamble:
         cand.sand_short = True
         cand.rejected = f"not enough sand ({have:.1%} < {need:.1%})"
+    elif cell.body and not gamble and not can_fill(state, cand.color, sc):
+        # user (run 20261020-224631): a tower goes only when its top can fill, else its lower
+        # stage is never released (#24 orange/darkgreen stuck at 36 % with darkgreen exposed)
+        cand.sand_short = True
+        cand.rejected = (f"tower: {cand.color} cannot fill ({have:.1%} sand left) - the "
+                         f"{cell.body} stage would never be released")
     elif not gamble and free:
         keep = endgame_reserve(state, cand.color, sc)
         if keep and free - 1 < len(keep):
@@ -326,7 +334,7 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
                 _look(state, cand, now, check, sc)
     if sc.look_depth > 0 and free >= 2:
         for i, cand in enumerate(cands):
-            if cand.sand_short and cand.stalled is None:
+            if cand.sand_short and cand.stalled is None and not cand.stages:
                 cands[i] = sacrifice(state, cand, now, check, sc) or cand
     tapped_cands = list(cands)
     cands += _not_tappable(state)
@@ -338,8 +346,8 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
             r, c = g.pos
             return Decision(g, f"last-slot gamble: tap r{r}c{c} {g.color} (belt stuck "
                                f"{belt_stuck(state, sc):.0f}s, no move passes the last-slot "
-                               f"minimum; uncovers {g.uncovers:.0%} for the belt, exposed "
-                               f"{g.exposed:.0%})", cands, plans)
+                               f"minimum; {g.fills}, uncovers {g.uncovers:.0%} for the belt, "
+                               f"exposed {g.exposed:.0%})", cands, plans)
     if not allowed:
         if free == 0:
             why = "conveyor full"
