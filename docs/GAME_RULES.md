@@ -335,6 +335,7 @@ must be extensible:
   "6 %" with a yellow "Download" button and two small yellow discs top left (mute) / top right
   (▶| skip); Netflix). An unknown screen within `flow.ad_after_tap_s` of a screen tap is
   searched for the ✕ and the **skip** (▶|) button - ✕ / skip only (user), never Download.
+  The user closes the Trade Republic ad with the ▶| disc in the top right (confirmed).
   Unknown / ad screens are waited for `flow.unknown_max_s` / `ad_max_s` (3 min) with a frame
   saved every `flow.unknown_frame_s`.
 - Stop the bot when lives reach 0 (heart in the top bar). PLAY / Try Again only with lives >= 1.

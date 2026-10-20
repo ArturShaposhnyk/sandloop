@@ -241,6 +241,8 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
 - Ads after Try Again: 288 s black, 301 Trade Republic (skip ▶| top right), then the window was
   gone 1.2 s and a Sand Loop splash; level 2 started at 336 s. 617 s: Netflix, then black until
   the stop at 676 s (unknown_max_s 60).
+  User: the Trade Republic ad is closed with the ▶| disc top right (what `adclose.find_skip`
+  taps). Open: whether the user touched anything during the 1.2 s window loss / splash.
 - Tests: `tests/test_run_20261020_171133.py` (frames 00535, 00551, 00301, 00587).
 
 ## L187 live run 20261020-161536 (2026-10-20): plan wait stalled 32 s, window lost
