@@ -14,7 +14,7 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 4 | `state.py`, `strategy.py` (greedy + path planning), `tools/overlay.py --dry-run` | `6ff1c26`, `9f2b4e7`, `774d07e`, ... |
 | 5 | `bot.py` plays a level with real taps | `4b1883a`, `4f297f2`, `00daa0e` |
 | 6 | screens outside gameplay (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `--levels N`, session limits | `a07c297`, `c1b1423` |
-| fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (this commit) | |
+| fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`) | |
 
 Tests: `python -m pytest -q` - all 685 pass (the open-tower xfail is fixed).
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
