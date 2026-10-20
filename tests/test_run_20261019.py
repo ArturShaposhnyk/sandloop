@@ -62,27 +62,72 @@ def test_booster_joining_the_grid_shifts_every_row_without_the_lattice_lock(anal
 
 
 def test_lattice_lock_keeps_the_levels_grid(analyzer):  # noqa: F811
-    lock = LatticeLock(switch_frames=3)
+    lock = LatticeLock(lock_frames=1)
     clean = read(analyzer, img(S058), lock)
     again = read(analyzer, bridged(img(S058)), lock)
     assert again.lattice.rows == 6 and again.labels() == clean.labels()
     assert not again.disagreements
 
 
-def test_lattice_lock_needs_frames_for_a_real_change():
+def test_lattice_lock_is_never_replaced_mid_level():
+    """Live run 20261020-125351: a reading held 3 frames used to replace the lock, and the
+    lattice flip-flopped 7x7 <-> 4x4. Now only unlock() (a non-gameplay screen) or another
+    frame size frees it."""
     from vision import Lattice, VisionError
     import numpy as np
 
-    lock = LatticeLock(switch_frames=3)
+    logs = []
+    lock = LatticeLock(lock_frames=3)
     a = Lattice(10, 100, 50, 45, np.ones((6, 7), bool))
     b = Lattice(30, 140, 40, 36, np.ones((8, 9), bool))   # another level's grid
     taller = Lattice(10, 100, 50, 45, np.ones((7, 7), bool))
-    assert lock.check(a, log=lambda s: None) is a
-    assert lock.check(taller, log=lambda s: None) is a       # extra row at the bottom
-    for _ in range(2):
-        with pytest.raises(VisionError):
-            lock.check(b, log=lambda s: None)
-    assert lock.check(b, log=lambda s: None) is b            # held 3 frames: new geometry
+    misfit = Lattice(10, 100, 50, 45, np.ones((6, 7), bool), fit=0.3)
+    with pytest.raises(VisionError, match="walls off"):
+        lock.check(misfit, logs.append)                       # never locked on a misread
+    assert lock.check(a, logs.append) is a and lock.locked    # first fitting reading: locked
+    assert lock.check(taller, logs.append) is a               # extra row at the bottom
+    for _ in range(10):
+        assert lock.check(b, logs.append) is a                # any number of frames: kept
+    assert lock.fixed
+    assert sum("read with the level's" in s for s in logs) == 1   # logged once per streak
+    lock.unlock()                                             # non-gameplay screen
+    assert lock.check(b, logs.append) is b
+
+
+def test_lattice_lock_takes_a_finer_reading_only_at_the_start():
+    """User, 2026-10-20: the initial lock must prefer the finer grid. A coarse first reading
+    (2x pitch over the same outline, or extra rows from the boosters) is replaced by the finer
+    one within lock_frames frames; after that nothing replaces the lock."""
+    from vision import Lattice
+    import numpy as np
+
+    fine = Lattice(101.0, 748.0, 56.6, 50.1, np.ones((7, 7), bool))
+    coarse = Lattice(101.0, 748.0, 99.0, 87.6, np.ones((4, 4), bool))
+    taller = Lattice(101.0, 748.0, 56.6, 50.1, np.ones((8, 7), bool))
+    for first in (coarse, taller):
+        lock = LatticeLock(lock_frames=3)
+        assert lock.check(first, lambda s: None) is first
+        assert lock.check(first, lambda s: None) is first
+        assert lock.check(fine, lambda s: None) is fine       # finer, inside the window
+        for _ in range(3):
+            assert lock.check(first, lambda s: None) is fine
+        assert lock.fixed
+    lock = LatticeLock(lock_frames=1)
+    lock.check(coarse, lambda s: None)
+    lock.check(coarse, lambda s: None)                        # window over: coarse is fixed
+    assert lock.check(fine, lambda s: None) is coarse
+
+
+def test_lattice_lock_frees_on_another_frame_size():
+    from vision import Lattice
+    import numpy as np
+
+    lock = LatticeLock(lock_frames=1)
+    a = Lattice(10, 100, 50, 45, np.ones((6, 7), bool))
+    b = Lattice(60, 300, 75, 67, np.ones((6, 7), bool))
+    assert lock.check(a, lambda s: None, (1298, 598)) is a
+    assert lock.check(b, lambda s: None, (1298, 598)) is a
+    assert lock.check(b, lambda s: None, (1947, 897)) is b    # window scaled: new geometry
 
 
 def test_l186_cells(analyzer):  # noqa: F811

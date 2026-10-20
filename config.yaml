@@ -87,7 +87,8 @@ vision:                      # vision.py / screens.py; colours come from dataset
   chest_min_wood: 0.2
   mystery_tol: 10.0
   mystery_min_grey: 0.3
-  lattice_switch_frames: 3   # the grid geometry is fixed in a level: a different one must hold this many frames (extra bottom rows are ignored)
+  lattice_lock_frames: 3     # the grid geometry is fixed in a level (hints.LatticeLock): the first fitting reading is locked; for this many frames a finer reading of the same grid may still replace it, then it holds until a non-gameplay screen
+  lattice_min_fit: 0.8       # a reading whose inner walls sit on its cell boundaries less than this is a misread outline (224 live / dataset frames: good >= 0.88, hint arrows / sparkles joined to the grid <= 0.54)
   empty_tol: 10.0            # LAB distance to the empty-cell colour
   empty_min_frac: 0.5        # share of empty-colour pixels for an empty cell
   face_up_max_ratio: 0.88    # centre V / top-stage rim V below this = face-up (up <= 0.83, down >= 0.93)
@@ -96,6 +97,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
   face_ref_percentile: 85    # rim brightness = this percentile of V in the top part of the object
   tower_min_margin: 8.0      # LAB margin for a real second colour (tower stage)
   split_bg_max: 0.15         # background row through a cell's middle with objects above and below = two objects (UNKNOWN, never a tower). Annotated buckets <= 0.042, fading padlocks <= 0.066; the run's merged 4x4 cells: 10 of 16 >= 0.17 (two touching buckets in a lane score ~0.1: the lattice checks are the main guard)
+  foot_min_obj: 0.5          # open bucket: the strip under its crop (vision.foot_strip) is a lower tower stage if object pixels fill this share and its colour is another bucket colour (L187 r1c0 orange on cream)
   ice_min_white: 0.10
   ice_min_dark: 0.05
   color_max_dist: 22.0       # LAB distance to the nearest palette bucket colour

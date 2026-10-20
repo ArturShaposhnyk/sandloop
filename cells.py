@@ -230,6 +230,39 @@ def cell_features(cell_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Ce
     )
 
 
+def foot_lab(strip_bgr: np.ndarray, palette: Palette, v: VisionConfig) -> Optional[Lab]:
+    """Median LAB of the object pixels in the strip under a cell's crop, if they fill at least
+    ``foot_min_obj`` of it (else background / outline: no stage there)."""
+    if strip_bgr.size == 0:
+        return None
+    lab = bgr_to_lab(strip_bgr)
+    obj = _object_pixels(strip_bgr, lab, palette, v)
+    if obj.mean() < v.foot_min_obj:
+        return None
+    return tuple(float(x) for x in np.median(lab[obj], axis=0))  # type: ignore[return-value]
+
+
+def foot_stage(cell: Cell, lab: Optional[Lab], below: Optional[Cell], palette: Palette,
+               v: VisionConfig) -> Optional[str]:
+    """Lower stage of an open tower in a tall lane (run 20261020-122638 r1c0 orange on cream):
+    the top stage fills the crop and the lower one shows only in the strip under it (``lab``,
+    see foot_lab). None unless ``cell`` is a face-up one-colour bucket and the strip's colour is
+    another bucket colour that the cell below cannot explain: a tall lock below (ice, curtain,
+    chest, mystery: no colour) or an unknown cell overhangs into the strip (shots 004 ice,
+    055 curtain), and so does an object of the same colour."""
+    if (lab is None or cell.kind is not Kind.BUCKET or not cell.face_up or cell.body is not None
+            or cell.color is None):
+        return None
+    if below is not None and (below.kind is Kind.UNKNOWN
+                              or (below.kind is Kind.LOCK and below.color is None)):
+        return None
+    foot, _ = palette.nearest(lab, "buckets", v.color_max_dist)
+    if (foot is None or foot == cell.color or (below is not None and below.color == foot)
+            or not _distinct(lab, foot, cell.color, palette, v.tower_min_margin)):
+        return None
+    return foot
+
+
 def colour_distances(lab: Lab, palette: Palette) -> List[Tuple[float, str]]:
     """LAB distance to every bucket colour of the palette (nearest look), nearest first."""
     return sorted((min(float(np.linalg.norm(np.asarray(lab) - np.asarray(c))) for c in looks),

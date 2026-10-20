@@ -63,7 +63,7 @@ def test_start_decision(view, analyzer):  # noqa: F811
 
 RUN = Path(__file__).resolve().parent / "data" / "run-20261020-122638"
 STUCK = ["x x . . darkred-up x x",
-         "orange-up . . . purple-up purple/cream-down cream-down",
+         "orange/cream-up . . . purple-up purple/cream-down cream-down",
          "lock:yellow x yellow-up . . x lock:blue",
          "purple-down x darkred-up . . x purple-down",
          "orange-down x blue-up . purple-up x orange-down",
@@ -98,24 +98,23 @@ def test_stuck_frame_has_moves(analyzer):  # noqa: F811
     assert {(0, 4), (1, 4), (2, 2), (3, 2), (4, 2), (4, 4), (5, 3)} <= set(gv.tappable())
 
 
-@pytest.mark.xfail(strict=True, reason="open tower in a tall lane: the cream stage is drawn "
-                   "below the bucket crop, read as orange-up (docs/STATUS.md)")
 def test_open_tower_keeps_its_lower_stage(analyzer):  # noqa: F811
+    """Open tower in a tall lane: the cream stage is drawn below the bucket crop (it used to
+    read orange-up); vision.foot_strip sees it."""
     gv = read_frame(analyzer, "00041-stuck-disagree")
     assert gv.labels()[1].split()[0] == "orange/cream-up"   # orange/cream-down at the start
 
 
 def test_lattice_lock_never_takes_a_coarser_lattice_with_the_same_outline():
     from hints import LatticeLock
-    from vision import Lattice, VisionError
+    from vision import Lattice
 
-    lock = LatticeLock(switch_frames=3)
+    lock = LatticeLock(lock_frames=1)
     fine = Lattice(101.0, 748.0, 56.6, 50.1, np.ones((7, 7), bool))
     coarse = Lattice(101.0, 748.0, 99.0, 87.6, np.ones((4, 4), bool))   # the run's misread
     assert lock.check(fine, log=lambda s: None) is fine
-    for _ in range(10):                                  # held any number of frames: refused
-        with pytest.raises(VisionError, match="same outline"):
-            lock.check(coarse, log=lambda s: None)
+    for _ in range(10):                                  # held any number of frames: not used
+        assert lock.check(coarse, log=lambda s: None) is fine
     assert lock.check(fine, log=lambda s: None) is fine
 
 
@@ -148,3 +147,76 @@ def test_one_object_filling_part_of_a_cell_is_not_two(analyzer):  # noqa: F811
         lat = find_lattice(img, analyzer.palette, v)
         f = cell_features(cell_crop(img, lat, r, c, v), analyzer.palette, v)
         assert f.split_bg < v.split_bg_max / 2
+
+
+# --- live run 20261020-125351 (L187): 21 good taps, then the lattice flip-flopped 7x7 <-> 4x4 --
+
+RUN2 = Path(__file__).resolve().parent / "data" / "run-20261020-125351"
+END = ["x x . . darkred-up x x",
+       ". . . . . . cream-up",
+       ". x yellow-up . cream-up x .",
+       ". x darkred-up . . x purple-down",
+       ". x . . . x orange-down",
+       ". x . . . x purple-down"]
+# hint arrows over the boosters (partly or not masked) / sparkles joined to the grid region
+MISREAD = ["00047-wait", "00143-wait", "00147-wait", "unknown-125531-186", "unknown-125540-121"]
+
+
+def frame2(name):
+    img = cv2.imread(str(RUN2 / f"{name}.png"))
+    assert img is not None, name
+    return img
+
+
+def read2(analyzer, name, lattices=None):  # noqa: F811
+    return read_gameplay(frame2(name), analyzer.palette, analyzer.cfg.vision, analyzer.reader,
+                         log=lambda s: None, icons=analyzer.icons, hints=analyzer.hints,
+                         lattices=lattices)
+
+
+def lock(analyzer):  # noqa: F811
+    from hints import LatticeLock
+
+    v = analyzer.cfg.vision
+    return LatticeLock(v.lattice_lock_frames, v.lattice_min_fit)
+
+
+@pytest.mark.parametrize("name", MISREAD)
+def test_grid_joined_by_arrows_or_sparkles_is_a_misfit(analyzer, name):  # noqa: F811
+    """The grown outline (68..531 px instead of 101..497) reads 4x4 and its lane walls sit off
+    the cell boundaries; clean frames fit >= 0.88."""
+    gv = read2(analyzer, name)
+    assert gv.lattice.cols == 4 and gv.lattice.fit < analyzer.cfg.vision.lattice_min_fit
+
+
+@pytest.mark.parametrize("name", ["00002-tap", "00137-wait"])
+def test_clean_frames_fit_7x7(analyzer, name):  # noqa: F811
+    gv = read2(analyzer, name)
+    assert (gv.lattice.rows, gv.lattice.cols) == (7, 7)
+    assert gv.lattice.fit >= analyzer.cfg.vision.lattice_min_fit
+
+
+def test_misfit_frame_never_becomes_the_first_lock(analyzer):  # noqa: F811
+    """The run's first lock was 7x7 (frame 00002); a level entered while the arrows show must
+    not lock 4x4 either: a misfit reading is a failed read until a fitting one comes."""
+    from vision import VisionError
+
+    lk = lock(analyzer)
+    with pytest.raises(VisionError, match="walls off"):
+        read2(analyzer, "00143-wait", lk)
+    assert not lk.locked
+    gv = read2(analyzer, "00137-wait", lk)
+    assert lk.locked and (gv.lattice.rows, gv.lattice.cols) == (7, 7)
+
+
+def test_locked_lattice_reads_the_flip_flop_frames(analyzer):  # noqa: F811
+    """After the lock every frame is read with the level's 7x7, whatever it reads itself: no
+    "new grid geometry", no merged "two objects" cells, no orange/cream-down r1c1 warning."""
+    lk = lock(analyzer)
+    assert read2(analyzer, "00137-wait", lk).labels()[:6] == END
+    for name in MISREAD[1:] * 2:                     # held any number of frames
+        gv = read2(analyzer, name, lk)
+        assert (gv.lattice.rows, gv.lattice.cols) == (7, 7), name
+        assert gv.labels()[:6] == END, name
+        assert not gv.disagreements, name
+        assert all(c.row == 6 for c in gv.unknown_cells()), name   # at most an arrow-hidden cell

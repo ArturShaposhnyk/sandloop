@@ -78,7 +78,8 @@ class Analyzer:
         self.memory = CellMemory()   # last clean cell readings, for cells under hint arrows
         self.unlocks = RecentUnlocks(cfg.vision.unlock_trust_s)   # key locks that just opened
         self.lattices: Optional[LatticeLock] = (
-            LatticeLock(cfg.vision.lattice_switch_frames) if track else None)
+            LatticeLock(cfg.vision.lattice_lock_frames, cfg.vision.lattice_min_fit) if track
+            else None)
         self.chests: Dict[Pos, int] = {}       # chests in the last read (cell -> N)
         self.scatter_until = -1.0              # a chest opened: no decisions until then
 
@@ -94,7 +95,7 @@ class Analyzer:
         screen = found.screen
         if screen != "gameplay":
             if self.lattices is not None:
-                self.lattices.ref = None   # another level may follow
+                self.lattices.unlock()   # another level may follow
             return Analysis(screen, reads=self.reads, fails=self.fails, screen_result=found)
         self.reads += 1
         try:

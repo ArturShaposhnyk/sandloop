@@ -99,7 +99,8 @@ class VisionConfig:
     chest_min_wood: float = 0.2       # chest: wood share (L186 chests 0.33, others <= 0.06)
     mystery_tol: float = 10.0         # LAB distance to palette ui "mystery_grey"
     mystery_min_grey: float = 0.3     # mystery bucket: share of grey pixels (L186: 0.5)
-    lattice_switch_frames: int = 3    # a different grid geometry must hold this many frames
+    lattice_lock_frames: int = 3      # frames after the lock in which a finer reading replaces it
+    lattice_min_fit: float = 0.8      # Lattice.fit below this = misread outline (failed read)
     hint_threshold: float = 0.8       # hint arrow template match (hints.py)
     hint_scales: List[float] = field(default_factory=lambda: [0.9, 1.0, 1.1])
     hint_downscale: float = 0.5       # hint arrows are matched on the grid zone scaled by this
@@ -114,6 +115,7 @@ class VisionConfig:
     face_ref_percentile: float = 85.0  # rim brightness = this percentile of the top part's V
     tower_min_margin: float = 8.0     # LAB margin for a real second colour (tower stage)
     split_bg_max: float = 0.15           # background row with objects above + below: 2 objects
+    foot_min_obj: float = 0.5         # object share of the strip under a crop that counts as a lower stage
     ice_min_white: float = 0.10
     ice_min_dark: float = 0.05
     color_max_dist: float = 22.0      # LAB distance to the nearest palette colour
@@ -326,9 +328,9 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("vision.template_scales must be a non-empty list of numbers > 0")
     if min(v.chest_tol, v.chest_min_wood, v.mystery_tol, v.mystery_min_grey,
            v.unlock_trust_s, v.unlock_wait_s, v.unlock_confident_dist,
-           v.unlock_confident_margin) < 0 or v.lattice_switch_frames < 1:
+           v.unlock_confident_margin, v.lattice_min_fit) < 0 or v.lattice_lock_frames < 1:
         raise ConfigError("vision chest / mystery / unlock settings must be >= 0 and "
-                          "lattice_switch_frames >= 1")
+                          "lattice_lock_frames >= 1")
     st = cfg.strategy
     if st.conveyor_slots < 1 or st.confirm_frames < 1:
         raise ConfigError("strategy.conveyor_slots and confirm_frames must be >= 1")

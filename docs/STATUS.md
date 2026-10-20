@@ -14,15 +14,28 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 4 | `state.py`, `strategy.py` (greedy + path planning), `tools/overlay.py --dry-run` | `6ff1c26`, `9f2b4e7`, `774d07e`, ... |
 | 5 | `bot.py` plays a level with real taps | `4b1883a`, `4f297f2`, `00daa0e` |
 | 6 | screens outside gameplay (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `--levels N`, session limits | `a07c297`, `c1b1423` |
-| fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`) | |
+| fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (this commit) | |
 
-Tests: `python -m pytest -q` - all pass except 1 documented strict xfail (open tower, below).
+Tests: `python -m pytest -q` - all 685 pass (the open-tower xfail is fixed).
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-20)
-- **Live wins: L186** by itself (run `20261019-171033`, 21 taps, 118 s). **L187 (HARD)**: one
-  live run (`20261020-122638`) got STUCK at 3/5 on a lattice misread - fixed offline (below),
-  not live-tested again yet. No full L187 win yet.
+- **Live wins: L186** by itself (run `20261019-171033`, 21 taps, 118 s). **L187 (HARD)**: two
+  live runs got stuck on lattice misreads (`20261020-122638` at 3/5, `20261020-125351` after 21
+  good taps: 7x7 <-> 4x4 flip-flop). Fixed offline (below), not live-tested again yet. No L187
+  win yet.
+- **Lattice lock (2026-10-20, run `125351`)**: the level's grid is now NEVER replaced mid-level.
+  The first lattice whose inner walls sit on its cell boundaries (`Lattice.fit` >=
+  `vision.lattice_min_fit` 0.8) is locked; for `lattice_lock_frames` (3) frames a finer reading
+  of the same grid (more columns over the same outline / fewer rows under the same top) may
+  still replace it; after that every gameplay frame is read with it ("frame reads 4x4 ..., read
+  with the level's 7x7" logged once per streak). Only a non-gameplay screen (win / fail /
+  revive / menu / ad) or another frame size unlocks it. A misfit reading before the lock is a
+  failed read (so the bot never locks 4x4 on a frame with hint arrows / sparkles).
+- **Open tower in a tall lane fixed**: the lower stage drawn under the bucket crop is read from
+  the strip below it (`vision.foot_strip`, `cells.foot_stage`, `vision.foot_min_obj`); ignored
+  when the cell below is ice / curtain / chest / mystery / unknown or the same colour (they
+  overhang). Checked on every saved live frame: 6 distinct towers found, all real.
 - **Phase 6 is not exercised live yet**: the only `--levels` run so far was L187 with
   `--levels 1` (stopped by the stuck lattice / window loss), so no NEXT / PLAY / Quit /
   Try Again / ad ✕ tap has happened live. Revive popup ✕ = Quit (user-confirmed).
@@ -42,15 +55,21 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
-1. Live: `python -m bot --levels 1` on L187 - expect no `lattice: new grid geometry` /
-   `same outline` lines; then `--levels 2`-`3` to exercise phase 6 (watch it).
+1. Live: `python -m bot --levels 1` on L187 - expect one `lattice: level's grid 7x7 (cell 57
+   px) locked` line, no lattice change after it (`frame reads 4x4 ..., read with the level's
+   7x7` is fine), no "two objects" unknowns except a cell under a hint arrow; then `--levels 2`-`3`
+   to exercise phase 6 (watch it).
 2. Answers on phase-5 issues A / B, then fixes A-D (see "Phase 5 state" below).
-3. Separate fix later (user): the open-tower gap.
+3. Question for the user (run `125351` end): belt 4/5 yellow / darkgreen / orange / blue all
+   stalled with ~0-3 % exposed, every grid candidate < 25 % (`last_slot_min_exposed`) -> "no
+   bucket passes the rules" even on the right 7x7 grid. Deadlock by the rules; should the bot
+   take the last slot anyway (best avail), or is the level lost here?
 
 ## Open gaps / questions
-- **Open tower in a tall lane** (strict xfail `test_open_tower_keeps_its_lower_stage`): L187
-  r1c0 orange-on-cream reads `orange-up`, the cream stage is drawn below the bucket crop. The
-  belt reader sees the stage once it is on the belt; the lookahead under-counts it.
+- **Hint arrows are missed in some animation phases** (template < 0.8; squashed arrows in
+  run `125351` frames 00147 / 00154-156 even < 0.6). The lattice lock makes this harmless for
+  the grid; a bottom-row cell under an unmasked arrow can read UNKNOWN ("two objects"), never
+  tapped.
 - **Two touching buckets in one cell** score ~0.1 on the split check (not caught); only the
   lattice checks prevent such cells.
 - **Chest-opening flash now reads yellow** (was an unknown colour, LAB ~98/-18/68: 11-15 from
@@ -119,14 +138,37 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is priced by `planner.scatter_risk`; after one opens the Analyzer waits `chest_settle_s` and
   re-reads the whole grid.
 - **Grid geometry** is fixed per level (`hints.LatticeLock`, enabled by
-  `Analyzer.reset_level()` in bot.py / overlay; off for unrelated screenshots). The column
-  pitch must fit the walls inside the grid; the same outline with another cell size is refused.
+  `Analyzer.reset_level()` in bot.py / overlay; off for unrelated screenshots): never replaced
+  mid-level, only unlocked by a non-gameplay screen or a new frame size. The column pitch must
+  fit the walls inside the grid (`Lattice.fit`); a misfit reading never becomes the lock.
 - Outside gameplay: `flow.py` picks the only allowed button (NEXT / PLAY / Quit / Try Again /
   ✕); never inside Keep Playing / Watch Ad / Get App / App Store boxes; every tap logged.
 - Frame -> decision lives in `analyzer.py` (Analysis, Analyzer, DecisionGate); `strategy.py`
   is the greedy choice only.
 
 # History (newest first)
+
+## L187 live run 20261020-125351 (2026-10-20): 21 good taps, then 7x7 <-> 4x4 flip-flop — fixed
+- First lock was 7x7 (frame 00002, fit 0.88) - correct. At 34 s one frame read 4x4 (sparkles
+  of a finished bucket joined the grid at x 77). From 93 s, with the bot idle, the game's hint
+  arrows over the boosters bobbed into the grid; the template missed them in some phases, the
+  grid region grew to 68..531 px (was 101..497) and the lattice read 4x4 (cell 107 / 116 px).
+  After 3 such frames LatticeLock took it ("new grid geometry"), then 7x7 again 3 frames later,
+  back and forth. The 4x4 cells gave "two objects in one cell" unknowns
+  (`dataset/unknown/20261020-1255*`) and the r1c1 "orange/cream-down looks face-down" warning
+  (a merged cell, not the tower gap).
+- Fixes: (1) `LatticeLock` never replaces the lock mid-level (see "Where it stands").
+  (2) `Lattice.fit` = `vision.wall_alignment` of the chosen pitch: every grown-outline frame
+  fits <= 0.39, every clean frame of 224 live / dataset gameplay frames >= 0.88 (only the
+  dragged-window frame 122638/00058 is lower, 0.54, also a misread). A misfit never becomes the
+  first lock; a finer reading replaces a coarse provisional lock. (3) open-tower foot (above).
+- With the 7x7 lock the end frames still say "no bucket passes the rules" (belt deadlock, see
+  NEXT 3) - that is strategy, not vision.
+- Config: `lattice_switch_frames` -> `lattice_lock_frames` (3, refine window) +
+  `lattice_min_fit` (0.8); `foot_min_obj` (0.5).
+- Tests: `tests/data/run-20261020-125351/` (00002, 00047, 00137, 00143, 00147 + the two
+  unknown-dir frames), `tests/test_run_20261020.py` (misfit frames, first lock, locked reads of
+  the flip-flop frames), lock unit tests in `tests/test_run_20261019.py`.
 
 ## L187 live run 20261020-122638 (2026-10-20): STUCK at 3/5 — fixed, awaiting live check
 - Started right (7x7), 10 good taps; at 29 s the lattice turned 4x4 and LatticeLock took it

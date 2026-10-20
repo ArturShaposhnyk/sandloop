@@ -145,21 +145,39 @@ class CellMemory:
 
 class LatticeLock:
     """The grid geometry is fixed within a level. Live run 20261019-162703 (L186): once the bot
-    stopped tapping, the boosters below the grid pulsed into the grid zone, the grid region
-    grew by ~0.7 row, the lattice got a 7th row and a smaller row pitch, and every cell was
-    read across two rows ("pink/darkgreen" towers, boosters as buckets). A lattice like the
-    level's one but with extra rows at the bottom is replaced by the level's lattice. The same
-    outline with another cell size is a misread, never used (live run 20261020-122638, L187:
-    4x4 instead of 7x7 mid-level; a new level comes after non-gameplay screens, which reset
-    the lock). Any other change must hold ``switch_frames`` frames in a row (a new level)
-    before it is used, until then the frame is a failed read."""
+    stopped tapping, the boosters below the grid pulsed into the grid zone, the lattice got a 7th
+    row and every cell was read across two rows. Live runs 20261020-122638 / -125351 (L187):
+    sparkles and the hint arrows over the boosters (the template misses them in some animation
+    phases) joined the grid region, the outline grew to 68..531 px and the lattice read 4x4;
+    after 3 such frames the old lock took the 4x4 and flip-flopped with 7x7.
 
-    def __init__(self, switch_frames: int = 3) -> None:
-        self.switch_frames = switch_frames
+    A reading whose inner walls do not sit on its cell boundaries (``Lattice.fit`` < ``min_fit``)
+    is a misread outline: a failed read while nothing is locked. The first fitting reading is
+    locked at once; for the next ``lock_frames`` frames a finer reading of the same grid (more
+    columns over the same outline, or fewer rows under the same top - misreads only add) still
+    replaces it. After that it is never replaced: every gameplay frame of the level is read with
+    it, whatever the frame's own reading. Only ``unlock()`` (a non-gameplay screen: win / fail /
+    revive / menu / ad, i.e. a new level may follow; ``Analyzer.reset_level``) or another frame
+    size frees it."""
+
+    def __init__(self, lock_frames: int = 3, min_fit: float = 0.8) -> None:
+        self.lock_frames = lock_frames
+        self.min_fit = min_fit
+        self.unlock()
+
+    def unlock(self) -> None:
         self.ref = None
-        self._new_key: Optional[Tuple[int, int, int, int]] = None
-        self._new_count = 0
-        self._ignoring = False
+        self.frame: Optional[Tuple[int, int]] = None
+        self._frames = 0                     # frames read since the lock, while it may refine
+        self._noted: Optional[Tuple[int, int, int, int]] = None   # last disagreement logged
+
+    @property
+    def locked(self) -> bool:
+        return self.ref is not None
+
+    @property
+    def fixed(self) -> bool:
+        return self.ref is not None and self._frames >= self.lock_frames
 
     @staticmethod
     def _same_top(a, b) -> bool:
@@ -168,39 +186,52 @@ class LatticeLock:
 
     @staticmethod
     def _same_outline(a, b) -> bool:
-        return (abs(a.x0 - b.x0) < b.cw / 2 and abs(a.y0 - b.y0) < b.ch / 2
+        return (abs(a.x0 - b.x0) < a.cw / 2 and abs(a.y0 - b.y0) < a.ch / 2
                 and abs(a.cols * a.cw - b.cols * b.cw) < 0.05 * b.cols * b.cw)
+
+    def _finer(self, lat, ref) -> bool:
+        return lat.fit >= self.min_fit and (
+            (lat.cols > ref.cols and self._same_outline(lat, ref))
+            or (lat.rows < ref.rows and self._same_top(lat, ref)))
 
     @staticmethod
     def _shape(lat) -> str:
         return f"{lat.rows}x{lat.cols} (cell {lat.cw:.0f} px)"
 
-    def check(self, lat, log=print):
+    def check(self, lat, log=print, frame: Optional[Tuple[int, int]] = None):
+        """The lattice to read this frame with. ``frame``: the frame's (height, width)."""
         from vision import VisionError
 
-        ref = self.ref
-        if ref is None or CellMemory.key(lat) == CellMemory.key(ref):
-            self.ref, self._new_key, self._new_count, self._ignoring = lat, None, 0, False
+        if self.ref is not None and frame is not None and self.frame not in (None, frame):
+            log(f"lattice: frame size {frame[1]}x{frame[0]} (was {self.frame[1]}x"
+                f"{self.frame[0]}) - level's grid unlocked")
+            self.unlock()
+        if self.ref is None:
+            if lat.fit < self.min_fit:
+                raise VisionError(f"grid geometry {self._shape(lat)}: walls off its cell "
+                                  f"boundaries (fit {lat.fit:.2f}) - outline misread")
+            self.ref, self.frame, self._frames = lat, frame, 0
+            log(f"lattice: level's grid {self._shape(lat)} locked")
             return lat
-        if lat.rows > ref.rows and self._same_top(lat, ref):
-            if not self._ignoring:
-                log(f"lattice: {lat.rows - ref.rows} extra row(s) below the grid ignored "
-                    f"(the level's grid has {ref.rows})")
-            self._ignoring = True
-            return ref
-        if lat.cols != ref.cols and self._same_outline(lat, ref):
-            self._new_key, self._new_count = None, 0
-            raise VisionError(f"grid geometry {self._shape(lat)}: same outline as the level's "
-                              f"{self._shape(ref)}, other cell size - misread, not used")
+        if not self.fixed:
+            self._frames += 1
+            if self._finer(lat, self.ref):
+                log(f"lattice: finer reading {self._shape(lat)} replaces {self._shape(self.ref)}")
+                self.ref, self._frames = lat, 0
+                return lat
         key = CellMemory.key(lat)
-        self._new_count = self._new_count + 1 if key == self._new_key else 1
-        self._new_key = key
-        if self._new_count >= self.switch_frames:
-            log(f"lattice: new grid geometry {self._shape(lat)} (was {self._shape(ref)})")
-            self.ref, self._new_key, self._new_count = lat, None, 0
+        if key == CellMemory.key(self.ref):
+            self._noted = None
             return lat
-        raise VisionError(f"grid geometry {self._shape(lat)} differs from the level's "
-                          f"{self._shape(ref)} ({self._new_count}/{self.switch_frames})")
+        if key != self._noted:
+            self._noted = key
+            if lat.rows > self.ref.rows and self._same_top(lat, self.ref):
+                log(f"lattice: {lat.rows - self.ref.rows} extra row(s) below the grid ignored "
+                    f"(the level's grid has {self.ref.rows})")
+            else:
+                log(f"lattice: frame reads {self._shape(lat)} (walls fit {lat.fit:.2f}), "
+                    f"read with the level's {self._shape(self.ref)}")
+        return self.ref
 
 
 class RecentUnlocks:

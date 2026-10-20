@@ -13,13 +13,14 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 
 from cells import (CELL_LOCK_BY_NAME, Cell, Kind, cell_features, classify_cell,
-                   colour_distances, empty_fraction, icon_lab, path_playable)
+                   colour_distances, empty_fraction, foot_lab, foot_stage, icon_lab,
+                   path_playable)
 from config import VisionConfig
 from digits import DigitReader
 from hints import CellMemory, HintArrows, LatticeLock, RecentUnlocks, clean, occlusion_mask
 from belt import Slot, read_conveyor
 from icons import IconMatcher
-from palette import Palette, bgr_to_lab, lab_distance
+from palette import Lab, Palette, bgr_to_lab, lab_distance
 from sand import read_sand
 from unknown_colours import UnknownColour, unknown_sand
 from zones import crop_rel  # noqa: F401  (re-exported)
@@ -34,6 +35,7 @@ class Lattice:
     cw: float          # cell size in pixels
     ch: float
     mask: np.ndarray   # rows x cols bool: lattice position is a grid cell
+    fit: float = 1.0   # share of the inner walls on cell boundaries (vision.wall_alignment)
 
     @property
     def rows(self) -> int:
@@ -87,15 +89,16 @@ def wall_alignment(g: np.ndarray, gx0: int, gx1: int, cw: float, min_run: float)
 
 
 def _wall_aligned(ac: np.ndarray, pitch: int, lo: int, g: np.ndarray, gx0: int, gx1: int,
-                  v: VisionConfig) -> float:
-    """``pitch`` if the walls inside the grid sit on its cell boundaries, else the first of its
-    1/2, 1/3 (nearest autocorrelation peak) whose boundaries they do. Live run 20261020-122638
-    (L187): as the middle lanes emptied, the half-pitch peak faded (0.50 -> 0.38 of the 2x peak's
-    0.52) and the lattice became 4x4, but the lane walls sit at 1, 2, 5, 6 x 56.6 px."""
+                  v: VisionConfig) -> Tuple[float, float]:
+    """(pitch, fit): ``pitch`` if the walls inside the grid sit on its cell boundaries, else the
+    first of its 1/2, 1/3 (nearest autocorrelation peak) whose boundaries they do; ``fit`` is
+    the wall alignment of the pitch returned. Live run 20261020-122638 (L187): as the middle
+    lanes emptied, the half-pitch peak faded (0.50 -> 0.38 of the 2x peak's 0.52) and the
+    lattice became 4x4, but the lane walls sit at 1, 2, 5, 6 x 56.6 px."""
     min_run = 0.3 * pitch * v.cell_aspect
-    if wall_alignment(g, gx0, gx1, (gx1 - gx0) / max(1, round((gx1 - gx0) / pitch)),
-                      min_run) >= v.pitch_wall_align:
-        return float(pitch)
+    fit = wall_alignment(g, gx0, gx1, (gx1 - gx0) / max(1, round((gx1 - gx0) / pitch)), min_run)
+    if fit >= v.pitch_wall_align:
+        return float(pitch), fit
     for k in (2, 3):
         q = int(round(pitch / k))
         if q < lo:
@@ -103,9 +106,10 @@ def _wall_aligned(ac: np.ndarray, pitch: int, lo: int, g: np.ndarray, gx0: int, 
         a, b = max(lo, q - 3), min(len(ac), q + 4)
         q = a + int(np.argmax(ac[a:b]))
         cw = (gx1 - gx0) / max(1, round((gx1 - gx0) / q))
-        if wall_alignment(g, gx0, gx1, cw, min_run) >= v.pitch_wall_align:
-            return float(q)
-    return float(pitch)
+        f = wall_alignment(g, gx0, gx1, cw, min_run)
+        if f >= v.pitch_wall_align:
+            return float(q), f
+    return float(pitch), fit
 
 
 def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig,
@@ -152,7 +156,7 @@ def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig,
     lo, hi = int(0.06 * w), int(0.2 * w)
     pitch = lo + int(np.argmax(ac[lo:hi]))
     pitch = _fundamental(ac, pitch, lo, v.pitch_harmonic_ratio)
-    cw = _wall_aligned(ac, pitch, lo, g, gx0, gx1, v)
+    cw, fit = _wall_aligned(ac, pitch, lo, g, gx0, gx1, v)
     cols = max(1, round((gx1 - gx0) / cw))
     cw = (gx1 - gx0) / cols
     rows = max(1, round((gy1 - gy0) / (cw * v.cell_aspect)))
@@ -169,7 +173,7 @@ def find_lattice(img: np.ndarray, palette: Palette, v: VisionConfig,
                 mask[r, c] = True
             else:
                 mask[r, c] = a.size > 0 and a[seen].mean() > 0.5
-    return Lattice(zx0 + float(gx0), zy0 + float(gy0), float(cw), float(ch), mask)
+    return Lattice(zx0 + float(gx0), zy0 + float(gy0), float(cw), float(ch), mask, fit)
 
 
 @dataclass
@@ -248,6 +252,13 @@ def cell_crop(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) ->
     return img[y0:y1, x0:x1]
 
 
+def foot_strip(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) -> np.ndarray:
+    """The cell's own rectangle between the bottom of its object crop (cell_box) and where the
+    object of the row below starts overhanging (``cell_shift_up``)."""
+    x0, y0, x1, y1 = cell_box(lat, r, c, v)
+    return img[y1:int(lat.rect(r, c)[3] - v.cell_shift_up * lat.ch), x0:x1]
+
+
 def icon_crop(img: np.ndarray, lat: Lattice, r: int, c: int, v: VisionConfig) -> np.ndarray:
     """Where a lock / key icon is matched: the cell's own rectangle (not shifted up like the
     buckets), inset by ``icon_inset``. The shifted bucket crop held the rim of the bucket above
@@ -318,9 +329,10 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
     ``lattices``: the level's grid geometry across frames (hints.LatticeLock)."""
     lat = find_lattice(img, palette, v, occluded)
     if lattices is not None:
-        lat = lattices.check(lat, log)
+        lat = lattices.check(lat, log, img.shape[:2])
     regions = find_curtains(img, lat, palette, v, reader)
     grid: Grid = [[None] * lat.cols for _ in range(lat.rows)]
+    feet: Dict[Tuple[int, int], Optional[Lab]] = {}   # open buckets: the strip under the crop
     for i, reg in enumerate(regions):
         for r, c in reg.cells:
             grid[r][c] = Cell(r, c, Kind.LOCK, lock=reg.lock, unlock=reg.unlock,
@@ -360,6 +372,13 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
                         r, c, Kind.UNKNOWN, reason="hidden by hint arrow, no earlier reading")
                     cell.occluded = True
             grid[r][c] = cell
+            if cell.kind is Kind.BUCKET and cell.face_up and not cell.occluded:
+                feet[(r, c)] = foot_lab(foot_strip(img, lat, r, c, v), palette, v)
+    for (r, c), lab in feet.items():
+        below = grid[r + 1][c] if r + 1 < lat.rows else None
+        stage = foot_stage(grid[r][c], lab, below, palette, v)
+        if stage is not None:
+            grid[r][c].body = stage
     return lat, grid, regions
 
 
