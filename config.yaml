@@ -107,6 +107,8 @@ vision:                      # vision.py / screens.py; colours come from dataset
   ice_min_dark: 0.05
   color_max_dist: 22.0       # LAB distance to the nearest palette bucket colour
   sand_max_dist: 18.0
+  sand_min_share: 0.0005     # sand colours below this share of the picture are dropped (was 0.2 %: the
+                             # last grains a 96-99 % bucket needs read as 0 - run 171133)
   slot_min_cover: 0.55       # conveyor: object share of a bucket's run (end posts ~0.45)
   bottom_band: 0.06          # fallback "exposed" band (share of the picture) if no bottom edge found
   # hint arrows over the grid bottom (hints.py, dataset/templates/hints/): masked out of the
@@ -197,6 +199,9 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
   # not tapped if it would leave fewer free slots than the other board colours that still have
   # >= endgame_sand_min buckets of sand in the picture and none on the belt (darkred there)
   endgame_colours: 3
+  key_min_exposed: 0.2       # key colours (endgame.key_reserve): a board colour this much of the contact
+                             # layer (or covering buried belt colours) keeps the slots needed to reach its
+                             # nearest bucket (1 + buckets in front on the path; user, run 171133)
   endgame_sand_min: 0.5
   chest_settle_s: 1.5        # a chest opened: no decision this long (its buckets are landing), then a full re-read
   analyze_interval_s: 0.5    # overlay --dry-run: min seconds between analyses
@@ -270,8 +275,11 @@ flow:                        # flow.py: screens outside gameplay (docs/GAME_RULE
   same_button_max: 3         # the same button tapped this often while the screen stays -> stop
   max_taps_between_levels: 10  # screen taps without getting back into a level -> stop
   forbidden_margin: 0.01     # a tap must be at least this far outside forbidden anchors (Watch Ad, Get App, ...)
-  unknown_max_s: 60.0        # screen "other" (unknown / loading) this long -> stop, frame saved
-  ad_max_s: 150.0            # an ad with no ✕ found this long -> stop, frame saved
+  unknown_max_s: 180.0       # screen "other" (unknown / loading) this long -> stop, frame saved
+  ad_max_s: 180.0            # an ad with no ✕ found this long -> stop, frame saved
+  ad_after_tap_s: 120.0      # an unknown screen this soon after a screen tap (Try Again / NEXT / Quit)
+                             # may be an ad (run 171133: Trade Republic / Netflix, no ad anchor): ✕ / skip searched
+  unknown_frame_s: 10.0      # on an unknown / ad screen: save a frame this often (frames/*-screen-*-wait)
   stuck_max_s: 90.0          # a known screen with nothing allowed to tap this long -> stop
   ad_context_s: 60.0         # an unknown screen this soon after an ad (end card) is searched for a ✕ too
   require_lives: true        # PLAY / Try Again only when the heart reads >= 1 life
@@ -283,6 +291,11 @@ flow:                        # flow.py: screens outside gameplay (docs/GAME_RULE
   close_min_size: 0.022      # glyph size, share of screen width (the mute icon's x is 0.017)
   close_max_size: 0.09
   close_min_iou: 0.5         # overlap with a drawn X (real ✕ 0.75-0.86)
+  # ad skip (adclose.find_skip): ▶| on a filled disc (run 171133 Trade Republic ad: yellow, top
+  # right; its top-left twin is the mute speaker - never tapped). Never Download / install buttons.
+  skip_zone: [0.75, 0.0, 1.0, 0.15]
+  skip_min_size: 0.035
+  skip_max_size: 0.09
   close_contrast: 40.0       # adaptive threshold offset (grey levels)
 
 session:                     # python -m bot --levels N (unattended play)

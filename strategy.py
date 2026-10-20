@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from cells import Kind
 from config import StrategyConfig
-from endgame import belt_stuck, endgame_reserve, last_slot_gamble, sacrifice
+from endgame import belt_stuck, endgame_reserve, key_reserve, last_slot_gamble, sacrifice
 from lookahead import Outlook, belt_outlook, outlook
 from planner import Opened, Plan, ScatterRisk, opened_value, plan, scatter_risk
 from state import LevelState, Pos
@@ -201,6 +201,11 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig, opener: bool = Fal
             cand.reserved = True
             cand.rejected = (f"endgame: keep a slot for {', '.join(keep)} (still in the picture, "
                              f"{cand.color} almost done)")
+        else:
+            why_key = key_reserve(state, pos, sc)
+            if why_key is not None:
+                cand.reserved = True
+                cand.rejected = why_key
     cand.stages = [cell.body] if cell.body else []
     if cap:   # tower: the later stages need their sand too (after the top's, in order)
         for s in cand.stages:

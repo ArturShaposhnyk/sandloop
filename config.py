@@ -123,6 +123,7 @@ class VisionConfig:
     ice_min_dark: float = 0.05
     color_max_dist: float = 22.0      # LAB distance to the nearest palette colour
     sand_max_dist: float = 18.0
+    sand_min_share: float = 0.0005       # a sand colour below this share of the picture is not reported
     slot_min_cover: float = 0.55      # conveyor: object share of a bucket's run (posts ~0.45)
     bottom_band: float = 0.06         # fallback "exposed" band if the contact layer isn't found
     lower_band: float = 0.3           # "lower part" of the picture zone (sand reaching soon)
@@ -169,6 +170,7 @@ class StrategyConfig:
     look_sand_margin: float = 1.0         # live = sand >= this x belt need x capacity
     weight_lookahead: float = 1.0         # score += this x (usable-slot share after - now)
     endgame_colours: int = 3              # <= this many colours on the board: endgame reserve
+    key_min_exposed: float = 0.2          # key colour: this much of the contact layer while belt colours are buried
     endgame_sand_min: float = 0.5         # ... for colours with this many buckets of sand left
     belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
     relaxed_free_slots: int = 3           # this many free slots and up: min exposure relaxed
@@ -226,8 +228,10 @@ class FlowConfig:
     same_button_max: int = 3             # same button tapped this often, screen unchanged -> stop
     max_taps_between_levels: int = 10    # screen taps without reaching gameplay -> stop
     forbidden_margin: float = 0.01       # a tap must be this far outside forbidden anchor boxes
-    unknown_max_s: float = 60.0          # screen "other" this long -> stop (frame saved)
-    ad_max_s: float = 150.0              # ad with no ✕ found this long -> stop
+    unknown_max_s: float = 180.0         # screen "other" this long -> stop (frame saved)
+    ad_max_s: float = 180.0              # ad with no ✕ found this long -> stop
+    ad_after_tap_s: float = 120.0        # an "other" screen this soon after a screen tap may be an ad
+    unknown_frame_s: float = 10.0        # on an unknown / ad screen: save a frame this often
     stuck_max_s: float = 90.0            # known screen, nothing allowed to tap this long -> stop
     ad_context_s: float = 60.0           # an "other" screen this soon after an ad: look for ✕ too
     require_lives: bool = True           # PLAY / Try Again only with lives read as >= 1
@@ -241,6 +245,10 @@ class FlowConfig:
     close_max_size: float = 0.09
     close_min_iou: float = 0.5           # overlap with a drawn X
     close_contrast: float = 40.0         # adaptive threshold offset (grey levels)
+    # ad skip button (adclose.find_skip): ▶| on a filled disc in this zone
+    skip_zone: List[float] = field(default_factory=lambda: [0.75, 0.0, 1.0, 0.15])
+    skip_min_size: float = 0.035         # disc size, share of screen width (run 171133: 0.054)
+    skip_max_size: float = 0.09
 
 
 @dataclass
@@ -420,13 +428,14 @@ def validate(cfg: Config) -> Config:
     if fl.confirm_frames < 1 or fl.same_button_max < 1 or fl.max_taps_between_levels < 1:
         raise ConfigError("flow.confirm_frames, same_button_max, max_taps_between_levels "
                           "must be >= 1")
-    if min(fl.target_tolerance, fl.tap_cooldown_s, fl.forbidden_margin, fl.ad_context_s,
+    if (min(fl.target_tolerance, fl.tap_cooldown_s, fl.forbidden_margin, fl.ad_context_s,
            fl.heart_tol, fl.heart_min_share, fl.close_min_size, fl.close_min_iou,
-           fl.close_contrast) < 0 or min(fl.unknown_max_s, fl.ad_max_s, fl.stuck_max_s) <= 0:
+           fl.close_contrast, fl.ad_after_tap_s, fl.skip_min_size) < 0
+            or min(fl.unknown_max_s, fl.ad_max_s, fl.stuck_max_s, fl.unknown_frame_s) <= 0):
         raise ConfigError("flow: thresholds must be >= 0, timeouts > 0")
-    if fl.close_max_size <= fl.close_min_size:
-        raise ConfigError("flow.close_max_size must be > close_min_size")
-    for r in [fl.lives_zone] + list(fl.close_zones):
+    if fl.close_max_size <= fl.close_min_size or fl.skip_max_size <= fl.skip_min_size:
+        raise ConfigError("flow.close_max_size / skip_max_size must be > their min")
+    for r in [fl.lives_zone, fl.skip_zone] + list(fl.close_zones):
         if (not isinstance(r, (list, tuple)) or len(r) != 4
                 or not (0 <= r[0] < r[2] <= 1 and 0 <= r[1] < r[3] <= 1)):
             raise ConfigError("flow.lives_zone / close_zones must be [x0, y0, x1, y1] in 0..1")

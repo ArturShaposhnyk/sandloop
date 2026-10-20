@@ -40,6 +40,7 @@ from cells import Cell, Kind
 from state import LevelState, Pos
 
 Sig = Tuple[str, ...]
+UNREAD = "?"                          # a belt bucket the reader did not see: keeps its slot
 
 
 @dataclass
@@ -192,6 +193,11 @@ class Sim:
             need = b.need(state.unknown_fill_need)
             belt.append(Slot((b.color,) + tuple(b.stages),
                              max(1, round(need * cap.get(b.color, 1)))))
+        # buckets the counter shows but the belt reader did not (off view, label unread): a
+        # slot that stays taken (run 171133 551: k 4, 3 read - the plan thought 2 were free)
+        unread = sum(1 for b in state.conveyor if not b.color) + max(
+            0, (state.conveyor_k or 0) - len(state.conveyor))
+        belt += [Slot((UNREAD,), 1) for _ in range(unread)]
         return cls(grid, belt, pic, cap, sc)
 
     def clone(self) -> "Sim":
@@ -217,11 +223,13 @@ class Sim:
         need: Dict[str, int] = {}
         for s in self.belt:
             need[s.colour] = need.get(s.colour, 0) + s.left
-        return sum(1 for s in self.belt if self.pic.count(s.colour) < need[s.colour])
+        return sum(1 for s in self.belt
+                   if s.colour != UNREAD and self.pic.count(s.colour) < need[s.colour])
 
     def stuck_slots(self) -> int:
         """Belt buckets that collect nothing now (their colour too little in the contact layer)."""
-        return sum(1 for s in self.belt if self.sc.rate(self.pic.share(s.colour)) <= 0)
+        return sum(1 for s in self.belt
+                   if s.colour != UNREAD and self.sc.rate(self.pic.share(s.colour)) <= 0)
 
     def belt_fills(self) -> List[Tuple[str, int]]:
         """(colour, fill %) of the belt buckets, as the live belt reader shows them."""

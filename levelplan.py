@@ -5,8 +5,10 @@ restarts the same level), so the bot searches tap / wait sequences in ``sim.Sim`
 that never jams the belt:
 
 * **Beam search** (``plan_level``): each depth expands every node by its taps and a wait,
-  keeps the ``beam`` best by score = sand collected + win bonus - dead belt buckets (their
-  colour has not enough sand left) + free slots; jammed nodes are dropped; sequences a
+  keeps the ``beam`` best: a win first, then the fewest dead belt buckets (their colour has
+  not enough sand left; a dead bucket never leaves), then score = sand collected - stuck
+  buckets + free slots - taps into the last slot; jammed nodes and nodes whose full belt is
+  all dead (a lost level) are dropped; sequences a
   ``LevelMemory`` banned (the attempt that jammed last time on this board) are pruned. Stops at
   a win, when nothing can move, at ``max_depth`` or after ``budget_s``.
 * **Following it live** (``PlanRunner``): the plan records the board it expects before each
@@ -20,6 +22,8 @@ that never jams the belt:
   bucket gained sand for ``wait_stall_s``. Then the bot re-plans from the frame (the real
   belt); if that plan waits as well, the greedy strategy decides until the board changes.
   Every tap logs the plan's predicted belt and time next to the real ones ("plan check").
+* **Reserves first**: a step that the strategy's slot reserves reject (endgame reserve, key
+  colours: endgame.py) is not tapped; the strategy decides until the board changes.
 * **Level memory** (``LevelMemory``, debug/levels.jsonl): attempts of the same board (same
   start signature) that did not win ban their tap sequence; their sand use calibrates the
   bucket capacity of the simulator.
@@ -83,6 +87,18 @@ def sim_config(pc: Any, slots: int) -> SimConfig:
                      pc.max_wait_s)
 
 
+def _lost(s: Sim) -> bool:
+    """Belt full of buckets that can never fill: the level is lost (run 171133: plans ending
+    "5 dead on the belt" were followed)."""
+    return s.free == 0 and s.dead_slots() == len(s.belt)
+
+
+def _rank(s: Sim, total: int, pc: Any) -> Tuple[bool, int, float]:
+    """A win first, then fewer dead belt buckets (a dead bucket never leaves: user, run
+    171133 - any plan with fewer dead buckets is better), then the score."""
+    return (s.won, -s.dead_slots(), _score(s, total, pc))
+
+
 def plan_level(state: LevelState, pic: Picture, pc: Any,
                banned: Set[Tuple[Pos, ...]] = frozenset(),
                capacity: Optional[Dict[str, int]] = None) -> Plan:
@@ -102,17 +118,17 @@ def plan_level(state: LevelState, pic: Picture, pc: Any,
                 if w is not None:
                     nxt.append(w)
             nodes += len(nxt)
-            children += [c for c in nxt if not c.jam]
+            children += [c for c in nxt if not c.jam and not _lost(c)]
         if not children:
             break
         seen, uniq = set(), []
-        for c in sorted(children, key=lambda c: -_score(c, total, pc)):
+        for c in sorted(children, key=lambda c: _rank(c, total, pc), reverse=True):
             key = c.signature()           # one node per board: keeps the beam diverse
             if key not in seen:
                 seen.add(key)
                 uniq.append(c)
         beam = uniq[:pc.beam]
-        if _score(beam[0], total, pc) > _score(best, total, pc):
+        if _rank(beam[0], total, pc) > _rank(best, total, pc):
             best = beam[0]
         if best.won or time.monotonic() - t0 > pc.budget_s:
             break
@@ -264,6 +280,13 @@ class PlanRunner:
         if step.pos not in state.tappable:
             return Decision(None, f"wait: level plan step {step_i + 1}/{n}: r{step.pos[0]}"
                                   f"c{step.pos[1]} not tappable yet", fallback.candidates)
+        reserve = _reserve(state, step.pos, step.colour, self.cfg.strategy)
+        if reserve is not None:
+            self.given_up = board
+            log(f"level plan step {step_i + 1}/{n} (tap r{step.pos[0]}c{step.pos[1]} "
+                f"{step.colour}) breaks a slot reserve: {reserve} - the strategy decides until "
+                "the board changes")
+            return fallback
         self._check(state, step_i, now, log)
         cand = evaluate(state, step.pos, self.cfg.strategy, gamble=True)
         cand.rejected = None
@@ -355,6 +378,19 @@ class PlanRunner:
             f"{', capacity from earlier attempts' if cap else ''}):")
         for line in self.plan.describe():
             log(line)
+
+
+def _reserve(state: LevelState, pos: Pos, colour: str, sc: Any) -> Optional[str]:
+    """Why the strategy's slot reserves forbid this tap (endgame.py), or None."""
+    from endgame import endgame_reserve, key_reserve
+
+    free = state.free_slots
+    if not free:
+        return None
+    keep = endgame_reserve(state, colour, sc)
+    if keep and free - 1 < len(keep):
+        return f"endgame: keep a slot for {', '.join(keep)}"
+    return key_reserve(state, pos, sc)
 
 
 _PALETTES: Dict[str, Any] = {}

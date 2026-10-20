@@ -17,12 +17,31 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 (started) | lookahead 2-3 taps (`lookahead.py`), sand above the contact layer (`sand.contact_layers`), every level -> `debug/levels.jsonl` | `ebd0c2a` |
 | 7 | whole-level plan (`sim.py`, `levelplan.py`), level memory, per-colour capacity, endgame reserve, sacrifice | `ee2c1c8` |
 | 7 | run 161536: measured belt speed in the simulator, plan waits never stall, plan checks, focus / window fixes | `b5d5a7e` |
+| 7 | run 171133: sand read to the picture's bottom edge, key-colour reserve, plans ranked by dead buckets, ad skip | (this commit) |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 721 pass.
+Tests: `python -m pytest -q` - all 731 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-20)
+- **L187 run `20261020-171133`** (`--levels 3`, `d130e6d`): lost twice in the endgame, then an
+  ad stopped the session. Endgame: belt full of buckets at 96-99 % while darkred r3c2 (tappable:
+  r3c3 is empty, so not 2 slots away) was rejected "not enough sand (0.0 %)". **Root cause of the
+  darkred / cream under-read since run 145310**: the picture reaches ~12 px below the
+  `vision.picture` zone and those colours settle at the bottom. `sand.read_sand` now reads to
+  the real bottom edge (L187 end: darkred 0.17 % -> 1.34 %); colours down to 0.05 % are
+  reported (`vision.sand_min_share`; analyze_run shows "sand left 0.31 % (buried: not in the
+  contact layer)"). Replayed: at #54 the strategy now taps darkred.
+- **Key colours** (`endgame.key_reserve`, user): keep the slots needed to reach the nearest
+  bucket of a colour covering buried belt sand (1 + buckets in front on the path) - only while
+  that many are free. **Planner**: ranks nodes win > fewer dead belt buckets > score, drops nodes
+  whose full belt is all dead, keeps a slot for each belt bucket the reader did not see
+  (k 4 with 3 read), and a plan step that breaks a slot reserve is not tapped.
+- **Ads**: an unknown screen within `flow.ad_after_tap_s` (120 s) of a screen tap is searched for
+  the ✕ and the ▶| skip disc (`adclose.find_skip`, top right; the mute disc top left never
+  matches); never Download. Unknown / ad screens wait 3 min, a frame every 10 s. The second ad
+  (Netflix, then black for 60 s) showed no ✕ / skip in its only frame.
+- analyze_run "-1 other allowed" (plan steps the rules reject) fixed in bot.py.
 - **L187 run `20261020-161536`** (planner on, `d550e5a`): the plan worked for 6 taps and
   re-planned twice, then step 3 "tap r4c4 purple" waited for the belt (k 3 > 2) 32 s: yellow
   37 % and orange 0 % could not fill. Causes: (1) the simulator filled buckets from any sand in
@@ -123,7 +142,8 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
-1. Live L187 `--levels 1` with the measured belt speed; after it `python -m tools.belt_speed`
+1. Live L187 `--levels 3` (sand to the bottom edge changes every sand share: watch "not enough
+   sand", the capacity line, and how ads end - frames every 10 s); after it `python -m tools.belt_speed`
    (adds the new run's samples if passed, and lists the plan checks) and re-tune `planner.fill_*`.
 2. If Mirroring vanishes again: the `window list:` line says whether its window went
    off-screen (another Space / hidden) or was closed.
@@ -214,6 +234,14 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L187 live run 20261020-171133 (2026-10-20): endgame lost twice, ad stop
+- 54 taps over 2 attempts; both ended 5/5 with buckets at 96-99 %, contact layer darkred 54 % /
+  cream 40 %; plans late in attempt 2 said "3-5 dead on the belt at the end" and were followed.
+- Ads after Try Again: 288 s black, 301 Trade Republic (skip ▶| top right), then the window was
+  gone 1.2 s and a Sand Loop splash; level 2 started at 336 s. 617 s: Netflix, then black until
+  the stop at 676 s (unknown_max_s 60).
+- Tests: `tests/test_run_20261020_171133.py` (frames 00535, 00551, 00301, 00587).
 
 ## L187 live run 20261020-161536 (2026-10-20): plan wait stalled 32 s, window lost
 - 8 taps (6 by the start plan, 2 by the second re-plan), then 32 s "waits for the belt (k 3 > 2)"

@@ -196,12 +196,14 @@ def test_run_end_gambles_on_the_move_that_uncovers_most_for_the_belt(analyzer): 
     assert choose(st, analyzer.cfg.strategy).move is None
 
 
-def test_run_tap_21_lookahead_marks_blue_dead(analyzer):  # noqa: F811
-    """Tap #21 / #22 (k=2, yellow + darkgreen stalled): blue r4c2 has 2 % sand left (less than
-    a bucket): the lookahead counts it dead, orange alive."""
+def test_run_tap_21_blue_is_not_dead_with_the_whole_picture_read(analyzer):  # noqa: F811
+    """Tap #21 / #22 (k=2, yellow + darkgreen stalled). Read only down to the zone bottom, blue
+    r4c2 had 2.2 % sand (less than a bucket) and the lookahead counted it dead. The picture goes
+    on below the zone (run 171133): read to its real bottom edge blue has 2.9 % - a bucket - and
+    is as alive as orange."""
     pytest.importorskip("cv2")
     st = run_state(analyzer, "00108-tap", {"yellow": 2.0, "darkgreen": 31.0})
+    assert st.sand["blue"] > 0.027
     d = choose(st, analyzer.cfg.strategy)
     by = {c.pos: c for c in d.candidates}
-    assert by[(4, 2)].look_bonus < by[(5, 4)].look_bonus
-    assert d.move.pos != (4, 2)
+    assert by[(4, 2)].look_bonus == pytest.approx(by[(5, 4)].look_bonus)

@@ -28,6 +28,15 @@ def _pct(x: Optional[float]) -> str:
     return "?" if x is None else f"{x:.0%}"
 
 
+def _sand(rec: Dict[str, Any], colour: str) -> str:
+    """Sand left of a colour (share of the picture, 0.01 % steps): the last grains a 96-99 %
+    bucket needs are a few hundredths of a percent; "buried" when none of it is in the contact
+    layer (the belt cannot reach it until the sand below is collected)."""
+    left = rec["sand"].get(colour, 0.0)
+    buried = left > 0 and rec["exposed"].get(colour, 0.0) < 0.01
+    return f"{left:.2%}" + (" (buried: not in the contact layer)" if buried else "")
+
+
 def _belt(rec: Dict[str, Any]) -> str:
     conv = rec.get("conveyor") or []
     return ", ".join(f"{b['color']}{'/' + '/'.join(b['stages']) if b.get('stages') else ''}"
@@ -40,7 +49,7 @@ def _tap_line(tap: Dict[str, Any]) -> str:
             f"{'/' + '/'.join(tap['stages']) if tap.get('stages') else ''}: "
             f"k {tap['k_before']}->{'' if tap['k_before'] is None else tap['k_before'] + 1}, "
             f"avail {_pct(tap['avail'])} (exp {_pct(tap['exposed'])}), score {tap['score']:.2f}, "
-            f"{tap['alternatives']} other allowed, {tap['why']}")
+            f"{max(0, tap['alternatives'])} other allowed, {tap['why']}")
 
 
 def stalls(analyses: List[Dict[str, Any]], stall_s: float) -> Dict[str, Tuple[float, float]]:
@@ -116,7 +125,7 @@ def post_mortem(run_dir: Path) -> List[str]:
             at = min(analyses, key=lambda a: abs(a["t"] - began))
             out.append(f"  {color}: {s:.0f}s from {began:.1f}s, {src}; at the stall "
                        f"exposed {_pct(at['exposed'].get(color, 0.0))}, "
-                       f"sand left {_pct(at['sand'].get(color, 0.0))}")
+                       f"sand left {_sand(at, color)}")
 
     last_slot = [t for t in taps if t.get("free_before") == 1]
     if last_slot:
@@ -135,7 +144,7 @@ def post_mortem(run_dir: Path) -> List[str]:
     for b in waiting:
         c = b["color"]
         out.append(f"  {c}: exposed {_pct(end['exposed'].get(c, 0.0))}, sand left "
-                   f"{_pct(end['sand'].get(c, 0.0))}"
+                   f"{_sand(end, c)}"
                    + (f", stalled {end['stalled'][c]:.0f}s" if c in (end.get("stalled") or {})
                       else ""))
     top = sorted(end["exposed"].items(), key=lambda kv: -kv[1])[:4]

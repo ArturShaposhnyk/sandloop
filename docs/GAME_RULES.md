@@ -206,12 +206,25 @@
   being tapped is kept (no two colours waiting for each other).
 - A burst follow-up passes the same checks as any tap (rules, lookahead) and needs
   `bot.burst_min_score`; it never takes the last free slot.
+- **Key colours** (user, run 20261020-171133): a colour whose sand covers the last sand of belt
+  buckets (belt colours < `look_min_exposed` of the contact layer while it covers them, or it
+  fills `strategy.key_min_exposed` of the contact layer then) must stay reachable: keep the slots
+  its nearest bucket needs (1 + the buckets in front of it on the path). Taps of key buckets or
+  of buckets on that path are allowed; a key out of reach with today's free slots reserves
+  nothing (`endgame.key_reserve`).
+- A level plan that ends with dead belt buckets is worse than any with fewer (a dead bucket never
+  leaves); a full belt of dead buckets = lost, never planned. A plan step that breaks the slot
+  reserves above is not tapped (the strategy decides).
 
 ## Sand per bucket
 - Bucket capacity is the same for all buckets of a level, but the picture reading under-counts
   some colours (L187 darkred, cream by 2-3x: darkred read 1 % of the picture while it was 39 % of
   the contact layer). The bot measures capacity **per colour** at level start (its sand / its
   bucket stages, the level being balanced per colour) and uses it for "enough sand left".
+- Cause found in run 20261020-171133: the picture reaches ~12 px below the configured
+  `vision.picture` zone, and the colours that settle at the bottom (darkred, cream) were cut off
+  (L187 end: darkred 0.17 % in the zone, 1.3 % down to the edge). Sand is now read down to the
+  picture's real bottom edge, and colours down to `vision.sand_min_share` (0.05 %) are reported.
 
 ## Lookahead (phase 7, `lookahead.py`; weights in `config.yaml` `strategy:`)
 - Before each tap the bot simulates up to `look_depth` (3) taps: the candidate, then the
@@ -318,6 +331,12 @@ must be extensible:
 - Ads / popups: only tap ✕, and wait for it to appear. Never tap "Get App", purchases or
   "Activate". If an App Store sheet opens, close it (its ✕). "Take a break!" = wait.
   Ads are recognised by their anchors or the iOS status bar (the game hides it).
+- Ads may have no known anchor at all (run 20261020-171133 after Try Again: Trade Republic
+  "6 %" with a yellow "Download" button and two small yellow discs top left (mute) / top right
+  (▶| skip); Netflix). An unknown screen within `flow.ad_after_tap_s` of a screen tap is
+  searched for the ✕ and the **skip** (▶|) button - ✕ / skip only (user), never Download.
+  Unknown / ad screens are waited for `flow.unknown_max_s` / `ad_max_s` (3 min) with a frame
+  saved every `flow.unknown_frame_s`.
 - Stop the bot when lives reach 0 (heart in the top bar). PLAY / Try Again only with lives >= 1.
 - Every tap outside gameplay needs `flow.confirm_frames` frames agreeing on the button, never
   lands inside a forbidden anchor (Keep Playing, Watch Ad, Get App, App Store badge) and is

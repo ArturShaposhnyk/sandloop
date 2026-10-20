@@ -399,7 +399,7 @@ class Bot(LevelMixin):
                                  gamble=cand.gamble,
                                  lookahead=cand.outlook.describe() if cand.outlook else None,
                                  alternatives=sum(1 for x in res.decision.candidates
-                                                  if x.rejected is None) - 1)
+                                                  if x.rejected is None and x.pos != cand.pos))
             self.level_taps.append({**evt, "decision": self.level_last} if i == 0 else evt)
         if tapped:
             self.pending = (tapped, st.conveyor_k)

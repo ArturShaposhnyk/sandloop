@@ -6,8 +6,11 @@ GAME_RULES.md "Bot behaviour outside gameplay" as data (``plan``):
     menu            red ✕ of a popup, else PLAY  (offers, passes, events: only ✕)
     revive          Quit, else the popup's red ✕ (never Keep Playing: coins)
     fail            Try Again
-    ad              "Take a break!" -> wait; else the generic ✕ (adclose.py) once it shows
-    other           wait (an ad end card: the ✕ too, within flow.ad_context_s of an ad)
+    ad              "Take a break!" -> wait; else the generic ✕ (adclose.py) once it shows,
+                    else an ad's skip button (▶|, adclose.find_skip); never Download / install
+    other           wait (maybe an ad: ✕ / skip too, within flow.ad_context_s of an ad or
+                    flow.ad_after_tap_s of a screen tap - run 171133: ads without any anchor
+                    after Try Again)
 
 Taps only at a matched anchor's centre or a found ✕, never inside a forbidden anchor
 (screens.FORBIDDEN), only after ``flow.confirm_frames`` analyses in a row agreed on the same
@@ -29,6 +32,7 @@ from screens import FORBIDDEN, ScreenResult
 
 LIVES_BUTTONS = ("play", "try_again")
 AD_CLOSE = "ad_close"
+AD_SKIP = "ad_skip"
 
 
 @dataclass
@@ -69,12 +73,17 @@ def plan(res: ScreenResult, img: np.ndarray, lives: Optional[int], fc: FlowConfi
     elif s == "ad" and res.find("take_a_break") is not None:
         return ScreenAction("wait", s, "take a break: the ad follows")
     if s == "ad" or (s == "other" and ad_recent):
-        from adclose import find_close
+        from adclose import find_close, find_skip
 
         for mark in find_close(img, fc):
             act = ScreenAction("tap", s, f"ad ✕ {mark.score:.2f}", AD_CLOSE, mark.center_rel,
                                mark.score)
             break
+        if act is None:
+            for mark in find_skip(img, fc):
+                act = ScreenAction("tap", s, f"ad skip {mark.score:.2f}", AD_SKIP,
+                                   mark.center_rel, mark.score)
+                break
     if act is None:
         return ScreenAction("wait", s, "unknown screen" if s == "other" else
                             "ad: no ✕ yet" if s == "ad" else "no allowed button")
@@ -129,7 +138,9 @@ class ScreenFlow:
             self.last_ad = now
         if lives == 0:
             return ScreenAction("stop", res.screen, "lives 0")
-        act = plan(res, img, lives, self.fc, now - self.last_ad <= self.fc.ad_context_s)
+        ad_recent = (now - self.last_ad <= self.fc.ad_context_s
+                     or now - self.last_tap <= self.fc.ad_after_tap_s)
+        act = plan(res, img, lives, self.fc, ad_recent)
         if act.kind == "stop":
             return act
         if self.since is None or self.since[0] != res.screen:

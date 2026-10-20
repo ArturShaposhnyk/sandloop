@@ -7,6 +7,8 @@ screen width, roughly square, whose pixels overlap a drawn X by ``close_min_iou`
 arms (corners), a filled centre and empty edge midpoints. Dataset: the App Store sheet ✕ (018)
 0.75, popup ✕s 0.76-0.86; the mute icon's small "x" is below the size limit; no hit on
 gameplay / menu / win screens. Only flow.py calls it, and only on ad screens.
+
+``find_skip``: the skip button of some ads (▶| on a filled disc, top right; run 171133).
 """
 from __future__ import annotations
 
@@ -86,4 +88,51 @@ def find_close(img: np.ndarray, fc: FlowConfig,
                 if score >= fc.close_min_iou:
                     out.append(CloseMark(round(score, 3),
                                          ((x0 + x + w / 2) / W, (y0 + y + h / 2) / H), w / W))
+    return sorted(out, key=lambda m: -m.score)
+
+
+def skip_score(glyph: np.ndarray) -> float:
+    """``glyph``: binary light glyph cut to its box. A skip glyph (▶|, L187 run 171133 Trade
+    Republic ad) has a solid vertical bar in its right third and a triangle that narrows to the
+    right left of it; the mute speaker (top-left twin) has broken arcs there. Returns the bar's
+    height share (0 when the layout does not fit)."""
+    h, w = glyph.shape
+    if h < 5 or w < 5:
+        return 0.0
+    right = glyph[:, int(w * 2 / 3):]
+    bar = max((right[:, j].sum() for j in range(right.shape[1])), default=0) / h
+    left = glyph[:, :int(w / 2)]
+    tri = left.sum(axis=0)
+    if bar < 0.85 or len(tri) < 2 or tri[0] < tri[-1]:   # the triangle's base is on the left
+        return 0.0
+    return float(bar)
+
+
+def find_skip(img: np.ndarray, fc: FlowConfig) -> List[CloseMark]:
+    """Skip buttons (▶| on a filled disc, ``flow.skip_zone``), best first."""
+    import cv2
+
+    H, W = img.shape[:2]
+    z = fc.skip_zone
+    x0, y0, x1, y1 = int(z[0] * W), int(z[1] * H), int(z[2] * W), int(z[3] * H)
+    hsv = cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+    if hsv.size == 0:
+        return []
+    disc = ((hsv[..., 1] >= 120) & (hsv[..., 2] >= 150)).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(disc, connectivity=8)
+    lo, hi = fc.skip_min_size * W, fc.skip_max_size * W
+    out: List[CloseMark] = []
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        if not (lo <= w <= hi and lo <= h <= hi and 0.8 <= w / h <= 1.25):
+            continue
+        inner = hsv[y + h // 6:y + h - h // 6, x + w // 6:x + w - w // 6]
+        light = ((inner[..., 1] < 90) & (inner[..., 2] >= 200)).astype(np.uint8)
+        ys, xs = np.nonzero(light)
+        if len(ys) < 6:
+            continue
+        score = skip_score(light[ys.min():ys.max() + 1, xs.min():xs.max() + 1])
+        if score > 0:
+            out.append(CloseMark(round(score, 3), (float((x0 + x + w / 2) / W),
+                                                   float((y0 + y + h / 2) / H)), float(w / W)))
     return sorted(out, key=lambda m: -m.score)

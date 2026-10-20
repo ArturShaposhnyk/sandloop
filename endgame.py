@@ -110,3 +110,58 @@ def sacrifice(state: LevelState, cand: "Candidate", now, check, sc: StrategyConf
     c.look_bonus = sc.weight_lookahead * (o.value - now.value)
     c.score += c.look_bonus
     return c
+
+
+def key_reserve(state: LevelState, pos, sc: StrategyConfig) -> Optional[str]:
+    """User (2026-10-20, run 20261020-171133): a "key" colour is one whose contact sand covers
+    (``look_min_gain`` of the contact layer at least, ``state.above``) the sand of belt buckets
+    that collect nothing now (their colour < ``look_min_exposed`` of it), or that fills
+    ``key_min_exposed`` of the contact layer while such buckets wait (L187: darkred 54 % / cream 40 % of the
+    contact layer over yellow / orange / blue / darkgreen at 96-99 %). Reaching its nearest
+    bucket takes 1 + the buckets in front of it on the path (darkred r3c2 behind yellow r2c2 =
+    2 slots). A tap at ``pos`` that is neither a key colour's bucket nor on the path to the
+    nearest one must leave that many slots free - only while they are free now (a key out of
+    reach anyway reserves nothing: L186 run 162703, 1 free, magenta behind pink). Returns why
+    it is rejected, or None."""
+    from cells import Kind
+    from planner import shortest_path
+
+    free = state.free_slots
+    belt = {b.color for b in state.conveyor if b.color and (b.fill or 0) < 100}
+    belt |= {s for b in state.conveyor for s in b.stages}
+    if not free or not belt:
+        return None
+    board = state.grid_buckets()
+    buried = {d for d in belt if state.exposed.get(d, 0.0) < sc.look_min_exposed}
+    if not buried:
+        return None
+    keys = [k for k in board if not state.on_belt(k)
+            and state.exposed.get(k, 0.0) >= sc.look_min_exposed
+            and (state.exposed.get(k, 0.0) >= sc.key_min_exposed
+                 or any(d in buried and d != k and share >= sc.look_min_gain
+                        for d, share in state.above.get(k, {}).items()))]
+    cell = state.cell(pos)
+    if not keys or (cell is not None and cell.color in keys):
+        return None                     # a key colour's bucket itself is always allowed
+    costs = {(c.row, c.col): (1.0 if c.kind is Kind.BUCKET else 0.0)
+             for c in state.cells() if c.kind in (Kind.BUCKET, Kind.EMPTY)}
+    best = None                         # (slots needed, key colour, target, path)
+    for c in state.cells(Kind.BUCKET):
+        if c.color not in keys:
+            continue
+        found = shortest_path(state, (c.row, c.col), costs)
+        if found is None:
+            continue
+        steps = found[1]
+        if pos == (c.row, c.col) or pos in steps:
+            return None                 # this tap is on the way to a key colour
+        need = len(steps) + 1
+        if need <= free and (best is None or need < best[0]):   # reachable with today's slots
+            best = (need, c.color, (c.row, c.col), steps)
+    if best is None or free - 1 >= best[0]:
+        return None
+    need, colour, (r, c), steps = best
+    covers = sorted(d for d in state.above.get(colour, {}) if d in buried and d != colour)
+    path = ", ".join(f"r{p[0]}c{p[1]} {state.cell(p).color}" for p in steps)
+    return (f"keys: keep {need} slot(s) to reach {colour} r{r}c{c} (its sand covers "
+            f"{', '.join(covers)} on the belt" + (f"; in front: {path}" if path else "") + ")")

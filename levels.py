@@ -100,6 +100,11 @@ class LevelMixin:
             self.log.log(f"screen {res.screen}: {act.reason}")
             self.log.event("screen_wait", frame=self.frame_no, screen=res.screen,
                            reason=act.reason, png=png)
+            self.screen_frame_t = now
+        elif (res.screen in ("other", "ad")
+              and now - getattr(self, "screen_frame_t", -1e9) >= self.cfg.flow.unknown_frame_s):
+            self.screen_frame_t = now   # unknown / ad screens: a frame every unknown_frame_s
+            self.log.frame(f"{self.frame_no:05d}-screen-{res.screen}-wait", frame)
         self.last_screen_reason = act.reason
 
     def _screen_tap(self, act: Any, res: Any, frame: np.ndarray, lives: Optional[int]) -> None:

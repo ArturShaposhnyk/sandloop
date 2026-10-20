@@ -18,8 +18,17 @@ def read_sand(img: np.ndarray, palette: Palette, v: VisionConfig
     """Share of the picture covered by each sand colour, the share of each colour in the
     contact layer (sand the belt can collect right now, see ``contact_layers``), in the lower
     ``lower_band`` of the picture zone (sand that will reach the belt soon) and what lies
-    right above each contact colour (``contact_layers``)."""
-    pic = crop_rel(img, v.picture)
+    right above each contact colour (``contact_layers``). The picture is read down to its real
+    bottom edge (``_bottom_edge``): it can reach below the configured zone, and the colour that
+    settles at the bottom was cut off (run 20261020-171133, L187 end: darkred 0.17 % in the zone
+    vs 1.4 % to the edge - "not enough sand" for the darkred bucket at 26 % of the contact
+    layer)."""
+    edge = _bottom_edge(img, palette, v)
+    if edge is not None and edge > int(v.picture[3] * img.shape[0]):
+        h, w = img.shape[:2]
+        pic = img[int(v.picture[1] * h):edge, int(v.picture[0] * w):int(v.picture[2] * w)]
+    else:
+        pic = crop_rel(img, v.picture)
     lab = bgr_to_lab(pic)
     idx, names = palette.classify_pixels(lab, "sand", v.sand_max_dist)
     if "picture_empty" in palette.ui:
@@ -33,7 +42,7 @@ def read_sand(img: np.ndarray, palette: Palette, v: VisionConfig
         exposed = {n: float((band == i).sum()) / max(1, band.size) for i, n in enumerate(names)}
     low = idx[int((1 - v.lower_band) * idx.shape[0]):]
     lower = {n: float((low == i).sum()) / max(1, low.size) for i, n in enumerate(names)}
-    return ({n: f for n, f in sand.items() if f > 0.002},
+    return ({n: f for n, f in sand.items() if f > v.sand_min_share},
             {n: f for n, f in exposed.items() if f > 0.01},
             {n: f for n, f in lower.items() if f > 0.01}, above)
 
