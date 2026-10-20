@@ -231,6 +231,8 @@ class Bot(LevelMixin):
         if res.screen != "gameplay":
             self._non_gameplay(res, frame, now)
             return
+        if not self.in_level and self._finished_board(res):
+            return                            # the last level's empty board, not a new one
         self.non_game = 0
         self.flow.in_gameplay()
         self.last_screen_reason = None

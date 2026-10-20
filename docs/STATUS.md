@@ -19,13 +19,29 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | run 161536: measured belt speed in the simulator, plan waits never stall, plan checks, focus / window fixes | `b5d5a7e` |
 | 7 | run 171133: sand read to the picture's bottom edge, key-colour reserve, plans ranked by dead buckets, ad skip | `6198f3b` |
 | 7 | run 224631: ✕ on an ad disc, frontmost check; gamble / plan / tower sand rules | `8f29be2`, `819daac` |
+| 7 | first L187 win (run 000105); finished board no longer starts a level | (this commit) |
 | 7 | belt speed 2x (▶▶2x tapped at level start, planner 2x fill speeds, 1x / 2x calibration), ad chains, key colour on the last slot | `fdc832d` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 752 pass.
+Tests: `python -m pytest -q` - all 754 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
-## Where it stands (2026-10-20)
+## Where it stands (2026-10-21)
+- **FIRST L187 (HARD) WIN: run `20261021-000105`** (`d566114`, `--levels 3`), after 6 lost
+  attempts: 29 taps (31 with the speed tap), level plan followed to the end (20 plans, 2 steps
+  skipped by the new sand rule: r1c6 cream avail -11.7 %, r4c0 orange last slot 10.9 %; no
+  gamble), won at 163 s, then NEXT and the ad ✕ worked. **Belt speed 2x worked**: read off at
+  10.9 s, SPEED TAP at 11.3 s, "belt speed 2x: on" at 13.4 s, re-planned at 2x; every plan from
+  14.7 s on says "belt 2x".
+- **Bug fixed - one win counted 3x**: after the win / ads the game showed the finished L187 board
+  (empty grid, 0/5, no sand: frames 00272, 00305); each frame started a "level" that ended at
+  once as an inferred win, so "--levels 3" stopped on the menu (L188 / PLAY) after one level.
+  Now a level starts only on a board with something to play (a bucket / lock / unknown cell, or
+  sand >= `bot.win_sand_max`); such a frame logs "gameplay frame with an empty board and no sand
+  (the finished level) - not a new level" (event `finished_board`) and resets the Analyzer
+  (no lattice lock / empty capacities carried into L188). Test:
+  `tests/test_run_20261021_000105.py`. Note: `debug/levels.jsonl` holds the two phantom L2 / L3
+  "win" records of this run (empty board signature; harmless for the level memory).
 - **Belt speed 2x** (user: the ▶▶2x button is free and resets every level): `hud.read_speed`
   (green share of `bot.speed_zone` -> on, grey -> off; live gameplay frames: on 0.34-0.57 green,
   off ~0.4 grey; dataset shots 006-056 / run 103804 were played at 2x, every bot run so far at
@@ -218,6 +234,9 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
+-1. `python -m bot --levels 3` from the menu (L188 / PLAY): check one level is counted per real
+   board, PLAY is pressed after each win, 2x at every level start; then
+   `python -m tools.belt_speed debug/runs/20261021-000105 <new run>` -> `planner.speed_x2_fill_*`.
 0. Live L187 `--levels 3` with the run-224631 fixes (ad end card ✕, frontmost check, gamble /
    plan / tower sand rules) and 2x: check "belt speed 2x: on" after the SPEED TAP on every
    level start and Try Again; then `python -m tools.belt_speed debug/runs/<new run>` (2x
@@ -316,6 +335,10 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L187 live run 20261021-000105 (2026-10-21): FIRST L187 WIN, win counted 3x
+- See "Where it stands". Tests: `tests/test_run_20261021_000105.py` (frames 00260, 00268,
+  00271, 00272).
 
 ## L187 live run 20261020-224631 (2026-10-20): endgame lost, ad end card ✕ missed
 - See "Where it stands". Tests: `tests/test_run_20261020_224631.py` (frames 00427 end card,

@@ -109,6 +109,29 @@ class LevelMixin:
             self.log.frame(f"{self.frame_no:05d}-screen-{res.screen}-wait", frame)
         self.last_screen_reason = act.reason
 
+    def _finished_board(self, res: Any) -> bool:
+        """Run 20261021-000105 (first L187 win): between the win screen / ads the game showed
+        the finished level's board again - empty grid, 0/5, no sand - and each such frame
+        started a "level" that was won at once (3 wins counted for one). A level starts only on
+        a board with something to play: a bucket, lock or unknown cell, or sand. Such a frame
+        is skipped and the Analyzer forgets it (its grid lock, its empty capacities)."""
+        from cells import Kind
+
+        st = res.state
+        if st is None:
+            return False
+        if any(c.kind is not Kind.EMPTY for c in st.cells()) or \
+                sum(st.sand.values()) >= self.bc.win_sand_max:
+            return False
+        if self.last_screen_reason != "finished board":
+            self.log.log("gameplay frame with an empty board and no sand (the finished level) - "
+                         "not a new level")
+            self.log.event("finished_board", frame=self.frame_no)
+            self.last_screen_reason = "finished board"
+        if hasattr(self.analyzer, "reset_level"):
+            self.analyzer.reset_level()
+        return True
+
     def _speed_up(self, res: Any, frame: np.ndarray, now: float) -> bool:
         """User (2026-10-20): the ▶▶2x belt speed button is free and resets every level. While
         it reads off (hud.SpeedTracker, confirmed), tap it - only it - at most
