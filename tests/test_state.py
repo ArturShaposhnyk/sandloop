@@ -182,7 +182,9 @@ def analyzer():
     cfg = load_config(root / "config.yaml")
     cfg.paths.palette = str(root / cfg.paths.palette)
     cfg.paths.dataset = str(root / cfg.paths.dataset)
-    return Analyzer(cfg)
+    # frozen fake clock: unrelated shots share this Analyzer, so with the real clock the belt
+    # stall timer counted test run time (052 failed under machine load)
+    return Analyzer(cfg, clock=lambda: 0.0)
 
 
 def shot(seq):

@@ -14,7 +14,9 @@ Read this first, then `docs/GAME_RULES.md` (game mechanics, source of truth) and
 | 5 | `bot.py` plays one level with real taps; **won L186 live by itself** (run 20261019-171033, 21 taps, 118 s) | `4b1883a`, `4f297f2`, `00daa0e` |
 | 6 | non-gameplay screens (`flow.py`, `levels.py`, `adclose.py`, `hud.py`), `bot.py --levels N`; offline only, **not live-tested** | (uncommitted) |
 
-Branch: `claude/compassionate-dijkstra-osnm1j`. Tests (phase 6): 636 passed, 1 failed - `test_live_regression_052` also fails on the phase-5 commit now (wall-clock belt stall clock in a shared analyzer, flaky under machine load); 020 no longer xfail.
+Branch: `claude/compassionate-dijkstra-osnm1j`. Tests: see the last commit; the shared test
+Analyzers use a frozen fake clock (`Analyzer(cfg, clock=...)`), so belt stall timing never
+depends on machine load (052 used to fail under load).
 
 ## Phase 6 — level after level (2026-10-19) — done offline, awaiting the user's live check
 - Screens: win -> **NEXT** (template `next`; `watch_ad` is forbidden), menu -> red ✕ of a popup

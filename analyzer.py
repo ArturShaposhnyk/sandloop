@@ -39,9 +39,12 @@ class Analysis:
 
 class Analyzer:
     """Loads palette, digits and screen templates once; ``analyze(frame)`` reads a frame of the
-    iPhone screen and decides the next move. Never taps."""
+    iPhone screen and decides the next move. Never taps. ``clock``: the default frame time
+    (belt stall clock) when ``analyze`` gets no ``now``; tests pass a fake one."""
 
-    def __init__(self, cfg) -> None:
+    def __init__(self, cfg, clock=None) -> None:
+        import time
+
         from digits import DigitReader
         from palette import Palette
         from screens import ScreenClassifier, load_templates
@@ -49,6 +52,7 @@ class Analyzer:
         from icons import IconMatcher
 
         self.cfg = cfg
+        self.clock = clock or time.monotonic
         self.palette = Palette.load(cfg.paths.palette)
         self.reader = DigitReader.load(Path(cfg.paths.dataset) / "digits.npz")
         self.icons = IconMatcher.load(Path(cfg.paths.dataset) / "templates" / "icons")
@@ -80,13 +84,12 @@ class Analyzer:
 
     def analyze(self, img: "np.ndarray", log=print, now: Optional[float] = None,
                 diff: Optional[float] = None, adjust=None) -> Analysis:
-        """``now``: frame time in seconds (default: monotonic clock) for the belt stall clock.
+        """``now``: frame time in seconds (default: ``self.clock()``) for the belt stall clock.
         ``diff``: frame-to-frame change at capture, logged with failed reads. ``adjust(state)``
         may amend the state before the decision (bot.py: what it knows of released towers)."""
-        import time
         from vision import VisionError, read_gameplay
 
-        now = time.monotonic() if now is None else now
+        now = self.clock() if now is None else now
         found = self.classifier.classify(img)
         screen = found.screen
         if screen != "gameplay":

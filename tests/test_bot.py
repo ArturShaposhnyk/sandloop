@@ -82,7 +82,7 @@ def cfg():
 def analyzer(cfg):
     from analyzer import Analyzer
 
-    return Analyzer(cfg)
+    return Analyzer(cfg, clock=lambda: 0.0)   # direct analyze() calls: no wall-clock stalls
 
 
 def make_bot(cfg, analyzer, tmp_path, frames, tapper=None, failsafe=None, controls=None,

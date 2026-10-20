@@ -313,7 +313,7 @@ def _fresh_analyzer(analyzer, tmp_path, max_saves=300):  # noqa: F811
                                                                        debug=str(tmp_path)),
                               strategy=dataclasses.replace(analyzer.cfg.strategy,
                                                            vision_fail_max_saves=max_saves))
-    return Analyzer(cfg)
+    return Analyzer(cfg, clock=lambda: 0.0)
 
 
 def _broken(kind):
