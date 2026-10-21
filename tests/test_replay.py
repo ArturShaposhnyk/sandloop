@@ -13,6 +13,8 @@ def test_pair_fills_by_colour_high_first():
     real = [("red", 40), ("red", 10), ("blue", 100), ("cyan", None), ("blue", 55)]
     sim = [("red", 12), ("red", 45), ("blue", 50)]
     assert sorted(pair_fills(real, sim)) == [2.0, 5.0, 5.0]   # red 40/45, 10/12; blue 55/50
+    # one of two same-colour buckets read: paired with the nearer one (L190 orange 0 / 57)
+    assert pair_fills([("orange", 0)], [("orange", 57), ("orange", 2)]) == [2.0]
 
 
 def test_real_gain_ignores_two_buckets_read_alternately():

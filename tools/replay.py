@@ -16,7 +16,10 @@ frames that followed (events.jsonl "analysis", ~every 1.2 s):
   start frame gain sand within ``gain_s``? Real = a fill read later is >= ``gain_min`` points
   above the fill it grew from (buckets only grow, so a reading is matched to the highest start
   fill at or below it - two same-colour buckets read alternately are no gain); simulated = its
-  slot collected anything. "Optimistic" = simulated gain while the real bucket stalled.
+  slot gained ``gain_min`` points too, or finished its stage. "Optimistic" = simulated gain while the real bucket stalled. The
+  belt is a loop and only part of it is on screen: a colour not read (with a fill) in the
+  second half of the window is unobservable (it may have finished and left) and not counted;
+  finished buckets show in ``k``.
 
 A trajectory stops at the horizon, at a tap the simulator cannot follow (its cell is not a
 bucket of known colour there: misread, a tunnel drop, an opened lock) and at the end of
@@ -42,6 +45,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 CACHE_VERSION = 1
+MAIN_PX = 8                 # the main cache file holds the state + an 8 px picture
 BINS = ((0, 1), (1, 5), (5, 10), (10, 20), (20, 31))
 
 
@@ -52,6 +56,7 @@ class Start:
     t: float
     path: Path
     x2: bool
+    crop: Optional[Tuple[int, int, int, int]] = None   # 1 s crop: y0, y1, frame height, width
 
 
 @dataclass
@@ -72,8 +77,12 @@ class Traj:
 
 def pair_fills(real: Sequence[Tuple[str, Optional[int]]], sim: Sequence[Tuple[str, int]]
                ) -> List[float]:
-    """|sim - real| fill per bucket: per colour the read fills below 100 and the simulated
-    ones, both sorted high first, paired in order (unpaired buckets count in ``k``)."""
+    """|sim - real| fill per bucket: per colour each read fill below 100 is paired with a
+    simulated bucket of the colour so that the total error is smallest (the belt is a loop and
+    only part of it is on screen: a bucket read alone is not the colour's fullest one).
+    Unpaired buckets count in ``k``."""
+    from itertools import permutations
+
     by_real: Dict[str, List[int]] = defaultdict(list)
     by_sim: Dict[str, List[int]] = defaultdict(list)
     for c, f in real:
@@ -83,8 +92,14 @@ def pair_fills(real: Sequence[Tuple[str, Optional[int]]], sim: Sequence[Tuple[st
         by_sim[c].append(max(0, min(100, f)))
     out = []
     for c, fs in by_real.items():
-        for a, b in zip(sorted(fs, reverse=True), sorted(by_sim.get(c, []), reverse=True)):
-            out.append(float(abs(a - b)))
+        sims = by_sim.get(c, [])
+        if len(fs) > len(sims):                        # more read than simulated: drop the extra
+            fs = sorted(fs, reverse=True)[:len(sims)]
+        if not fs:
+            continue
+        best = min(permutations(sims, len(fs)),
+                   key=lambda p: sum(abs(a - b) for a, b in zip(fs, p)))
+        out += [float(abs(a - b)) for a, b in zip(fs, best)]
     return out
 
 
@@ -148,7 +163,8 @@ def summarize(trajs: Sequence[Traj]) -> Dict[str, Any]:
 
 
 def starts_of(run_dir: Path, events: List[Dict[str, Any]]) -> List[Start]:
-    """Saved raw frames (not the annotated copies) whose analysis read gameplay cleanly."""
+    """Saved raw frames (not the annotated copies) whose analysis read gameplay cleanly, and
+    the 1 s picture + belt crops (crops/, bot.crop_every_s) of other such frames."""
     import csv
 
     frames = {}
@@ -161,12 +177,24 @@ def starts_of(run_dir: Path, events: List[Dict[str, Any]]) -> List[Start]:
         for row in csv.DictReader(belt.open(encoding="utf-8")):
             if row.get("frame") and row.get("speed"):
                 speed[int(row["frame"])] = row["speed"] == "2"
+    crops: Dict[int, Tuple[Path, Tuple[int, int, int, int]]] = {}
+    index = run_dir / "crops" / "index.csv"
+    if index.exists():
+        for row in csv.DictReader(index.open(encoding="utf-8")):
+            crops[int(row["frame"])] = (run_dir / "crops" / row["file"], (
+                int(row["y0"]), int(row["y1"]), int(row["height"]), int(row["width"])))
     out = []
     for e in events:
-        if (e["type"] == "analysis" and e.get("screen") == "gameplay" and not e.get("error")
-                and e.get("frame") in frames and e.get("k") is not None):
+        if (e["type"] != "analysis" or e.get("screen") != "gameplay" or e.get("error")
+                or e.get("k") is None):
+            continue
+        if e.get("frame") in frames:
             out.append(Start(run_dir.name, e["frame"], e["t"], frames[e["frame"]],
                              speed.get(e["frame"], False)))
+        elif e.get("frame") in crops and e.get("grid"):
+            path, box = crops[e["frame"]]
+            out.append(Start(run_dir.name, e["frame"], e["t"], path,
+                             speed.get(e["frame"], False), box))
     seen, uniq = set(), []
     for s in out:
         if s.frame not in seen:
@@ -176,13 +204,68 @@ def starts_of(run_dir: Path, events: List[Dict[str, Any]]) -> List[Start]:
 
 
 class Reader:
-    """Frame -> (LevelState, sim.Picture), cached on disk."""
+    """Frame -> (LevelState, sim.Picture), cached on disk. ``cell_px``: picture block size
+    (default planner.cell_px); other sizes are cut from the frame next to the cached state."""
 
-    def __init__(self, cfg, cache: Path, rebuild: bool = False) -> None:
+    def __init__(self, cfg, cache: Path, rebuild: bool = False,
+                 cell_px: Optional[int] = None) -> None:
         self.cfg, self.cache, self.rebuild = cfg, cache, rebuild
+        self.cell_px = cell_px or cfg.planner.cell_px
         self._an = None
 
     def read(self, start: Start):
+        if start.crop is not None:
+            return self._read_crop(start)
+        state, pic = self._read(start)
+        if state is None or self.cell_px == MAIN_PX:
+            return state, pic
+        f = self.cache / start.run / f"{start.frame:05d}-px{self.cell_px}.pkl"
+        if f.exists() and not self.rebuild:
+            with f.open("rb") as fh:
+                return state, pickle.load(fh)
+        import cv2
+
+        from levelplan import _palette
+        from sim import picture_from_frame
+
+        pic = picture_from_frame(cv2.imread(str(start.path)), _palette(self.cfg), self.cfg.vision,
+                                 self.cell_px, state.shells, state.pic_locks)
+        with f.open("wb") as fh:
+            pickle.dump(pic, fh)
+        return state, pic
+
+    def _read_crop(self, start: Start):
+        """A 1 s crop: the state from the frame's analysis record (grid labels, belt), the
+        picture from the crop pasted into a blank frame of the original size."""
+        f = self.cache / start.run / f"{start.frame:05d}-crop-px{self.cell_px}.pkl"
+        if f.exists() and not self.rebuild:
+            with f.open("rb") as fh:
+                return pickle.load(fh)
+        import cv2
+        import numpy as np
+
+        from levelplan import _palette
+        from runlog import load_events
+        from sim import picture_from_frame
+        from state import LevelState
+
+        rec = next((e for e in load_events(start.path.parent.parent)
+                    if e["type"] == "analysis" and e.get("frame") == start.frame), None)
+        crop = cv2.imread(str(start.path))
+        state = pic = None
+        if rec is not None and crop is not None:
+            y0, y1, h, w = start.crop
+            img = np.zeros((h, w, 3), np.uint8)
+            img[y0:y0 + crop.shape[0]] = crop[:y1 - y0]
+            state = LevelState.from_record(rec, self.cfg.strategy.conveyor_slots,
+                                           self.cfg.strategy.unknown_fill_need)
+            pic = picture_from_frame(img, _palette(self.cfg), self.cfg.vision, self.cell_px)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        with f.open("wb") as fh:
+            pickle.dump((state, pic), fh)
+        return state, pic
+
+    def _read(self, start: Start):
         f = self.cache / start.run / f"{start.frame:05d}.pkl"
         if f.exists() and not self.rebuild:
             # pickle is safe here: the cache holds only files this tool wrote itself
@@ -203,8 +286,8 @@ class Reader:
         state = pic = None
         if res is not None and res.state is not None:
             state = res.state
-            pic = picture_from_frame(img, _palette(self.cfg), self.cfg.vision,
-                                     self.cfg.planner.cell_px, state.shells, state.pic_locks)
+            pic = picture_from_frame(img, _palette(self.cfg), self.cfg.vision, MAIN_PX,
+                                     state.shells, state.pic_locks)
         f.parent.mkdir(parents=True, exist_ok=True)
         with f.open("wb") as fh:
             pickle.dump((CACHE_VERSION, state, pic), fh)
@@ -212,13 +295,17 @@ class Reader:
 
 
 def replay(start: Start, events: List[Dict[str, Any]], state, pic, pc, horizon: float,
-           gain_s: float = 10.0, gain_min: int = 3) -> Traj:
-    """Run the simulator from ``start`` with the real taps; compare with the real reads."""
+           gain_s: float = 10.0, gain_min: int = 3, contact: Optional[int] = None) -> Traj:
+    """Run the simulator from ``start`` with the real taps; compare with the real reads.
+    ``contact``: picture cells a bucket reaches per column (default: the frame's reading)."""
     from cells import Kind
     from levelplan import sim_config
     from sim import Sim
 
     tr = Traj(start)
+    pic = pic.copy()                # the simulator takes sand from it (cached pictures stay)
+    if contact is not None:
+        pic.contact = contact
     sim = Sim.start(state, pic, sim_config(pc, state.conveyor_slots, start.x2))
     sim.grid.disagreements = []
     sim.grid.tappable = sim.grid.playable()
@@ -231,6 +318,7 @@ def replay(start: Start, events: List[Dict[str, Any]], state, pic, pc, horizon: 
         if b.get("color") and b.get("fill") is not None and b["fill"] < 100:
             start_fills[b["color"]].append(b["fill"])
     later: Dict[str, List[int]] = defaultdict(list)
+    seen_late: set = set()          # colours read with a fill in the window's second half
     sim_gain: Dict[str, bool] = {}
     covered = 0.0
 
@@ -264,7 +352,9 @@ def replay(start: Start, events: List[Dict[str, Any]], state, pic, pc, horizon: 
         if dt <= gain_s:
             for s, stage, left in slots0.values():
                 c = s.stages[stage]
-                moved = s not in sim.belt or s.stage != stage or s.left < left
+                cap = max(1, sim.capacity.get(c, 1))
+                moved = (s not in sim.belt or s.stage != stage
+                         or (left - s.left) * 100 >= gain_min * cap)
                 sim_gain[c] = sim_gain.get(c, False) or moved
         if e["type"] == "tap":
             if not e.get("executed", True):
@@ -290,10 +380,14 @@ def replay(start: Start, events: List[Dict[str, Any]], state, pic, pc, horizon: 
             for b in e.get("conveyor") or []:
                 if b.get("color") and b.get("fill") is not None:
                     later[b["color"]].append(b["fill"])
+                    if dt >= gain_s / 2:
+                        seen_late.add(b["color"])
     if covered >= gain_s - 1.5:
         for c, fills in start_fills.items():
             if c in sim_gain:
-                tr.gains.append((c, sim_gain[c], real_gain(fills, later[c], gain_min)))
+                grew = real_gain(fills, later[c], gain_min)
+                if grew or c in seen_late:      # else: out of view, maybe finished
+                    tr.gains.append((c, sim_gain[c], grew))
     return tr
 
 

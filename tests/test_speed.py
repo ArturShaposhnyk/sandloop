@@ -54,8 +54,8 @@ def test_sim_config_scales_fill_speed_not_tap_time():
                              speed_x2_fill_min_exposed=0.05)          # calibrated at 2x
     two = sim_config(pc, 5, x2=True)
     assert (two.fill_rate, two.fill_max, two.fill_min_exposed) == (150.0, 45.0, 0.05)
-    two = sim_config(load_config().planner, 5, x2=True)   # measured (runs 000105 .. 101655)
-    assert (two.fill_rate, two.fill_max, two.fill_min_exposed) == (90.0, 60.0, 0.03)
+    two = sim_config(load_config().planner, 5, x2=True)   # fitted (tools/fit_sim.py, phase B)
+    assert (two.fill_rate, two.fill_max, two.fill_min_exposed) == (60.0, 30.0, 0.05)
 
 
 def test_speed_change_replans():

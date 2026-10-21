@@ -65,10 +65,25 @@ class Picture:
     cols: List[List[int]]             # per column: colour indices bottom -> top
     contact: int                      # cells a bucket reaches per column
     shells: List[Shell] = field(default_factory=list)
+    _layer: Optional[Tuple[int, List[int], int]] = field(default=None, repr=False, compare=False)
+    # ^ (contact, cells per colour index in the contact layer, its size) until the next take()
+    _totals: Optional[List[int]] = field(default=None, repr=False, compare=False)
+    # ^ cells per colour index in the whole picture (kept up to date by take())
 
     def copy(self) -> "Picture":
         return Picture(self.names, [list(c) for c in self.cols], self.contact,
-                       [Shell(s.colour, s.col, s.below) for s in self.shells])
+                       [Shell(s.colour, s.col, s.below) for s in self.shells], self._layer,
+                       None if self._totals is None else list(self._totals))
+
+    def _contact_counts(self) -> Tuple[List[int], int]:
+        if self._layer is None or self._layer[0] != self.contact:
+            counts, size = [0] * len(self.names), 0
+            for c in self.cols:
+                for i in c[:self.contact]:
+                    counts[i] += 1
+                size += min(self.contact, len(c))
+            self._layer = (self.contact, counts, size)
+        return self._layer[1], self._layer[2]
 
     def shell_down(self, colour: str) -> Optional[Shell]:
         """A shell of ``colour`` at the bottom (it drops into a waiting shell bucket)."""
@@ -81,31 +96,45 @@ class Picture:
     def count(self, colour: str) -> int:
         if colour not in self.names:
             return 0
-        i = self.names.index(colour)
-        return sum(c.count(i) for c in self.cols)
+        if self._totals is None:
+            self._totals = [0] * len(self.names)
+            for c in self.cols:
+                for i in c:
+                    self._totals[i] += 1
+        return self._totals[self.names.index(colour)]
 
     def exposed(self, colour: str) -> int:
         if colour not in self.names:
             return 0
-        i = self.names.index(colour)
-        return sum(c[:self.contact].count(i) for c in self.cols)
+        return self._contact_counts()[0][self.names.index(colour)]
 
     def share(self, colour: str) -> float:
         """The colour's share of the contact layer (as vision's ``exposed``)."""
-        n = sum(min(self.contact, len(c)) for c in self.cols)
-        return self.exposed(colour) / n if n else 0.0
+        if colour not in self.names:
+            return 0.0
+        counts, n = self._contact_counts()
+        return counts[self.names.index(colour)] / n if n else 0.0
 
     def take(self, colour: str, n: int) -> int:
         """Remove up to ``n`` cells of ``colour`` from the contact layer, lowest first."""
         if n <= 0 or colour not in self.names:
             return 0
+        counts, size = self._contact_counts()
+        counts, contact = list(counts), self.contact   # (copies share the cached list)
         i, got = self.names.index(colour), 0
         for k, col in enumerate(self.cols):
+            if i not in col[:contact]:
+                continue
             j = 0
-            while j < min(self.contact, len(col)) and got < n:
+            while j < contact and j < len(col) and got < n:
                 if col[j] == i:
                     del col[j]          # the sand above falls down (with its shells)
                     got += 1
+                    counts[i] -= 1
+                    if len(col) >= contact:
+                        counts[col[contact - 1]] += 1    # fell into the contact layer
+                    else:
+                        size -= 1
                     for s in self.shells:
                         if s.col == k and s.below > j:
                             s.below -= 1
@@ -113,6 +142,9 @@ class Picture:
                     j += 1
             if got >= n:
                 break
+        self._layer = (contact, counts, size)
+        if self._totals is not None:
+            self._totals[i] -= got
         return got
 
 
@@ -433,8 +465,11 @@ class Sim:
             g.tappable = [p for p in g.playable() if p not in g.disagreements]
 
     def _fill_curtains(self) -> None:
-        g = self.grid
         from state import Lock
+
+        if not any(l.unlock == "fills" and l.counter is not None for l in self.grid.locks):
+            return
+        self.grid = g = self.grid.fork()   # clones share their grid: never edit it in place
         for lock in list(g.locks):
             if lock.unlock == "fills" and lock.counter is not None:
                 g.locks.remove(lock)

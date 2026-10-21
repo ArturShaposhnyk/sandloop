@@ -28,10 +28,45 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | L190 tunnels read (annotations 073-084, templates, outlined digits), collect numbering | `069a463` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 972 pass.
+Tests: `python -m pytest -q` - all 976 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+### Redesign phase B: simulator fitted to the runs (`tools/fit_sim.py`)
+- **Measurement fixes** in tools/replay.py (the phase A numbers were partly label noise): the
+  belt is a loop and only part of it is on screen - a colour not read in the second half of the
+  10 s window is unobservable (it may have finished), not a stall; a simulated "gain" needs the
+  same 3 points as a real one; a read bucket is paired with the nearest simulated one of its
+  colour (min-cost), not by sorted order. Phase A baseline re-measured: stall recall 72 %.
+- **More data**: the 1 s crops are start points too (`LevelState.from_record`: a state from an
+  analysis record's grid labels - all 2874 recorded grids round-trip); run 143729 gives 232
+  trajectories, 942 in all (26 runs).
+- **Fit** (`python -m tools.fit_sim --cell-px 4 --cv`): coordinate search over the 1x / 2x
+  fill curves and the contact depth; objective = balanced accuracy of "gains sand within 10 s"
+  (all runs + L189) - 0.005 x fill MAE. Picture blocks of 8 / 4 / 2 px all reach ~0.67; 4 px
+  is best on fill error (8 px majority blocks dropped the mixed grains at the bottom).
+  New config: `cell_px` 4, 1x 130 x (share - 0.06) max 60 %/s, 2x 60 x (share - 0.05) max
+  30 %/s, contact unchanged (28 px).
+
+| replay, 942 trajectories | before (old sim) | after |
+|---|---|---|
+| stall recall (all / L189) | 76 % / 26 % | 88 % / 90 % |
+| gain recall (all / L189) | 63 % / 72 % | 64 % / 51 % |
+| fill MAE 5-10 s / 10-20 s / 20-30 s | 13.8 / 14.9 / 17.5 | 11.5 / 13.6 / 16.3 |
+| held-out runs (2 folds), stall recall | 77 % / 76 % | 80 % / 85 % |
+
+- Limits: one fill curve of the contact share cannot tell a fast-filling fresh bucket from a
+  stalled one at the same share (gain recall stays ~64 %, L189 51 %; k bias +0.4 bucket at
+  5-10 s: real buckets finish faster). L187 run 161536's orange at 7 % (nothing in 30 s) gets
+  1.3 %/s (< the 2 %/s idle rate). Phase C's online correction (observed vs predicted fill per
+  slot) covers what the curve misses.
+- **Speed**: `LevelState.fork` replaces deepcopy in `after_tap`; `sim.Picture` keeps its
+  contact counts and colour totals up to date in `take`; no BFS for keys / chests a level does
+  not have. 8 px: 0.8-1.6 -> 0.15-0.18 ms per node (same nodes, same plans); 4 px 0.22-0.30.
+  Fixed on the way: `Sim.clone` shares the grid and `_fill_curtains` edited it in place (a
+  curtain counted down in one branch counted down in its siblings too).
+- Tests: `tests/test_sim_speed.py`, `tests/test_replay.py`.
+
 ### Fix: hint arrows below the grid, no repeated dead tap (L190 run `20261021-143729`)
 - The run stopped with "2 taps in a row had no effect": r6c2 cyan read "cyan/yellow" and was
   tapped twice. The booster hint arrows bob down to 0.836-0.887 of the height, below the search

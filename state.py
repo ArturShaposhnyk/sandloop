@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 from collections import Counter
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
@@ -129,6 +130,54 @@ class LevelState:
                    pic_locks=list(getattr(gv, "pic_locks", [])),
                    locked=getattr(gv, "locked", 0.0))
 
+    @classmethod
+    def from_record(cls, rec: Dict[str, Any], conveyor_slots: int = 5,
+                    unknown_fill_need: float = 0.5) -> "LevelState":
+        """From an "analysis" record of events.jsonl (runlog.analysis_record: grid labels, belt,
+        k, sand): tools/replay.py starts the simulator on the 1 s crops with it. Adjacent
+        curtain cells with the same number are one curtain; shells / picture locks are not
+        recorded (empty)."""
+        from cells import CELL_LOCK_BY_NAME
+
+        grid: Grid = []
+        for r, line in enumerate(rec["grid"]):
+            row: List[Optional[Cell]] = []
+            for c, t in enumerate(line.split()):
+                row.append(_cell_from_label(r, c, t, CELL_LOCK_BY_NAME))
+            grid.append(row)
+        locks: List[Lock] = []
+        curtains: Dict[Pos, Cell] = {}
+        for row in grid:
+            for cell in row:
+                if cell is None or cell.kind is not Kind.LOCK:
+                    continue
+                if cell.lock == "curtain":
+                    curtains[(cell.row, cell.col)] = cell
+                else:
+                    locks.append(Lock(cell.lock or "lock", cell.unlock or "", cell.counter,
+                                      ((cell.row, cell.col),), cell.color, cell.opening))
+        while curtains:                     # flood-fill same-number curtain cells into regions
+            p, first = curtains.popitem()
+            group, todo = [p], [p]
+            while todo:
+                r, c = todo.pop()
+                for q in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):
+                    if q in curtains and curtains[q].counter == first.counter:
+                        curtains.pop(q)
+                        group.append(q)
+                        todo.append(q)
+            for i, (r, c) in enumerate(group):
+                grid[r][c].region = len(locks)
+            locks.append(Lock("curtain", "fills", first.counter, tuple(sorted(group))))
+        conveyor = [ConveyorBucket(b.get("color"), b.get("fill"), False,
+                                   tuple(b.get("stages") or ())) for b in rec.get("conveyor") or []]
+        exits = [(0, c) for c, cell in enumerate(grid[0]) if cell is not None] if grid else []
+        st = cls(grid, exits, [], [], _merge_lock_icons(locks), rec.get("k"), conveyor_slots,
+                 conveyor if rec.get("k") != 0 else [], dict(rec.get("sand") or {}),
+                 dict(rec.get("exposed") or {}), unknown_fill_need)
+        st.tappable = st.playable()
+        return st
+
     # -- grid -----------------------------------------------------------------------------
 
     @property
@@ -234,7 +283,7 @@ class LevelState:
         cell = self.cell(pos)
         if cell is None or cell.kind is not Kind.BUCKET:
             raise ValueError(f"no bucket at {pos}")
-        nxt = copy.deepcopy(self)
+        nxt = self.fork()
         nxt._release_keys()   # keys already connected are flying anyway: not this tap's credit
         nxt.gates_opened, nxt.pics_opened = [], []
         nxt._open_chests()    # ... and chests already connected open anyway
@@ -257,6 +306,21 @@ class LevelState:
         # predicted: a newly connected bucket flips face-up; cells that disagreed stay excluded
         nxt.disagreements = [p for p in self.disagreements if p != pos]
         nxt.tappable = [p for p in nxt.playable() if p not in nxt.disagreements]
+        return nxt
+
+    def fork(self) -> "LevelState":
+        """A copy to change (after_tap, the simulator; deepcopy was half the planner's time):
+        own lists, dicts and grid rows, own lock cells (their counters are edited in place);
+        the other cells are shared - they are only ever replaced, never edited."""
+        nxt = copy.copy(self)
+        for f in dataclasses.fields(self):
+            v = getattr(self, f.name)
+            if isinstance(v, list):
+                setattr(nxt, f.name, list(v))
+            elif isinstance(v, dict):
+                setattr(nxt, f.name, dict(v))
+        nxt.grid = [[copy.copy(c) if c is not None and c.kind is Kind.LOCK else c for c in row]
+                    for row in self.grid]
         return nxt
 
     def _drop_from_tunnel(self, pos: Pos) -> None:
@@ -287,6 +351,8 @@ class LevelState:
         A key whose colour has no lock, or several separate locks, opens nothing here."""
         opened: List[Tuple[str, Tuple[Pos, ...]]] = []
         while True:
+            if not any(l.kind == "key" for l in self.locks):
+                return opened
             conn = self.connected()
             keys = [l for l in self.locks if l.kind == "key" and l.cells[0] in conn]
             if not keys:
@@ -321,6 +387,8 @@ class LevelState:
         into free cells (GAME_RULES.md, L186). Where they land is random: worst case they block
         paths, so the chest's cell stays an obstacle (UNKNOWN) and the strategy prices the
         scatter (planner.scatter_risk); the bot re-reads the whole grid after it."""
+        if not any(l.kind == "chest" for l in self.locks):
+            return []
         conn = self.connected()
         opened = []
         for lock in [l for l in self.locks if l.kind == "chest" and l.cells[0] in conn]:
@@ -386,6 +454,34 @@ class LevelState:
                                    for l in self.locks) or "-"),
             f"capacity estimate: {'-' if cap is None else f'{cap:.3f}'} of the picture / bucket",
         ]
+
+
+def _cell_from_label(r: int, c: int, t: str, specs: Dict[str, Any]) -> Optional[Cell]:
+    """A cell from its ``Cell.label()`` text (dataset/annotations.json notation)."""
+    import re
+
+    if t == "x":
+        return None
+    if t == ".":
+        return Cell(r, c, Kind.EMPTY)
+    if t == "?":
+        return Cell(r, c, Kind.UNKNOWN, reason="unknown in the record")
+    m = re.fullmatch(r"(lock|key|chain):(\w+|\?)", t)
+    if m:
+        spec = specs[m.group(1)]
+        return Cell(r, c, Kind.LOCK, lock=spec.name, unlock=spec.unlock,
+                    color=None if m.group(2) == "?" else m.group(2))
+    m = re.fullmatch(r"(cur|ice|tunnel|chest|mystery|[a-z]+?)(\d*)(?::(up|down|left|right))?", t)
+    name = {"cur": "curtain"}.get(m.group(1), m.group(1)) if m else None
+    if m and (name in specs or name == "curtain") and not t.endswith(("-up", "-down")):
+        unlock = "fills" if name == "curtain" else specs[name].unlock
+        return Cell(r, c, Kind.LOCK, lock=name, unlock=unlock,
+                    counter=int(m.group(2)) if m.group(2) else None, opening=m.group(3))
+    m = re.fullmatch(r"([a-z]+)(?:/([a-z]+))?-(up|down)(\+shell)?", t)
+    if m:
+        return Cell(r, c, Kind.BUCKET, color=m.group(1), body=m.group(2),
+                    face_up=m.group(3) == "up", shell=bool(m.group(4)))
+    return Cell(r, c, Kind.UNKNOWN, reason=f"label {t!r} not parsed")
 
 
 def _merge_lock_icons(locks: List[Lock]) -> List[Lock]:

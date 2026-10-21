@@ -304,12 +304,12 @@ class PlannerConfig:
     beam: int = 8                     # nodes kept per depth
     max_depth: int = 120              # actions (taps + waits) per plan
     budget_s: float = 3.0             # search time per plan
-    cell_px: int = 8                  # picture block per simulated sand cell (frame px)
+    cell_px: int = 4                  # picture block per simulated sand cell (frame px)
     # belt speed, measured with tools/belt_speed.py on real runs (sim.SimConfig)
     lap_s: float = 1.0                # belt seconds per simulated lap
-    fill_rate: float = 100.0          # % of a bucket per s per contact share above ...
-    fill_min_exposed: float = 0.08    # ... this share (below it a bucket gets ~nothing)
-    fill_max: float = 30.0            # % of a bucket per s at most
+    fill_rate: float = 130.0          # % of a bucket per s per contact share above ...
+    fill_min_exposed: float = 0.06    # ... this share (below it a bucket gets ~nothing)
+    fill_max: float = 60.0            # % of a bucket per s at most
     tap_s: float = 4.2                # belt seconds that pass per tap of the bot
     max_wait_s: float = 60.0          # one simulated wait at most
     # following the plan live: a wait for the belt is given up (re-plan, else the strategy

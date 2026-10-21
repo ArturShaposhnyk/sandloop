@@ -306,25 +306,27 @@ planner:                     # levelplan.py + sim.py: whole-level plan (docs/GAM
   beam: 8                    # beam search: nodes kept per depth
   max_depth: 120             # actions (taps + waits) per plan
   budget_s: 3.0              # search time per plan (the bot waits meanwhile)
-  cell_px: 8                 # sand cell of the simulated picture = this many frame px
-  # belt speed of the simulator, measured on real runs: python -m tools.belt_speed
-  # (fill %/s of a belt bucket = fill_rate x (its colour's contact-layer share - fill_min_exposed),
-  # at most fill_max; runs 142035 / 145310 / 161536: ~1 %/s below 15 %, ~25 %/s at 30 %)
+  cell_px: 4                 # sand cell of the simulated picture = this many frame px (phase B
+                             # fit, tools/fit_sim.py: 4 px keeps the mixed grains at the bottom
+                             # that 8 px majority blocks lost; fill error 13.8 -> 11.5 pts at 5-10 s)
   lap_s: 1.0                 # belt seconds per simulated lap
-  fill_rate: 100.0
-  fill_min_exposed: 0.08
-  fill_max: 30.0
+  # belt speed, fitted (redesign phase B, 2026-10-21) by python -m tools.fit_sim --cell-px 4 on
+  # 942 replay trajectories of 26 runs (tools/replay.py): fill %/s = fill_rate x (contact share
+  # - fill_min_exposed), at most fill_max. Before (hand-measured 1x 100 x (share - 0.08) max 30,
+  # 2x 90 x (share - 0.03) max 60): "a belt bucket gains sand within 10 s" stall recall 76 %
+  # (L189 26 %); after: 88 % (L189 90 %), held-out runs 80 / 85 %. The 2x threshold of 3 %
+  # made L189's cream at 4-6 % of the contact layer "fill" while it sat at 72 % for minutes.
+  fill_rate: 130.0
+  fill_min_exposed: 0.06
+  fill_max: 60.0
   tap_s: 4.2                 # belt seconds per tap of the bot (decision + settle; lower quartile live)
   # belt speed 2x (bot.speed_x2): planner times are real seconds, so 2x scales the fill speeds;
   # tap_s is the bot's own cycle and stays. null = 1x value x speed_x2_factor (rate / max) or
-  # the 1x value (min exposed) - set them from python -m tools.belt_speed once 2x runs exist
+  # the 1x value (min exposed)
   speed_x2_factor: 2.0
-  # measured (python -m tools.belt_speed on runs 000105 / 001541 / 092045 / 101655, 645 2x
-  # samples): 90 x (share - 0.03), max 60 %/s - the doubled 1x guess (200 x (share - 0.08))
-  # gave buckets at 3-8 % of the contact layer nothing; live they filled slowly
-  speed_x2_fill_rate: 90.0
-  speed_x2_fill_max: 60.0
-  speed_x2_fill_min_exposed: 0.03
+  speed_x2_fill_rate: 60.0
+  speed_x2_fill_max: 30.0
+  speed_x2_fill_min_exposed: 0.05
   max_wait_s: 60.0           # one simulated wait at most
   # live: a plan step waiting for the belt is given up (re-plan; if the new plan waits too, the
   # strategy decides until the board changes) when the belt is wait_grace_s behind the plan's
