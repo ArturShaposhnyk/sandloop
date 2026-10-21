@@ -35,7 +35,7 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 Tests: `python -m pytest -q` - all 997 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
-## Redesign: one search-based decider (agreed with the user 2026-10-21) - phase D in progress (branch `phase-d-sim-fit`)
+## Redesign: one search-based decider (agreed with the user 2026-10-21) - phase D in progress (branch `phase-d-sim-fit`, pushed); NEXT: pixel-exact simulator (see NEXT -9)
 Why: three decision layers (level plan, strategy rules, slot reserves) vetoed each other and the
 bot idled while nothing filled (L190 runs 122825 / 143729: plan step -> rule rejects -> reserve
 blocks -> re-plan, in a loop). Target design:
@@ -684,10 +684,27 @@ behind its lock), GAME_RULES.md. Tests updated (997 pass).
    <slots gaining / stalled, rates>) CONFIRMED"), waits "wait: search - belt gaining (...)";
    tap events carry "decider" and "decision", levels.jsonl "searches" (every search's top
    values) and "decider". Then: analyse old vs new on real outcomes.
--7. Phase D next (worktree `../sandloop-phaseD`): add a closed-loop target to the fit - the old
-   decider's self-play win rate per level must match its live record (L187 ~1/6, L189 ~1/5,
-   L190 0/3) besides the 10 outcomes and the per-bucket timing (fitted world: -5 s too fast);
-   then the search vs old gate; only then weight tuning. Then merge the branch.
+-9. **NEXT (user's decision, 2026-10-22): a pixel-exact simulator instead of more curve
+   fitting.** Phase D work so far is on branch `phase-d-sim-fit` (pushed to GitHub as a backup;
+   worktree `../sandloop-phaseD`; main merged in at `e0ba24d`, 998 tests pass): realcal /
+   simfit tools, fitted coarse model, decider.model_*, all-lost fallback to the old decider.
+   Its open problem (fitted world too easy closed loop: old decider 16/16 vs ~1 in 5 live) is
+   the reason for the new direction:
+   1. **Feasibility check first**: a pixel-exact falling-sand simulator of the picture,
+      started on a real frame / 1 s crop, must reproduce ~10 s of real picture evolution at
+      >= 90-95 % pixel agreement (crops of runs 143729 / 232340; the buckets' collection
+      removed as the real belt shows it). Only if it passes:
+   2. an **exact belt model**: each bucket's position over time on the loop, which picture
+      columns it touches when, its collection timing (real: ~3 s to the picture, a ~1 s
+      jump of 50-70 points, plateau);
+   3. then the **search decider** on it with **timed releases** (tap when a colour will reach
+      the bottom) and **tunnel prediction** (L190).
+   Old decider stays the default throughout; the search goes live again only when the
+   simulator reproduces real outcomes.
+-7. (superseded by -9) Phase D coarse-fit plan: add a closed-loop target to the fit (the old
+   decider's self-play win rate per level vs its live record: L187 ~1/6, L189 ~1/5, L190 0/3)
+   besides the 10 outcomes and the per-bucket timing; then the search vs old gate; then
+   weight tuning; then merge the branch.
 -6. Live L190 `python -m bot --levels 1` (L190 SUPER HARD, tunnels): watch the grid lines read
    `tunnel5:right` / `tunnel5:left` / `tunnel5:up`, that the bot never taps a tunnel, and that
    after a tap in front of a tunnel the plan ends there ("horizon") and re-plans once the
