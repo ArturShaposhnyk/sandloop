@@ -28,10 +28,27 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | L190 tunnels read (annotations 073-084, templates, outlined digits), collect numbering | `069a463` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 963 pass.
+Tests: `python -m pytest -q` - all 969 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+### Redesign phase A: replay harness (`tools/replay.py`)
+- From every saved gameplay frame of every run (710 trajectories, 27 runs; frames re-read with
+  today's vision, cached in debug/replay/cache) the simulator runs forward with the real taps at
+  their real times and is compared with the following "analysis" events: belt fills (per
+  colour, sorted, paired), k, sand left per colour (relative to the start frame), contact share
+  per colour, and "does a belt bucket gain sand within 10 s" (real: a fill >= 3 points above
+  the start fill it grew from - two same-colour buckets read alternately are no gain).
+  `--set field=value` evaluates other sim parameters (phase B fits them).
+- **Baseline (current sim, `debug/replay/baseline.json`)**: fill MAE 16 pts at 5-10 s, 18 at
+  10-20 s, 21 at 20-30 s; k exact 56 % at 5-10 s, bias +0.3..+0.5 buckets (the sim keeps
+  buckets the real belt already finished); sand left per colour MAE 5-9 pts; contact share MAE
+  4-6 pts. Gains in 10 s: accuracy 64 %, gain recall 68 %, **stall recall 60 %** (40 % of real
+  stalls are predicted to fill = the optimism that makes plans wait); L189 runs 6-31 %.
+- Replay data: `bot.crop_every_s` (1 s) saves the picture + belt rows of a gameplay frame to
+  crops/ (~210 KB, crops/index.csv); above `bot.crops_max_mb` (3000) the oldest runs' crops/
+  are deleted (frames / events stay). `Sim.place` = a tap without belt time (replay).
+
 ### Hotfix: belt stall clock (L190 run `20261021-122825`)
 - The bot idled 116 -> 251 s and 271 -> 396 s: the belt reader dropped a bucket every other
   frame (darkgreen 93 / one of two oranges, or the orange/cream tower read "?"). `BeltTracker`

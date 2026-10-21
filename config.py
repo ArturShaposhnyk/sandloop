@@ -235,6 +235,11 @@ class BotConfig:
     disagree_report_s: float = 10.0      # look != path rule this long with no move: log + frame
     loop_interval_s: float = 0.05        # min seconds between captures
     max_saved_frames: int = 1500         # PNGs per run in debug/runs/<stamp>/frames/
+    # replay data (tools/replay.py): picture + belt rows of a gameplay frame every crop_every_s
+    # (0 = off) -> crops/; above crops_max_mb in all runs the oldest runs' crops/ are deleted
+    crop_every_s: float = 1.0
+    crop_rows: List[float] = field(default_factory=lambda: [0.11, 0.515])
+    crops_max_mb: float = 3000.0
     # belt speed 2x (user, 2026-10-20: the ▶▶2x button under the k/5 counter is free and resets
     # every level): hud.read_speed / SpeedTracker, tapped by bot.py at level start when off
     speed_x2: bool = True                # turn 2x on at level start
@@ -463,6 +468,8 @@ def validate(cfg: Config) -> Config:
                           "burst_min_free >= 2 (a burst never takes the last slot)")
     if b.disagree_report_s <= 0:
         raise ConfigError("bot.disagree_report_s must be > 0")
+    if b.crop_every_s < 0 or b.crops_max_mb < 0 or not 0 <= b.crop_rows[0] < b.crop_rows[1] <= 1:
+        raise ConfigError("bot.crop_every_s / crops_max_mb must be >= 0, crop_rows within 0..1")
     if b.max_no_effect_taps < 1 or b.max_saved_frames < 0:
         raise ConfigError("bot.max_no_effect_taps must be >= 1, max_saved_frames >= 0")
     if min(b.settle_min_s, b.settle_threshold, b.burst_min_avail, b.burst_gap_s,

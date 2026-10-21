@@ -34,7 +34,7 @@ from cells import Kind
 from config import Config, load_config
 from flow import ScreenFlow, Session
 from levels import LevelMixin, Stop
-from runlog import RunLog, analysis_record
+from runlog import RunLog, analysis_record, prune_crops
 from tempo import ExposureTrend, ReleaseLedger, burst, prioritize
 
 def zone_change(a: np.ndarray, b: np.ndarray, zones: Sequence[Sequence[float]]) -> float:
@@ -61,6 +61,7 @@ class Bot(LevelMixin):
         from analyzer import DecisionGate
 
         self.cfg, self.bc = cfg, cfg.bot
+        self.crop_t = -1e9                    # last picture + belt crop (replay data)
         self.analyzer, self.tapper, self.grab, self.geometry = analyzer, tapper, grab, geometry
         self.log, self.controls, self.failsafe = log, controls, failsafe
         self.dry_run, self.max_taps = dry_run, max_taps
@@ -261,6 +262,9 @@ class Bot(LevelMixin):
 
                 self.level_first, self.level_sig = rec, level_signature(res.view.labels())
         self.log.belt(self.frame_no, res)
+        if st is not None and self.bc.crop_every_s and now - self.crop_t >= self.bc.crop_every_s:
+            self.crop_t = now        # replay data (tools/replay.py)
+            self.log.crop(self.frame_no, frame, self.bc.crop_rows, self.bc.crops_max_mb)
         self._report(res, frame, confirmed is not None, rec)
         self._watch_disagreements(res, frame, now)
         if confirmed is not None:
@@ -448,6 +452,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     grabber = Grabber(cfg.screen.capture)
     tracker = WindowTracker(cfg, grabber)
     log = RunLog(cfg.paths.debug, cfg, vars(args), cfg.bot.max_saved_frames)
+    if cfg.bot.crops_max_mb:
+        prune_crops(cfg.paths.debug, cfg.bot.crops_max_mb, keep=log.dir, log=log.log)
     hotkeys = Hotkeys(cfg.safety.hotkey_pause, cfg.safety.hotkey_quit).start()
     failsafe = Failsafe(cfg.safety.failsafe_corner_pt)
     log.log(f"run log: {log.dir}")

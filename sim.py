@@ -326,32 +326,37 @@ class Sim:
     # -- actions --------------------------------------------------------------------------
 
     def tap(self, pos: Pos) -> "Sim":
-        nxt = self.clone()
-        cell = self.grid.cell(pos)
         run = 0                       # taps right before this one (a burst live)
         for a in reversed(self.actions):
             if a[0] != "tap":
                 break
             run += 1
-        nxt.actions.append(("tap", pos, cell.color, len(self.belt)))
-        g = self.grid.after_tap(pos)
-        g.conveyor, g.conveyor_k = [], 0
-        nxt.grid = g
-        nxt.pics_opened += len(g.pics_opened)
-        nxt.opened += (sum(len(cells) for _, cells in g.unlocked + g.gates_opened)
-                       + len(g.revealed) + len(g.pics_opened))
-        nxt._open_ice()
-        nxt._apply_hidden()
-        nxt.belt.append(Slot((cell.color,) + ((cell.body,) if cell.body else ()),
-                             nxt.capacity.get(cell.color, 1), shell=cell.shell))
-        nxt.taps.append(pos)
-        nxt.full_taps += nxt.free == 0
+        nxt = self.clone()
+        nxt.place(pos)
         fast = 0 < run % max(1, self.sc.burst_max)
         laps = (max(0, round(self.sc.burst_tap_s / self.sc.lap_s)) if fast
                 else self.sc.laps_per_tap)
         for _ in range(laps):
             nxt.lap()
         return nxt
+
+    def place(self, pos: Pos) -> None:
+        """The tap itself, in place and without belt time (tools/replay.py injects real taps at
+        their real times): the bucket / tower goes to the belt, the grid follows the rules."""
+        cell = self.grid.cell(pos)
+        self.actions.append(("tap", pos, cell.color, len(self.belt)))
+        g = self.grid.after_tap(pos)
+        g.conveyor, g.conveyor_k = [], 0
+        self.grid = g
+        self.pics_opened += len(g.pics_opened)
+        self.opened += (sum(len(cells) for _, cells in g.unlocked + g.gates_opened)
+                        + len(g.revealed) + len(g.pics_opened))
+        self._open_ice()
+        self._apply_hidden()
+        self.belt.append(Slot((cell.color,) + ((cell.body,) if cell.body else ()),
+                              self.capacity.get(cell.color, 1), shell=cell.shell))
+        self.taps.append(pos)
+        self.full_taps += self.free == 0
 
     def wait(self) -> Optional["Sim"]:
         """Laps until a bucket leaves the belt; None if nothing moved at all (a useless wait).

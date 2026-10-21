@@ -5,6 +5,8 @@
                      level_start | level_end | lives | screen_wait | screen_tap (phase 6)
     belt.csv         belt over time: t, k, slots ("red 45|cyan/orange 10"), mean fill %
     frames/          PNGs: every tap (raw + annotated), decision changes, the final screen
+    crops/           picture + belt rows of a gameplay frame every ~1 s (replay data);
+                     index.csv: t, frame, y0, y1, height, width of the full frame
     result.json      win | fail | revive | stopped, why, duration, taps
     bot.log          the console output
 
@@ -88,6 +90,8 @@ class RunLog:
         self.t0 = clock()
         self.max_frames = max_frames
         self.frames_saved = 0
+        self.crops_saved = 0
+        self._crops_fh = None
         self._events = (self.dir / "events.jsonl").open("a", encoding="utf-8")
         self._log = (self.dir / "bot.log").open("a", encoding="utf-8")
         self._belt_fh = (self.dir / "belt.csv").open("a", newline="", encoding="utf-8")
@@ -153,14 +157,59 @@ class RunLog:
         self.frames_saved += 1
         return rel
 
+    def crop(self, frame: int, img: "np.ndarray", rows, max_mb: float = 0.0) -> Optional[str]:
+        """Save rows ``rows`` (share of the height) of ``img`` under crops/ (replay data);
+        every 100 crops the crops of older runs are pruned to ``max_mb``."""
+        import cv2
+
+        h, w = img.shape[:2]
+        y0, y1 = int(rows[0] * h), int(rows[1] * h)
+        d = self.dir / "crops"
+        if self._crops_fh is None:
+            d.mkdir(exist_ok=True)
+            self._crops_fh = (d / "index.csv").open("a", newline="", encoding="utf-8")
+            self._crops = csv.writer(self._crops_fh)
+            self._crops.writerow(["t", "frame", "file", "y0", "y1", "height", "width"])
+        name = f"{frame:05d}.png"
+        if not cv2.imwrite(str(d / name), img[y0:y1]):
+            return None
+        self._crops.writerow([self.t(), frame, name, y0, y1, h, w])
+        self._crops_fh.flush()
+        self.crops_saved += 1
+        if max_mb and self.crops_saved % 100 == 0:
+            prune_crops(self.root, max_mb, keep=self.dir, log=self.log)
+        return f"crops/{name}"
+
     def result(self, result: str, reason: str, **data: Any) -> None:
         rec = {"result": result, "reason": reason, "duration_s": self.t(), **data}
         self.event("stop", **rec)
         self._write_json("result.json", rec)
 
     def close(self) -> None:
-        for fh in (self._events, self._log, self._belt_fh):
-            fh.close()
+        for fh in (self._events, self._log, self._belt_fh, self._crops_fh):
+            if fh is not None:
+                fh.close()
+
+
+def prune_crops(root: Path, max_mb: float, keep: Optional[Path] = None, log=print) -> int:
+    """Delete the crops/ of the oldest runs (never ``keep``) until all crops/ under
+    ``root``/runs take at most ``max_mb``; returns the number of runs pruned."""
+    import shutil
+
+    dirs = sorted((p for p in (Path(root) / "runs").glob("*/crops") if p.is_dir()),
+                  key=lambda p: p.parent.name)
+    size = {p: sum(f.stat().st_size for f in p.iterdir() if f.is_file()) for p in dirs}
+    total, n = sum(size.values()), 0
+    for p in dirs:
+        if total <= max_mb * 1e6:
+            break
+        if keep is not None and p.parent == Path(keep):
+            continue
+        shutil.rmtree(p, ignore_errors=True)
+        total -= size[p]
+        n += 1
+        log(f"crops: deleted {p} ({size[p] / 1e6:.0f} MB; crops above {max_mb:.0f} MB)")
+    return n
 
 
 def load_events(run_dir: Path) -> List[Dict[str, Any]]:

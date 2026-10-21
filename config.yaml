@@ -287,6 +287,13 @@ bot:                         # python -m bot: plays one level (docs/GAME_RULES.m
   speed_retap_s: 3.0
   loop_interval_s: 0.05
   max_saved_frames: 1500     # PNGs per run in debug/runs/<stamp>/frames/
+  # replay data (tools/replay.py, user 2026-10-21): the picture + belt rows (crop_rows, share of
+  # the screen height) of a gameplay frame every crop_every_s s (0 = off) -> crops/ (~210 KB
+  # each, crops/index.csv); above crops_max_mb in all runs the oldest runs' crops/ are deleted
+  # (their frames / events stay)
+  crop_every_s: 1.0
+  crop_rows: [0.11, 0.515]
+  crops_max_mb: 3000
 
 planner:                     # levelplan.py + sim.py: whole-level plan (docs/GAME_RULES.md "Level plan")
   enabled: true              # false = greedy strategy only (strategy.py)
