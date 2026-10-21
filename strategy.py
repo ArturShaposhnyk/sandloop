@@ -149,8 +149,11 @@ class Decision:
 def belt_idle(state: LevelState, sc: StrategyConfig) -> bool:
     """No belt bucket is collecting: none is unfinished, or every unfinished one has not filled
     for ``stall_s`` (BeltTracker). Sand only moves while belt buckets collect, so waiting then
-    changes nothing. Buckets the slot list could not see (k > seen) count as collecting."""
-    if state.conveyor_k is None or state.conveyor_k > len(state.conveyor):
+    changes nothing. Buckets the slot list could not see (k > seen) count as collecting, unless
+    BeltTracker still holds them from earlier frames (run 20261021-122825: k 3 with 2 read every
+    other frame kept the belt "collecting" for minutes)."""
+    seen = max(len(state.conveyor), state.belt_tracked)
+    if state.conveyor_k is None or state.conveyor_k > seen:
         return False
     return all(state.belt_stalled.get(b.color or "", 0.0) >= sc.stall_s
                for b in state.conveyor if b.fill is None or b.fill < 100)

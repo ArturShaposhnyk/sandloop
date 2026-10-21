@@ -1,0 +1,160 @@
+t,frame,k,slots,mean_fill,speed
+100.497,133,4,orange 0|darkgreen 65|orange/cream 0,21.7,2
+101.757,134,4,darkgreen/cream 65|orange 0|darkred 65,43.3,2
+102.986,135,4,orange 0|darkgreen 65|orange 0,21.7,2
+104.245,136,4,orange 0|darkred 65|orange/cream 0,21.7,2
+105.485,137,4,orange 0|darkgreen 65|orange 0,21.7,2
+106.75,138,4,orange 0|darkred 65|orange 0,21.7,2
+108.397,141,4,orange 0|darkgreen 65|orange 0,21.7,2
+109.628,142,5,darkgreen/cream ?|orange 0|darkred 65|cream 25|orange/cream ?,30.0,2
+110.886,143,3,darkgreen 65|orange 0,32.5,2
+112.104,144,3,orange 0,0.0,2
+113.842,148,3,orange 0|darkgreen 70,35.0,2
+115.061,149,4,darkgreen/cream ?|orange 0|cream 22,11.0,2
+116.32,150,3,cream ?|orange 0|darkgreen 73|orange 0,24.3,2
+117.539,151,3,orange 0|orange/cream 0,0.0,2
+118.779,152,3,orange 0|darkgreen 93|orange 0,31.0,2
+120.001,153,3,orange 0|orange 0,0.0,2
+121.242,154,3,orange 0|darkgreen 93|orange 0,31.0,2
+122.459,155,3,orange/cream ?|orange 0|darkgreen/cream ?,0.0,2
+123.705,156,3,orange/cream 0|darkgreen 93|orange 0,31.0,2
+124.926,157,3,orange 0|darkgreen 93,46.5,2
+126.169,158,3,darkgreen 93|orange 0,46.5,2
+127.389,159,3,orange 0|darkgreen 93|orange/cream ?,46.5,2
+128.631,160,3,darkgreen 93|orange 0,46.5,2
+129.852,161,3,orange 0|darkgreen 93|orange/cream 0,31.0,2
+131.107,162,3,darkgreen/cream ?|orange 0|orange/cream ?,0.0,2
+132.327,163,3,orange 0|darkgreen 93|orange 0,31.0,2
+133.575,164,3,orange 0|orange 0,0.0,2
+134.794,165,3,orange 0|darkgreen 93|orange 0,31.0,2
+136.039,166,3,orange 0|orange 0,0.0,2
+137.259,167,3,orange 0|darkgreen 93|orange 0,31.0,2
+138.494,168,3,orange 0|darkgreen/cream 93,46.5,2
+139.714,169,3,orange/cream 0|darkgreen 93|orange 0,31.0,2
+140.95,170,3,orange 0|darkgreen 93,46.5,2
+142.163,171,3,orange 0,0.0,2
+143.408,172,3,orange 0|darkgreen 93|orange ?,46.5,2
+144.616,173,3,darkgreen/cream 93|orange 0,46.5,2
+145.865,174,3,orange 0|darkgreen 93|orange 0,31.0,2
+147.08,175,3,orange 0|orange/cream 0,0.0,2
+148.321,176,3,orange 0|darkgreen 93|orange 0,31.0,2
+149.544,177,3,orange 0|orange 0,0.0,2
+150.791,178,3,orange 0|darkgreen 93|orange 0,31.0,2
+152.005,179,3,orange/cream ?|orange 0,0.0,2
+153.242,180,3,orange 0|darkgreen 93|orange 0,31.0,2
+154.458,181,3,orange 0|darkgreen 93,46.5,2
+155.7,182,3,orange/cream ?|darkgreen 93|orange 0,46.5,2
+156.914,183,3,orange 0|darkgreen 93,46.5,2
+158.155,184,3,darkgreen 93|orange 0,46.5,2
+159.383,185,3,orange 0|darkgreen 93|orange/cream 0,31.0,2
+160.625,186,3,darkgreen/cream 93|orange 0,46.5,2
+161.848,187,3,orange 0|darkgreen 93|orange 0,31.0,2
+163.092,188,3,orange 0|orange 0,0.0,2
+164.32,189,3,orange 0|darkgreen 93|orange 0,31.0,2
+165.563,190,3,orange 0|orange 0,0.0,2
+166.776,191,3,orange 0|darkgreen 93|orange 0,31.0,2
+168.025,192,3,orange/cream ?|orange 0|darkgreen/cream ?,0.0,2
+169.242,193,3,orange/cream 0|darkgreen 93|orange 0,31.0,2
+170.48,194,3,orange 0|darkgreen 93,46.5,2
+171.692,195,3,orange 0,0.0,2
+172.927,196,3,orange 0|darkgreen 93,46.5,2
+174.137,197,3,darkgreen 93|orange 0,46.5,2
+175.388,198,3,orange 0|darkgreen 93|orange 0,31.0,2
+176.613,199,3,darkgreen/cream ?|orange 0|orange/cream ?,0.0,2
+177.852,200,3,orange 0|darkgreen 93|orange 0,31.0,2
+179.067,201,3,orange 0|orange 0,0.0,2
+180.309,202,3,orange 0|darkgreen 93|orange 0,31.0,2
+181.52,203,3,orange/cream 0|orange 0,0.0,2
+182.768,204,3,orange 0|darkgreen 93|orange 0,31.0,2
+183.984,205,3,orange 0|darkgreen/cream 93,46.5,2
+185.229,206,3,orange/cream 0|darkgreen 93|orange 0,31.0,2
+186.444,207,3,orange 0|darkgreen 93,46.5,2
+187.686,208,3,darkgreen 93|orange 0,46.5,2
+188.902,209,3,orange 0|darkgreen 93|orange/cream ?,46.5,2
+190.14,210,3,darkgreen/cream 93|orange 0,46.5,2
+191.359,211,3,orange 0|darkgreen 93|orange 0,31.0,2
+192.601,212,3,orange 0|orange 0,0.0,2
+193.816,213,3,orange 0|darkgreen 93|orange 0,31.0,2
+195.059,214,3,orange 0|orange 0,0.0,2
+196.278,215,3,orange 0|darkgreen 93|orange 0,31.0,2
+197.521,216,3,orange ?|orange 0,0.0,2
+198.75,217,3,orange/cream 0|darkgreen 93|orange 0,31.0,2
+199.985,218,3,orange 0|darkgreen 93,46.5,2
+201.2,219,3,orange/cream ?|darkgreen 93|orange 0,46.5,2
+202.439,220,3,orange 0|darkgreen 93,46.5,2
+203.656,221,3,darkgreen 93|orange 0,46.5,2
+204.897,222,3,orange 0|darkgreen 93|orange 0,31.0,2
+206.114,223,3,darkgreen/cream ?|orange 0,0.0,2
+207.359,224,3,orange 0|darkgreen 93|orange 0,31.0,2
+208.576,225,3,orange 0,0.0,2
+209.817,226,3,orange 0|darkgreen 93|orange 0,31.0,2
+211.029,227,3,orange/cream 0|orange 0,0.0,2
+212.278,228,3,orange 0|darkgreen 93|orange 0,31.0,2
+213.491,229,3,orange 0|darkgreen/cream 93,46.5,2
+214.737,230,3,orange/cream 0|darkgreen 93|orange 0,31.0,2
+215.946,231,3,orange 0|darkgreen 93,46.5,2
+217.181,232,3,darkgreen 93|orange 0,46.5,2
+218.39,233,3,orange 0|darkgreen 93|orange/cream ?,46.5,2
+219.623,234,3,darkgreen/cream 93|orange 0,46.5,2
+220.842,235,3,orange 0|darkgreen 93|orange 0,31.0,2
+222.078,236,3,orange 0|orange 0,0.0,2
+223.295,237,3,orange 0|darkgreen 93|orange 0,31.0,2
+224.535,238,3,orange 0,0.0,2
+225.746,239,3,orange 0|darkgreen 93|orange 0,31.0,2
+226.986,240,3,orange ?|orange 0,0.0,2
+228.2,241,3,orange/cream 0|darkgreen 93|orange 0,31.0,2
+229.431,242,3,orange 0|darkgreen 93,46.5,2
+230.637,243,3,darkgreen 93|orange 0,46.5,2
+231.873,244,3,orange 0,0.0,2
+233.09,245,3,darkgreen 93|orange 0,46.5,2
+234.328,246,3,orange 0|darkgreen 93|orange/cream 0,31.0,2
+235.545,247,3,darkgreen/cream ?|orange 0|orange/cream ?,0.0,2
+236.789,248,3,orange 0|darkgreen 93|orange 0,31.0,2
+238.008,249,3,orange 0|orange 0,0.0,2
+239.25,250,3,orange 0|darkgreen 93|orange 0,31.0,2
+240.461,251,3,orange/cream 0|orange 0,0.0,2
+241.707,252,3,orange 0|darkgreen 93|orange 0,31.0,2
+242.918,253,3,orange 0|darkgreen/cream 93,46.5,2
+244.156,254,3,orange/cream 0|darkgreen 93|orange 0,31.0,2
+245.368,255,3,orange 0|darkgreen 93,46.5,2
+246.602,256,3,darkgreen 93|orange 0,46.5,2
+247.821,257,3,orange 0|darkgreen 93|orange 0,31.0,2
+249.061,258,3,darkgreen/cream 93|orange 0,46.5,2
+250.281,259,3,orange 0|darkgreen 93|orange 0,31.0,2
+251.531,260,3,orange 0|orange/cream 0,0.0,2
+253.566,267,3,orange 0|darkgreen 93,46.5,2
+254.812,268,4,orange/cream ?|darkgreen 93|orange 0|blue ?,46.5,2
+256.033,269,4,blue 94|orange 0|darkgreen 94,62.7,2
+257.44,270,3,darkgreen 94|orange 5,49.5,2
+258.66,271,3,orange 0|darkgreen 94,47.0,2
+260.573,275,3,orange/cream 0|darkgreen 94|orange 5,33.0,2
+261.798,276,4,orange ?|cyan 100|orange 0|darkgreen/cream ?,50.0,2
+263.049,277,3,orange 0|darkgreen 94|orange 5,33.0,2
+264.268,278,3,orange 0|darkgreen 94,47.0,2
+265.888,281,3,orange 0|darkgreen 94|orange 5,33.0,2
+267.112,282,4,orange ?|cream 22|orange 0|darkgreen/cream ?,11.0,2
+268.581,283,4,orange/cream 0|darkgreen 98|orange 5|cream 54,39.2,2
+269.801,284,2,orange ?|cream ?|orange 0,0.0,2
+271.768,285,2,orange/cream 0|orange 57,28.5,2
+272.998,286,2,orange 57|orange 0,28.5,2
+274.248,287,2,orange 0|orange 57,28.5,2
+275.465,288,2,orange 57|orange 0,28.5,2
+276.704,289,2,orange 0|orange 57,28.5,2
+277.923,290,2,orange ?|orange 0,0.0,2
+279.178,291,2,orange 0|orange 57,28.5,2
+280.391,292,2,orange 0,0.0,2
+281.634,293,2,orange/cream ?|orange 57,57.0,2
+282.844,294,2,orange 0,0.0,2
+284.088,295,2,orange 57,57.0,2
+285.31,296,2,orange 0|orange ?,0.0,2
+286.556,297,2,orange 57,57.0,2
+287.778,298,2,orange 0|orange 57,28.5,2
+289.022,299,2,orange 57|orange/cream 0,28.5,2
+290.239,300,2,orange 0|orange 57,28.5,2
+291.478,301,2,orange 57|orange 0,28.5,2
+292.7,302,2,orange 0|orange 57,28.5,2
+293.94,303,2,orange ?|orange 0,0.0,2
+295.163,304,2,orange/cream 0|orange 57,28.5,2
+296.403,305,2,orange 0,0.0,2
+297.611,306,2,orange 57,57.0,2
+298.86,307,2,orange 0,0.0,2

@@ -82,6 +82,7 @@ class LevelState:
     exposed: Dict[str, float] = field(default_factory=dict)   # share of the contact layer
     unknown_fill_need: float = 0.5
     belt_stalled: Dict[str, float] = field(default_factory=dict)  # colour -> s without fill growth
+    belt_tracked: int = 0              # unfinished belt buckets BeltTracker holds (read recently)
     unlocked: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)
     gates_opened: List[Tuple[str, Tuple[Pos, ...]]] = field(default_factory=list)   # chain locks
     # ^ after_tap: (colour, lock cells) opened by keys that flew because of the simulated tap
@@ -428,6 +429,14 @@ class BeltTracker:
     reference follows, the clock runs on. A colour that is not read in a frame (passing an edge,
     label unread) keeps its clock and stays reported for ``forget_s``; one seen with only
     finished buckets is dropped.
+
+    With the k/5 counter (``k``) the bucket count is checked against it (run 20261021-122825,
+    L190: two oranges read alternately one or both for minutes - after ``forget_s`` of one the
+    reference followed down, the second one "arrived" again and the clock restarted every ~15 s,
+    so the belt never counted as stuck): the reference follows fewer buckets only once k fell
+    below its value at the reference (a bucket left unseen), and more buckets read restart the
+    clock only if k rose since (a tap added one); otherwise the reference just takes the count.
+    ``tracked`` = buckets the reference holds (seen recently), for k > buckets read this frame.
     """
 
     def __init__(self, min_growth: int = 2, forget_s: float = 3.0) -> None:
@@ -436,10 +445,17 @@ class BeltTracker:
         self._since: Dict[str, float] = {}
         self._seen: Dict[str, float] = {}
         self._fewer: Dict[str, float] = {}                 # fewer buckets read than ref since
+        self._k: Dict[str, Optional[int]] = {}             # counter k at the reference
 
-    def update(self, conveyor: List[ConveyorBucket], now: float) -> Dict[str, float]:
-        """Feed one frame's belt; returns colour -> seconds without fill growth (colours on the
-        belt now, or out of sight for less than ``forget_s``)."""
+    @property
+    def tracked(self) -> int:
+        return sum(n for n, _, _ in self._key.values())
+
+    def update(self, conveyor: List[ConveyorBucket], now: float,
+               k: Optional[int] = None) -> Dict[str, float]:
+        """Feed one frame's belt (``k``: the k/5 counter, None if unread); returns colour ->
+        seconds without fill growth (colours on the belt now, or out of sight for less than
+        ``forget_s``)."""
         keys: Dict[str, Tuple[int, int, int]] = {}
         done = set()
         for b in conveyor:
@@ -453,15 +469,24 @@ class BeltTracker:
         g = self.min_growth
         for color, (n, total, top) in keys.items():
             old = self._key.get(color)
-            if (old is None or n > old[0] or color in done
+            k0 = self._k.get(color)
+            known = k is not None and k0 is not None
+            if old is not None and n > old[0] and known and k <= k0:
+                # an unread bucket of the colour is back, not a new one: no restart
+                self._key[color] = (n, max(total, old[1]), max(top, old[2]))
+                self._fewer.pop(color, None)
+            elif (old is None or n > old[0] or color in done
                     or (n == old[0] and total >= old[1] + g) or (n < old[0] and top >= old[2] + g)):
                 self._key[color] = (n, total, top)
                 self._since[color] = now
+                self._k[color] = k
                 self._fewer.pop(color, None)
             elif n < old[0]:
                 since = self._fewer.setdefault(color, now)
-                if now - since > self.forget_s:      # one left unseen: follow, clock runs on
+                left = k < k0 if known else True     # without the counter: time alone
+                if now - since > self.forget_s and left:   # one left unseen: follow, clock on
                     self._key[color] = (n, total, top)
+                    self._k[color] = k
                     del self._fewer[color]
             else:
                 self._fewer.pop(color, None)
@@ -470,4 +495,5 @@ class BeltTracker:
             if color not in keys and (color in done or now - self._seen[color] > self.forget_s):
                 del self._key[color], self._since[color], self._seen[color]
                 self._fewer.pop(color, None)
+                self._k.pop(color, None)
         return {c: now - self._since[c] for c in self._key}

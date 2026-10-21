@@ -147,7 +147,8 @@ class Analyzer:
                     log("capacity per colour (share of the picture per bucket): " + ", ".join(
                         f"{c} {v:.2%}" for c, v in sorted(self.colour_capacity.items())))
                 state.colour_capacity = dict(self.colour_capacity)
-            state.belt_stalled = self.belt.update(state.conveyor, now)
+            state.belt_stalled = self.belt.update(state.conveyor, now, state.conveyor_k)
+            state.belt_tracked = self.belt.tracked
             self._note_mechanics(state, log)
             if self.lattices is not None:
                 self._watch_hidden(state, log)

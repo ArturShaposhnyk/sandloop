@@ -28,10 +28,23 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | L190 tunnels read (annotations 073-084, templates, outlined digits), collect numbering | `069a463` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 961 pass.
+Tests: `python -m pytest -q` - all 963 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+### Hotfix: belt stall clock (L190 run `20261021-122825`)
+- The bot idled 116 -> 251 s and 271 -> 396 s: the belt reader dropped a bucket every other
+  frame (darkgreen 93 / one of two oranges, or the orange/cream tower read "?"). `BeltTracker`
+  followed the lower count after `stall_forget_s`, the bucket then "arrived" again and the stall
+  clock restarted every ~15 s; `strategy.belt_idle` counted k > buckets read as collecting.
+- Fix: `BeltTracker.update(..., k)` uses the k/5 counter - the reference follows fewer buckets
+  only once k fell (one left unseen), more buckets restart the clock only if k rose (a tap);
+  `LevelState.belt_tracked` (buckets the tracker holds) counts as seen in `belt_idle`.
+  Replayed on the run's belt.csv: idle after ~6 s, stuck (`lost_stuck_s`) after ~15 s in both
+  stretches (was never). Tests: `tests/test_run_20261021_122825.py`.
+- Next: the redesign agreed with the user (one search-based decider, replay harness, self-play),
+  phase A = replay harness.
+
 ### L190 tunnels read (user's screenshots, dataset shots 073-084)
 - The 12 `tools.collect --label l190` shots were numbered 001-012 (clashing with the dataset):
   renamed 073-084 (index.jsonl updated; label "gameplay", note "L190 ..."). `tools.collect` now
