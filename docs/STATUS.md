@@ -35,7 +35,7 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 Tests: `python -m pytest -q` - all 997 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
-## Redesign: one search-based decider (agreed with the user 2026-10-21) - phase C done, awaiting OK
+## Redesign: one search-based decider (agreed with the user 2026-10-21) - phase D in progress (branch `phase-d-sim-fit`)
 Why: three decision layers (level plan, strategy rules, slot reserves) vetoed each other and the
 bot idled while nothing filled (L190 runs 122825 / 143729: plan step -> rule rejects -> reserve
 blocks -> re-plan, in a loop). Target design:
@@ -60,8 +60,8 @@ blocks -> re-plan, in a loop). Target design:
 |---|---|---|
 | A | replay harness + accuracy report (no behaviour change) | done `e2a4857` |
 | B | fit the sim, 4 px picture, speed-up | done `1aa57d8` |
-| C | belief (slot-level belt tracker + online correction) + new decider behind `decider: search` | done (uncommitted), gate NOT met - old stays default |
-| D | self-play harness, weight tuning by win rate | |
+| C | belief (slot-level belt tracker + online correction) + new decider behind `decider: search` | done `1aed6b8`, `2d6084a`; gate NOT met, lost live L190 3/3 - old stays default |
+| D | simulator reproduces real outcomes (tools/realcal.py, tools/simfit.py), then weight tuning by self-play | in progress, worktree `../sandloop-phaseD` |
 | E | live check with the user, delete the old layers, bot notes -> docs/STRATEGY.md | |
 
 Results so far (replay, 942 trajectories of 26 runs; "gains sand within 10 s"):
@@ -94,7 +94,58 @@ Results so far (replay, 942 trajectories of 26 runs; "gains sand within 10 s"):
 Tools: `python -m tools.replay` (accuracy), `python -m tools.fit_sim [--cell-px 4] [--cv]` (fit),
 `debug/replay/` (reports, cache - `--rebuild` after vision changes).
 
-## Where it stands (2026-10-21)
+## Where it stands (2026-10-22, before /clear)
+### Live run `20261021-232340`: `--decider search` on L190, 3 attempts, all lost
+| L190 attempt | decider | result | duration | taps | sand collected |
+|---|---|---|---|---|---|
+| 122825 #1 | old | stopped by the user | 442 s | 20 | 54 % |
+| 143729 #1 | old | lost | 185 s | 22 | 95 % |
+| 143729 #2 | old | stopped (2 dead taps) | 171 s | 21 | 46 % |
+| 232340 #1 / #2 / #3 | search | lost | 46 / 67 / 34 s | 8 / 10 / 7 | 8 / 10 / 9 % |
+(collected = 1 - sand left / 0.979 at the start.) From the 2nd tap on nearly every candidate
+was "lost 25-100 %" in the sampled worlds, so the choice was close to random; it kept taking
+orange at 0 % of the contact layer (r1c0, r1c4, r1c5) and "never idle" forced taps on the empty
+belt at the level start. User: `decider: old` stays; no search live until the simulator
+reproduces real outcomes.
+
+### Key locks: a lock is a blocking cell, no bucket under it (user, `0c2ca71`)
+L187 runs 000105 / 224631 and L189 112241: 2-3 s after the key flew the lock cell reads empty
+(first a face-up bucket of the lock's colour: the fading padlock), nobody tapped it. Fixed in
+state (opened lock cells EMPTY, like chain gates), sim / worlds (nothing hidden), level memory
+("revealed" only for ice / curtain cells; the false L189 `"2,4": "magenta"` was dropped from
+debug/levels.jsonl - backup in the session scratchpad), planner (a key is worth the buckets
+behind its lock), GAME_RULES.md. Tests updated (997 pass).
+
+### Redesign phase D (worktree `../sandloop-phaseD`, branch `phase-d-sim-fit`, local commits)
+- `tools/realcal.py`: (a) every tapped bucket of the 2x runs followed on the real belt
+  (belief.py; `BeltBelief.left` records departures) vs the simulator started on its tap frame:
+  left within 40 s both / only real / only sim, departure error, fill error; (b) real outcomes:
+  the tap sequences of the won attempts (L187 000105, L189 112241 #2) and 8 lost ones (L187
+  224631, 171133; L189 112241 #1, 101655 #3; L190 143729 #1, 232340 #1-3) replayed open loop.
+  ~2 s per evaluation.
+- Findings: real buckets read ~0 % for 2.5-3 s (on their way), jump 50-70 points in ~1 s, then
+  plateau until new sand reaches the bottom (blue 0 -> 86 % at 3.8 s; darkred 44 % for 20 s).
+  The fitted curve fills slowly instead. A bucket at 99 % never finished (capacity rounding).
+  Sideways sand slump: no effect (tried, not kept).
+- New sim options (default off): `reach_delay_s`, `finish_tol` (99 % = full, also with no
+  colour in the contact layer). `tools/simfit.py` grid search (outcomes, then agreement, then
+  departure error):
+
+  | simulator | outcomes right | real wins in the sim | bucket agreement | departure bias |
+  |---|---|---|---|---|
+  | today's (fitted in phase B) | 8/10 | L187 13/29 taps blocked, L189 17/29 | 0.76 | +1.5 s |
+  | delay 3.5 s, rate 600, max 40 %/s, min 0, contact x3, 99 % rule | **10/10** | both win, 0 blocked, belt stops near the real end | 0.84 | -5.2 s |
+
+  Only contact x3 reproduces both wins (x2.5 / x3.5 do not): it rests on 2 won games.
+- **Problem found**: in that fitted world the OLD decider wins self-play 16/16 on L187, L189
+  and L190 (also at contact x2 / x2.5), while live it won ~1 in 5-6 attempts (L190 never). The
+  world reproduces the recorded sequences open loop but is far too easy closed loop - real
+  failures come from things the sim lacks (misreads, dead taps, stalls). Search in it: L187
+  15/16, L189 7/16, L190 13/16 (debug/selfplay/fitted-1.json). Not a valid gate yet.
+- Search decider on the branch: the model it plans in is the fit (`decider.model_*`, 2x only;
+  old decider unchanged); **all-lost safety**: every candidate lost in >= `fallback_lost` (0.5)
+  of the worlds -> the old decider (strategy + level plan, kept running alongside in search
+  mode) decides that frame, logged "[old decider: every search candidate is lost (...)]".
 ### Redesign phase C: belief + search decider behind `decider: search` (old stays default)
 - New: `belief.py` (BeltBelief: slots by identity, k authoritative, tap lag tolerated,
   per-slot observed rate, gaining / stalled), `worlds.py` (hidden buckets sampled from the
@@ -633,8 +684,10 @@ Tools: `python -m tools.replay` (accuracy), `python -m tools.fit_sim [--cell-px 
    <slots gaining / stalled, rates>) CONFIRMED"), waits "wait: search - belt gaining (...)";
    tap events carry "decider" and "decision", levels.jsonl "searches" (every search's top
    values) and "decider". Then: analyse old vs new on real outcomes.
--7. Phase D first: a world that reproduces the real wins (fit on the real tap sequences:
-   winning ones must win, losing ones lose) before tuning weights by self-play.
+-7. Phase D next (worktree `../sandloop-phaseD`): add a closed-loop target to the fit - the old
+   decider's self-play win rate per level must match its live record (L187 ~1/6, L189 ~1/5,
+   L190 0/3) besides the 10 outcomes and the per-bucket timing (fitted world: -5 s too fast);
+   then the search vs old gate; only then weight tuning. Then merge the branch.
 -6. Live L190 `python -m bot --levels 1` (L190 SUPER HARD, tunnels): watch the grid lines read
    `tunnel5:right` / `tunnel5:left` / `tunnel5:up`, that the bot never taps a tunnel, and that
    after a tap in front of a tunnel the plan ends there ("horizon") and re-plans once the
