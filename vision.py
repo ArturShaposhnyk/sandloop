@@ -386,7 +386,8 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
             cell = classify_cell(r, c, f, palette, v)
             spec = CELL_LOCK_BY_NAME.get(cell.lock or "") if cell.kind is Kind.LOCK else None
             if spec is not None and spec.counter != "none" and reader is not None:
-                cell.counter = reader.read_int(lock_digits_roi(img, lat, r, c, v), "light")
+                cell.counter = reader.read_int(lock_digits_roi(img, lat, r, c, v),
+                                               spec.counter_polarity)
                 if cell.counter is None and spec.counter == "required":
                     # no number, not this lock: a yellow padlock still fading over a bucket is
                     # no chest, a cyan bucket no ice (run 20261021-092045 r4c6)

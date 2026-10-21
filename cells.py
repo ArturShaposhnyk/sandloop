@@ -129,7 +129,7 @@ CELL_LOCKS: List[CellLock] = [
     CellLock("key", "path", lambda f, v: f.icon == "key", coloured=True, before_empty=True),
     CellLock("chain", "key", lambda f, v: f.icon == "chain", coloured=True, before_empty=True),
     CellLock("tunnel", "drops", lambda f, v: (f.icon or "").startswith("tunnel_"),
-             before_empty=True),
+             counter_polarity="outlined", before_empty=True),
     # ice (user): always shows its number N; a cyan bucket (L189 r4c6) passes the colour test
     CellLock("ice", "taps", _is_ice, counter="required"),
     CellLock("chest", "path", lambda f, v: f.wood_frac >= v.chest_min_wood, counter="required"),

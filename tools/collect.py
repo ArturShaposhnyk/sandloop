@@ -102,6 +102,11 @@ class ShotWriter:
     def __init__(self, out_dir: Path) -> None:
         self.out_dir = out_dir
         self.count = 0
+        # sequence numbers go on after the folder's highest (each session restarted at 001:
+        # L188's 001-007 and L190's 001-012 clashed with the dataset's shots)
+        self.first = 1 + max((int(p.stem.split("-")[3]) for p in Path(out_dir).glob("*.png")
+                              if len(p.stem.split("-")) > 3 and p.stem.split("-")[3].isdigit()),
+                             default=0)
 
     def save(self, frame: np.ndarray, geo: ScreenGeometry, source: str, label: Optional[str],
              change: float, stamp: Optional[float] = None) -> Shot:
@@ -109,7 +114,7 @@ class ShotWriter:
 
         stamp = time.time() if stamp is None else stamp
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        name = shot_name(stamp, source, label, self.count + 1)
+        name = shot_name(stamp, source, label, self.first + self.count)
         path = self.out_dir / name
         if not cv2.imwrite(str(path), frame):
             raise OSError(f"could not write {path}")

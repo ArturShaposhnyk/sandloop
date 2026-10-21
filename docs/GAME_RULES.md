@@ -416,8 +416,13 @@
   `python -m tools.build_palette`). Taking the bucket in front of it (`state._drop_from_tunnel`)
   leaves a bucket of unknown colour there - the worst case: that cell stays blocked and the plan
   ends there (horizon) until the new bucket is seen; the tunnel's N count as buckets still to
-  come (`hidden_buckets`). Until the templates exist (no L190 frame yet) a tunnel cell reads
-  UNKNOWN: never tapped, an obstacle, saved to `dataset/unknown/`.
+  come (`hidden_buckets`).
+- Seen on L190 (shots 073-084): a white rounded box with the number, a blue ring on its
+  opening side (the user's screenshots confirm: r1c6's ring on the left, it drops into r1c5;
+  r1c1's ring on the right, it drops into r1c2; r5c3's ring on top). The number is a white
+  digit with a dark outline on the white box - read with the "outlined" glyph mask
+  (`digits.OUTLINE_V`: the pixels the outline closes in). Templates: 8 per side from the
+  annotated shots; all 36 tunnel cells of the 12 shots read right (number + opening).
 
 ## Unknown / future obstacles
 Later levels introduce new obstacle / lock types beyond ice and curtains. Vision and strategy
@@ -472,6 +477,8 @@ must be extensible:
 - L188: when a picture lock opens, do its sand colours match what shows through the overlay?
 - L190: does a tunnel drop its first bucket at once when the cell in front of it is empty at
   the start (or after a key / chest empties it), or only when a bucket is taken from there?
+  (user, 2026-10-21: not known. The bot predicts a drop only when the bucket in front is
+  taken; whatever really drops is read on the next frames.)
 - L189: the chain lock covers r4c2 + r5c2 on screen (padlock on their border, chains through
   both): one gate of two cells (as modelled) or a gate in r5c2 only?
 - Path rule vs. picture: in shot 010 the blue bucket at r4c4 (0-based) looks face-down although

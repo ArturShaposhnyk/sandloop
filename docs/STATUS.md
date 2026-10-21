@@ -25,12 +25,37 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | L189 run 092045: ice needs its number, ice slot reserve, lost-position finish, booster arrow row | `bdc4c98` |
 | 7 | L189 run 101655: popup screen, level memory (record order, face-free signature, whole-level bans, colours under locks, clean end reads), player hints in the planner, 2x belt speeds | `44fdfc0` |
 | 7 | run 112241: L189 WON; no phantom level / inferred win; L190 tunnel model | `f59c683` |
+| 7 | L190 tunnels read (annotations 073-084, templates, outlined digits), collect numbering | (this commit) |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 840 pass.
+Tests: `python -m pytest -q` - all 961 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+### L190 tunnels read (user's screenshots, dataset shots 073-084)
+- The 12 `tools.collect --label l190` shots were numbered 001-012 (clashing with the dataset):
+  renamed 073-084 (index.jsonl updated; label "gameplay", note "L190 ..."). `tools.collect` now
+  numbers on from the folder's highest sequence (the same clash happened with L188).
+- L190 board (7x7, exits r0c0 / r0c4): tunnels **r1c1 (opening right -> drops into r1c2)**,
+  **r1c6 (opening left -> r1c5)**, **r5c3 (opening up -> r4c3)**, all "5" at the start. The
+  frames confirm the opening = the side with the blue ring: r1c5 refilled blue / cyan / cream /
+  orange while r1c6 went 5 -> 1 (074-079); r1c2 refilled blue / cyan / cream while r1c1 went
+  5 -> 2 after the restart (080-084). Greens read "darkgreen" (bucket and sand alike).
+- Annotated 073 / 076-079 / 081 / 082 / 084 (`tunnelN:<side>`), `python -m tools.build_palette`:
+  24 tunnel templates (8 per side: right, left, up), palette looks refreshed with these shots.
+  Before: tunnels read cyan / cream buckets (the bot could have tapped them) or "two objects".
+- Numbers: the generic reader merged the white digit with the white box (read 0 / 65 / 91).
+  New glyph mask "outlined" (`digits.glyph_mask`): light pixels closed in by the dark outline
+  (outline V < `OUTLINE_V` 110, grown 1 px). Tunnel lock reads its counter with it
+  (`CellLock.counter_polarity`, now used by vision). 22/22 numbers right at V 90-130.
+- Result: all 36 tunnel cells of the 12 shots read with the right number and opening, incl.
+  the 4 unannotated shots; 083 r1c2 reads a bucket still dropping in as face-down (a
+  disagreement for one frame: never tapped).
+- Open question answered "not known" (does a tunnel drop at once into an empty front cell?):
+  the bot predicts a drop only when the bucket in front is taken; real drops are read.
+- Tests: `tests/test_l190.py`; the annotated L190 grids run in every grid test of
+  `tests/test_vision.py`.
+
 ### Run `20261021-112241`: **L189 WON** (attempt 2), then a false win
 - The start plan used the memory ("4 failed sequence(s) avoided, capacity from earlier
   attempts, r3c1 cyan/cream seen under its lock before"); attempt 2 won at 421 s.
@@ -411,6 +436,10 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
+-6. Live L190 `python -m bot --levels 1` (L190 SUPER HARD, tunnels): watch the grid lines read
+   `tunnel5:right` / `tunnel5:left` / `tunnel5:up`, that the bot never taps a tunnel, and that
+   after a tap in front of a tunnel the plan ends there ("horizon") and re-plans once the
+   dropped bucket's colour shows.
 -5. L190 screenshots: on L190 run `python -m tools.collect --manual --label l190` and snap
    (ctrl+alt+s) the start board + a frame right after a tunnel dropped a bucket; then
    annotate the grid (`tunnelN:<side>` per tunnel) in dataset/annotations.json, `python -m
@@ -529,6 +558,9 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L190 screenshots 073-084 (2026-10-21): tunnels annotated and read
+- See "Where it stands". Tests: `tests/test_l190.py`, `tests/test_vision.py`.
 
 ## Run 20261021-112241 (2026-10-21): L189 WON, phantom L190 "win"
 - See "Where it stands". Tests: `tests/test_run_20261021_112241.py`.

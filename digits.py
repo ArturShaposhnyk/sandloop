@@ -26,6 +26,9 @@ class Glyph:
         return (self.x1 - self.x0) / max(1, self.y1 - self.y0)
 
 
+OUTLINE_V = 110  # "outlined" glyphs: darker pixels are the text's outline (L190 tunnels: 90-130 read 22/22)
+
+
 def glyph_mask(roi_bgr: np.ndarray, polarity: str = "light") -> np.ndarray:
     """Pixels of the text: 'light' = white text (with a dark outline), 'dark' = dark text on a
     light sign."""
@@ -34,6 +37,18 @@ def glyph_mask(roi_bgr: np.ndarray, polarity: str = "light") -> np.ndarray:
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
     if polarity == "light":
         return (hsv[..., 1] < 70) & (hsv[..., 2] > 200)
+    if polarity == "outlined":
+        # white text with a dark outline on a white body (L190 tunnels): the light parts of the
+        # light pixels closed in by the outline - not reachable from the ROI border
+        dark = cv2.dilate((hsv[..., 2] < OUTLINE_V).astype(np.uint8), np.ones((3, 3), np.uint8))
+        free = (1 - dark).copy()   # the outline grown by 1 px: anti-aliased gaps closed
+        h, w = free.shape
+        seed = np.zeros((h + 2, w + 2), np.uint8)
+        for y, x in [(y, x) for y in (0, h - 1) for x in range(w)] + \
+                [(y, x) for x in (0, w - 1) for y in range(h)]:
+            if free[y, x] == 1:
+                cv2.floodFill(free, seed, (x, y), 2)
+        return cv2.dilate((free == 1).astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
     return hsv[..., 2] < 110
 
 
