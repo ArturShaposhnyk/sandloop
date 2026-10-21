@@ -22,7 +22,7 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | L188 shells + picture locks, L189 chain lock, lattice fit by wall runs | `96363d3` |
 | 7 | first L187 win (run 000105); finished board no longer starts a level | `66a279d` |
 | 7 | belt speed 2x (▶▶2x tapped at level start, planner 2x fill speeds, 1x / 2x calibration), ad chains, key colour on the last slot | `fdc832d` |
-| 7 | L189 run 092045: ice needs its number, ice slot reserve, lost-position finish, booster arrow row | (this commit) |
+| 7 | L189 run 092045: ice needs its number, ice slot reserve, lost-position finish, booster arrow row | `bdc4c98` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
 Tests: `python -m pytest -q` - all 823 pass.
