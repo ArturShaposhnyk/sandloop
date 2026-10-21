@@ -205,7 +205,7 @@ class Analyzer:
 
         if self.hiding is None:
             self.hiding = {(c.row, c.col) for c in state.cells(Kind.LOCK)
-                           if c.lock in ("ice", "lock", "curtain")}
+                           if c.lock in ("ice", "curtain")}   # a key lock hides none
         for pos in self.hiding:
             key = f"{pos[0]},{pos[1]}"
             cell = state.cell(pos)
@@ -224,7 +224,7 @@ class Analyzer:
     def _note_mechanics(self, state: LevelState, log) -> None:
         """Once per level: what the bot cannot explain on this board yet (user, 2026-10-21:
         log "unknown mechanic" and ask instead of guessing)."""
-        hidden = any(l.kind in ("curtain", "lock", "ice", "chest", "mystery")
+        hidden = any(l.kind in ("curtain", "ice", "chest", "mystery")
                      for l in state.locks) or bool(state.cells(Kind.UNKNOWN))
         for pl in state.pic_locks:
             keys = [l for l in state.locks if l.kind == "key" and l.color == pl.colour]

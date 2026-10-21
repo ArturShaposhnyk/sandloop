@@ -235,10 +235,11 @@ class LevelState:
 
     @property
     def hidden_buckets(self) -> int:
-        """Buckets of unknown colour: one under every curtain cell and every lock cell, one per
-        mystery bucket, N in a chest showing N (unread: 1), and opened cells not seen yet."""
+        """Buckets of unknown colour: one under every curtain cell (a key lock hides none:
+        user, 2026-10-21), one per mystery bucket, N in a chest showing N (unread: 1), and
+        opened cells not seen yet."""
         n = sum(len(lock.cells) for lock in self.locks
-                if lock.kind in ("curtain", "lock", "mystery"))
+                if lock.kind in ("curtain", "mystery"))
         n += sum(lock.counter or 1 for lock in self.locks if lock.kind == "chest")
         # L190 tunnels: N more buckets each (unread number: at least 1)
         n += sum(1 if lock.counter is None else lock.counter for lock in self.locks
@@ -344,9 +345,11 @@ class LevelState:
 
     def _release_keys(self) -> List[Tuple[str, Tuple[Pos, ...]]]:
         """Keys the path rule connects to the exit fly to the lock of their colour: the key's
-        cell empties (confirmed, GAME_RULES.md) and the lock's cells open (buckets of unknown
-        colour until seen: UNKNOWN here; a chain gate's cells become EMPTY, ``gates_opened``;
-        L188: no grid lock of its colour but one picture lock -> it opens, ``pics_opened``).
+        cell empties (confirmed, GAME_RULES.md) and the lock's cells become EMPTY - a lock is a
+        blocking cell, no bucket is under it (user, 2026-10-21; L187 / L189 runs: the lock cell
+        reads empty 2-3 s after its key flew). Chain gates the same (``gates_opened``); the
+        key locks opened are returned (``unlocked``). L188: no grid lock of its colour but one
+        picture lock -> it opens, ``pics_opened``.
         Repeats while a released key connects another key.
         A key whose colour has no lock, or several separate locks, opens nothing here."""
         opened: List[Tuple[str, Tuple[Pos, ...]]] = []
@@ -372,15 +375,12 @@ class LevelState:
                     continue
                 target = targets[0]
                 self.locks.remove(target)
-                if target.kind == "chain":   # a gate: its cells are free now (L189, user)
-                    for lr, lc in target.cells:
-                        self.grid[lr][lc] = Cell(lr, lc, Kind.EMPTY)
+                for lr, lc in target.cells:   # free now: the path goes through (user)
+                    self.grid[lr][lc] = Cell(lr, lc, Kind.EMPTY)
+                if target.kind == "chain":
                     self.gates_opened.append((key.color or "?", target.cells))
-                    continue
-                for lr, lc in target.cells:
-                    self.grid[lr][lc] = Cell(lr, lc, Kind.UNKNOWN,
-                                             reason="opened lock: bucket colour not seen yet")
-                opened.append((key.color or "?", target.cells))
+                else:
+                    opened.append((key.color or "?", target.cells))
 
     def _open_chests(self) -> List[Tuple[Pos, int]]:
         """Chests the path rule connects to the exit open and scatter N buckets of unknown colour

@@ -142,7 +142,7 @@ def start_plan(analyzer):  # noqa: F811
 
 def test_plan_from_the_l187_start_never_fills_the_belt(start_plan):
     st, _, plan = start_plan
-    assert len(plan.steps) >= 10 and plan.result in ("win", "horizon")
+    assert len(plan.steps) >= 10 and plan.result in ("win", "horizon", "open")   # locks hide nothing: no horizon
     assert plan.dead == 0
     assert all(s.belt_before < 5 for s in plan.steps)
     assert plan.steps[0].pos in st.tappable

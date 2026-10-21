@@ -398,7 +398,7 @@ class Sim:
         """Cells whose content is not known (opened locks / curtains / ice ...) + 1 per picture
         lock a key opened in the simulation (its sand's colours are unknown, L188)."""
         return len(self.grid.cells(Kind.UNKNOWN)) + sum(
-            len(l.cells) for l in self.grid.locks if l.kind in ("curtain", "lock", "ice")) + \
+            len(l.cells) for l in self.grid.locks if l.kind in ("curtain", "ice")) + \
             self.pics_opened
 
     def signature(self) -> Sig:

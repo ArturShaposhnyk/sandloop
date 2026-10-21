@@ -1,6 +1,6 @@
 """Sampled worlds for the buckets a board hides (redesign phase C; decider.py, tools/selfplay.py).
 
-Buckets of unknown colour - under ice / key locks / curtains, mystery buckets, the N buckets of
+Buckets of unknown colour - under ice / curtains, mystery buckets, the N buckets of
 a tunnel (L190) or a chest (L186) - no longer end a plan ("horizon"): every sampled world gives
 them colours drawn from the **colour balance** (levels are balanced, GAME_RULES.md "Sand per
 bucket"): with one capacity for the whole level, colour c misses ~ its sand / capacity - its
@@ -27,8 +27,8 @@ Hidden = Dict[Pos, Tuple[str, Optional[str]]]
 
 @dataclass
 class Unknowns:
-    """Where a board hides buckets: ``cells`` one bucket each (ice / key lock / curtain cells,
-    mystery buckets), ``tunnels`` / ``chests`` cell -> buckets still inside."""
+    """Where a board hides buckets: ``cells`` one bucket each (ice / curtain cells, mystery
+    buckets; a key lock hides none), ``tunnels`` / ``chests`` cell -> buckets still inside."""
     cells: List[Pos] = field(default_factory=list)
     tunnels: Dict[Pos, int] = field(default_factory=dict)
     chests: Dict[Pos, int] = field(default_factory=dict)
@@ -41,7 +41,7 @@ class Unknowns:
 def find_unknowns(grid: LevelState, known: Sequence[Pos] = ()) -> Unknowns:
     out = Unknowns()
     for lock in grid.locks:
-        if lock.kind in ("ice", "lock", "curtain", "mystery"):
+        if lock.kind in ("ice", "curtain", "mystery"):   # a key lock hides no bucket
             out.cells += [p for p in lock.cells if p not in known]
         elif lock.kind == "tunnel":
             out.tunnels[lock.cells[0]] = 1 if lock.counter is None else lock.counter

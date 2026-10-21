@@ -28,26 +28,23 @@
   from the gold frame on screen and map it to the covered grid cells.
   Under the curtain there are **buckets**, colours unknown until it opens. When it opens they
   become regular buckets and follow the path rule.
-- **Locks and keys** (L183, confirmed by the user):
-  - A **key** (yellow, red, blue (L187), ...) sits in its own grid cell. It is an obstacle for the path rule
-    until a path opens to it.
+- **Locks and keys** (L183; corrected by the user 2026-10-21):
+  - A **key** (yellow, red, blue (L187), magenta (L189), ...) sits in its own grid cell. It is
+    an obstacle for the path rule until a path opens to it.
   - When the key's cell connects to the exit by the path rule (e.g. the bucket in front of it is
     released), the key flies by itself to the **lock of the same colour** and opens it.
-  - Under a lock there are **buckets** (not tappable while the lock is there). After it opens
-    they become regular buckets under the path rule (colours unknown until seen).
-  - They are playable **immediately**, while the padlock animation still covers them (user,
-    2026-10-19; run 20261017-103804 r2c1, r3c5). They read face-down meanwhile, so for
-    `vision.unlock_trust_s` after a key lock cell reads as a bucket / empty, the path rule
-    alone decides there (`hints.RecentUnlocks`).
-  - Bot rule (user, 2026-10-20): tap such a bucket at once **only if its colour is read
-    confidently** - not the lock's own colour (the fading padlock reads as a bucket of the
-    lock's colour), nearest colour within `vision.unlock_confident_dist` and the runner-up at
-    least `vision.unlock_confident_margin` further. Otherwise wait until the padlock is gone
-    (`vision.unlock_wait_s`, ~2 s), then the reading counts (`vision.unlock_unsure`).
+  - A **lock is a blocking cell; there is no bucket under it** (user, 2026-10-21; L187 runs
+    000105 / 224631 and L189 run 112241: 2-3 s after its key flew the lock cell reads empty,
+    nobody tapped it, and the bucket behind it (L189 r2c5) was tappable at once). Opening it
+    frees the path: the buckets in the cells behind / below it become reachable by the path
+    rule. ("Buckets under the lock" in L183 meant those cells, not the lock's own.)
+  - While the padlock fades (2-3 s) the lock cell reads as a face-up bucket of the lock's own
+    colour (L189 r2c4 "magenta-up"): never tapped (`vision.unlock_unsure` rejects the lock's
+    colour), and the level memory records nothing for a lock cell.
   - After the key flies, its cell is **empty** (confirmed).
   - Several locks of the same colour: not seen yet (open question). Until then the bot credits
     no unlock when a key's colour has several separate locks.
-  - Every lock in L183 covers one cell; adjacent lock cells of one colour are treated as one lock
+  - Every lock seen covers one cell; adjacent lock cells of one colour are treated as one lock
     (not confirmed).
 - **Chest** (L186, confirmed by the user): an orange wooden box with a number N, in its own cell.
   An obstacle for the path rule. It opens by itself when the path rule connects its cell to the
@@ -312,7 +309,7 @@
   the picture as per-column stacks of sand (buried colours included; collecting a colour lets
   the sand above fall), belt slots with laps, towers, keys / locks, ice, curtains; capacity per
   colour. It picks the sequence that never jams the belt (full belt, nothing moves) and collects
-  the most sand. Buckets of unknown colour (opened locks, curtains, ice, chests) end the plan
+  the most sand. Buckets of unknown colour (curtains, ice, chests, tunnels) end the plan
   ("horizon"): once seen, it re-plans.
 - Live: each frame's board is matched to the plan's predicted board before each tap; a match
   taps that step once the belt has no more buckets than the plan had there; no match = re-plan
@@ -321,7 +318,7 @@
   the buckets' faces ignored) the whole-level tap sequences of attempts that did not win are
   banned (the plan, prefixed with the level's taps so far, must deviate), the capacity per
   colour is corrected from what those attempts really used (end reads under a popup are
-  skipped), and **colours seen under ice / key locks / curtains** in earlier attempts are
+  skipped), and **colours seen under ice / curtains** (a key lock hides none) in earlier attempts are
   used: those cells open to buckets of that colour in the simulator instead of ending the plan.
 - **Player hints (user, L189 run 20261021-101655)**, as plan score terms (`planner:`):
   1. Timing: release a bucket shortly before its colour reaches the contact layer, not long
@@ -364,7 +361,7 @@ Behind the config switch (default `old` = the rules above + the level plan). Wit
   reserves, "tower top must fill", "no shell bucket before its shell is at the bottom", stalled
   colour) are **score terms**, not vetoes (`decider:` weights): idle slot-seconds, belt buckets
   or tower stages short of sand, exposed colours without a free slot, jams.
-- Unknown buckets (tunnel drops, under ice / locks / curtains, chests, mystery) get colours
+- Unknown buckets (tunnel drops, under ice / curtains, chests, mystery) get colours
   sampled from the colour balance (`worlds.py`); colours seen in earlier attempts are used.
 - **Never idle**: waiting only while a belt bucket is really gaining sand (`belief.py`: grew
   >= `gain_min` points within `gain_window_s`, or tapped < `fresh_grace_s` ago); otherwise the
