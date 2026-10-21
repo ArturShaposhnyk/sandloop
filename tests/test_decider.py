@@ -271,4 +271,19 @@ def test_bot_plays_a_search_decision_on_a_real_frame(tmp_path):
     assert taps[0]["why"].startswith("confirmed, search 1/")
     assert taps[0]["decider"] == "search"
     assert taps[0]["decision"].startswith("tap r1c1 cyan (search ") and "belt:" in taps[0]["decision"]
-    assert an.planner is None
+    assert an.planner is not None   # the old decider runs alongside (all-lost fallback)
+
+
+def test_every_candidate_lost_falls_back_to_the_old_decider(cfg):
+    from strategy import Decision
+
+    old = Decision(None, "wait: old decider")
+    st = board()
+    for limit, expect in ((0.0, True), (1.01, False)):
+        d = SearchDecider(dataclasses.replace(cfg, decider=dataclasses.replace(
+            cfg.decider, fallback_lost=limit)))
+        d.observe(st, 0.0)
+        dec = d.decide(st, board_pic, 0.0, fallback=lambda: old)
+        assert (dec.reason.startswith("wait: old decider [old decider: every search candidate")
+                == expect)
+        assert d.fallbacks == int(expect)

@@ -26,6 +26,7 @@ consecutive taps after it (no wait between) go in the same burst.
 """
 from __future__ import annotations
 
+import dataclasses
 import time
 import zlib
 from dataclasses import dataclass, field
@@ -310,6 +311,7 @@ class SearchDecider:
         self.last: Optional[_Last] = None
         self.line: Tuple[Action, ...] = ()       # the rest of the chosen line (warm start)
         self.searches = 0
+        self.fallbacks = 0                       # decisions left to the old decider
         self.log: List[Dict[str, Any]] = []      # levels.jsonl "searches"
         self.memory: Dict[Pos, Tuple[str, Optional[str]]] = {}
         self.capacity_shares: Dict[str, float] = {}
@@ -348,7 +350,12 @@ class SearchDecider:
 
     # -- the decision ---------------------------------------------------------------------------
 
-    def decide(self, state: LevelState, picture: Callable[[], Picture], now: float, log=print):
+    def decide(self, state: LevelState, picture: Callable[[], Picture], now: float, log=print,
+               fallback: Optional[Callable[[], Any]] = None):
+        """``fallback``: the old decider's decision for this frame (strategy + level plan),
+        played when every search candidate is lost in at least ``fallback_lost`` of the
+        sampled worlds (user, live L190 run 20261021-232340: with an inaccurate simulator the
+        choice among "lost" candidates was close to random)."""
         from strategy import Decision
 
         dc = self.dc
@@ -370,6 +377,17 @@ class SearchDecider:
             res = self._search(state, picture(), legal, gaining, stalled, rates, now)
             prev = self.last.choice if self.last is not None else None
             self.last = _Last(key, now, res, prev)
+        if (fallback is not None and res.values
+                and all(-v[1] >= self.dc.fallback_lost for v in res.values.values())):
+            old = fallback()
+            self.line = ()
+            self.fallbacks += 1
+            if self.last is not None:
+                self.last.choice = None
+            text = self._summary(res, res.ranked())
+            return dataclasses.replace(
+                old, reason=f"{old.reason} [old decider: every search candidate is lost "
+                            f"({text})]")
         return self._choose(state, res, gaining, now, log)
 
     def _search(self, state: LevelState, pic: Picture, legal: List[Pos], gaining: bool,

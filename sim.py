@@ -248,6 +248,9 @@ class SimConfig:
     burst_tap_s: float = 4.2          # ... per tap that follows a tap (live: a burst of plan steps)
     burst_max: int = 1                # taps in one burst (the first one costs tap_s)
     idle_rate: float = 2.0            # a belt bucket filling slower than this %/s is idle
+    finish_tol: float = 0.0           # a stage this close to full (share of capacity) with
+    #   none of its colour left in the contact layer counts as full (the simulated capacity is
+    #   rounded; real buckets reading 99 % leave - tools/realcal.py)
     reach_delay_s: float = 0.0        # a new bucket collects nothing this long (its way to the
     #   picture: real buckets read ~0 % for 2.5-3 s, then jump; tools/realcal.py)
     strict_shells: bool = True        # shell buckets tapped only with their shell at the bottom
@@ -485,6 +488,10 @@ class Sim:
             if self.mult:
                 rate *= self.mult.get(s.colour, 1.0)
             idle -= rate >= self.sc.idle_rate
+            if (self.sc.finish_tol and s.left <= self.sc.finish_tol * self.capacity.get(
+                    s.colour, 1) and self.pic.exposed(s.colour) == 0):
+                self._stage_done(s)   # 99 %: the rounding's last cells are not in the picture
+                continue
             if rate <= 0:
                 continue
             s.credit += rate / 100 * self.capacity.get(s.colour, 1) * self.sc.lap_s
@@ -499,15 +506,19 @@ class Sim:
             s.left -= n
             self.collected += n
             if s.left <= 0:
-                self.fills += 1
-                self._fill_curtains()
-                if s.stage + 1 < len(s.stages):
-                    s.stage += 1
-                    s.left, s.credit = self.capacity.get(s.colour, 1), 0.0
-                else:
-                    self.belt.remove(s)
+                self._stage_done(s)
         self.idle += max(0, idle) * self.sc.lap_s
         return got
+
+    def _stage_done(self, s: Slot) -> None:
+        """A belt bucket's stage is full: the next tower stage starts, else it leaves."""
+        self.fills += 1
+        self._fill_curtains()
+        if s.stage + 1 < len(s.stages):
+            s.stage += 1
+            s.left, s.credit = self.capacity.get(s.colour, 1), 0.0
+        else:
+            self.belt.remove(s)
 
     def _open_ice(self) -> None:
         g = self.grid

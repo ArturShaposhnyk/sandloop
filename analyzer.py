@@ -93,7 +93,7 @@ class Analyzer:
             from decider import SearchDecider
 
             self.decider = SearchDecider(cfg, Path(cfg.paths.debug) / "levels.jsonl")
-        elif track and cfg.planner.enabled:
+        if track and cfg.planner.enabled:
             from levelplan import PlanRunner
 
             self.planner = PlanRunner(cfg, Path(cfg.paths.debug) / "levels.jsonl")
@@ -175,8 +175,9 @@ class Analyzer:
                 res.decision = self.decider.decide(
                     state, lambda: picture_from_frame(img, self.palette, self.cfg.vision,
                                                       self.cfg.planner.cell_px, state.shells,
-                                                      state.pic_locks), now, log)
-            if self.planner is not None and now >= self.scatter_until:
+                                                      state.pic_locks), now, log,
+                    fallback=lambda: self._old_decision(img, gv, state, now, log))
+            elif self.planner is not None and now >= self.scatter_until:
                 res.decision = self.planner.decide(img, gv, state, res.decision, now, log)
             if gv.counter is None:
                 res.failure = "counter: k/5 not read"
@@ -186,6 +187,13 @@ class Analyzer:
         res.reads, res.fails = self.reads, self.fails
         res.speed_x2, res.speed_read = self.speed.state, speed_read
         return res
+
+    def _old_decision(self, img, gv, state: LevelState, now: float, log):
+        """decider: search, every candidate lost: what the old decider does on this frame."""
+        d = choose(state, self.cfg.strategy)
+        if self.planner is not None:
+            d = self.planner.decide(img, gv, state, d, now, log)
+        return d
 
     def _search(self, img, gv, state: LevelState, now: float, log) -> None:
         """decider: search - the belief sees every gameplay frame (also while a chest
