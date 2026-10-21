@@ -229,6 +229,7 @@ class Slot:
     shell: bool = False               # L188 shell bucket still waiting for its shell
     rate: Optional[float] = None      # observed fill %/s (decider.py online correction) ...
     rate_until: float = 0.0           # ... replacing the curve until this simulated second
+    born: float = -1e9                # simulated second it was placed (reach_delay_s)
 
     @property
     def colour(self) -> str:
@@ -247,6 +248,8 @@ class SimConfig:
     burst_tap_s: float = 4.2          # ... per tap that follows a tap (live: a burst of plan steps)
     burst_max: int = 1                # taps in one burst (the first one costs tap_s)
     idle_rate: float = 2.0            # a belt bucket filling slower than this %/s is idle
+    reach_delay_s: float = 0.0        # a new bucket collects nothing this long (its way to the
+    #   picture: real buckets read ~0 % for 2.5-3 s, then jump; tools/realcal.py)
     strict_shells: bool = True        # shell buckets tapped only with their shell at the bottom
     #   (the live rule of the old decider); decider.py: any time, the slot's idle time is priced
 
@@ -332,8 +335,8 @@ class Sim:
 
     def clone(self) -> "Sim":
         nxt = copy.copy(self)         # grid, capacity, hidden, offsets ... shared (subclasses too)
-        nxt.belt = [Slot(s.stages, s.left, s.stage, s.credit, s.shell, s.rate, s.rate_until)
-                    for s in self.belt]
+        nxt.belt = [Slot(s.stages, s.left, s.stage, s.credit, s.shell, s.rate, s.rate_until,
+                         s.born) for s in self.belt]
         nxt.pic, nxt.taps, nxt.actions = self.pic.copy(), list(self.taps), list(self.actions)
         return nxt
 
@@ -435,7 +438,7 @@ class Sim:
         self._open_ice()
         self._apply_hidden()
         self.belt.append(Slot((cell.color,) + ((cell.body,) if cell.body else ()),
-                              self.capacity.get(cell.color, 1), shell=cell.shell))
+                              self.capacity.get(cell.color, 1), shell=cell.shell, born=self.t))
         self.taps.append(pos)
         self.full_taps += self.free == 0
 
@@ -463,6 +466,9 @@ class Sim:
         self.t += self.sc.lap_s
         idle = sum(1 for s in self.belt if s.colour != UNREAD)
         for s in list(self.belt):
+            if self.t - s.born <= self.sc.reach_delay_s:
+                idle -= 1             # on its way to the picture: not idle, not collecting
+                continue
             if s.shell:   # L188: nothing until a shell of its colour drops in
                 down = self.pic.shell_down(s.colour)
                 if down is None:

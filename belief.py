@@ -63,6 +63,7 @@ class BeltBelief:
         self.dc = dc
         self.slots: List[TrackedSlot] = []
         self.k: Optional[int] = None
+        self.left: List[Tuple[TrackedSlot, float]] = []   # slots that left the belt, when
 
     # -- input ----------------------------------------------------------------------------
 
@@ -100,9 +101,11 @@ class BeltBelief:
             waiting = [s for s in self.slots if s.expect_k is not None]
             while len(self.slots) - len(waiting) > k:
                 old = [s for s in self.slots if s.expect_k is None]
-                self.slots.remove(max(old, key=lambda s: (
+                gone = max(old, key=lambda s: (
                     s.done, s.tapped and s.seen_t is None, id(s) not in matched,
-                    -1 if s.fill is None else s.fill, -(s.seen_t or s.born))))
+                    -1 if s.fill is None else s.fill, -(s.seen_t or s.born)))
+                self.slots.remove(gone)
+                self.left.append((gone, now))
             spare = [b for b in unmatched if b.fill is not None]
             while len(self.slots) < k:
                 b = spare.pop(0) if spare else None
