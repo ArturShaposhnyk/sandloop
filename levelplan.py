@@ -214,6 +214,8 @@ class PlanRunner:
         self.done: List[Pos] = []               # the level's taps so far (memory bans whole
         #   sequences: run 20261021-101655 compared them with the re-plan's own taps)
         self.hidden: Dict[Pos, Tuple[str, Optional[str]]] = {}   # colours under locks (memory)
+        self.preset_hidden: Dict[Pos, Tuple[str, Optional[str]]] = {}   # ... without a memory
+        #   file (tools/selfplay.py --memory)
 
     def tapped(self, pos: Pos) -> None:
         """bot.py: a bucket was tapped (plan step or not)."""
@@ -383,13 +385,17 @@ class PlanRunner:
              "belt": [[c, f] for c, f in real], "belt_plan": [[c, f] for c, f in step.belt],
              **({"gave_up": gave_up} if gave_up else {})})
 
+    def picture(self, img, state: LevelState) -> Picture:
+        """The simulator's picture of this frame (tools/selfplay.py: the simulated world's)."""
+        return picture_from_frame(img, _palette(self.cfg), self.cfg.vision, self.pc.cell_px,
+                                  state.shells, state.pic_locks)
+
     def _replan(self, img, state: LevelState, now: float, log, why: str,
                 forbid: Set[Pos] = frozenset()) -> None:
         mem = LevelMemory(self.memory_path) if self.memory_path else None
         banned = mem.banned(self.signature) if mem else set()
-        pic = picture_from_frame(img, _palette(self.cfg), self.cfg.vision, self.pc.cell_px,
-                                 state.shells, state.pic_locks)
-        self.hidden = mem.revealed(self.signature) if mem else {}
+        pic = self.picture(img, state)
+        self.hidden = mem.revealed(self.signature) if mem else dict(self.preset_hidden)
         cap = None
         shares = mem.capacity_shares(self.signature) if mem else {}
         sand = sum(state.sand.values())

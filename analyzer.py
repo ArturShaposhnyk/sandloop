@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from cells import Kind
 from state import BeltTracker, LevelState, Pos
+from sim import picture_from_frame
 from strategy import Candidate, Decision, choose
 
 if TYPE_CHECKING:
@@ -87,7 +88,12 @@ class Analyzer:
             else None)
         self.flights: Optional[InFlight] = InFlight(cfg.vision.flight_s) if track else None
         self.planner = None                    # levelplan.PlanRunner (live, planner enabled)
-        if track and cfg.planner.enabled:
+        self.decider = None                    # decider.SearchDecider (live, decider: search)
+        if track and cfg.decider.mode == "search":
+            from decider import SearchDecider
+
+            self.decider = SearchDecider(cfg, Path(cfg.paths.debug) / "levels.jsonl")
+        elif track and cfg.planner.enabled:
             from levelplan import PlanRunner
 
             self.planner = PlanRunner(cfg, Path(cfg.paths.debug) / "levels.jsonl")
@@ -132,6 +138,8 @@ class Analyzer:
             log(f"belt speed 2x: {'on' if self.speed.state else 'off'}")
             if self.planner is not None:
                 self.planner.set_speed(bool(self.speed.state), log)
+            if self.decider is not None:
+                self.decider.set_speed(bool(self.speed.state), log)
         try:
             gv = read_gameplay(img, self.palette, self.cfg.vision, self.reader, log=log,
                                icons=self.icons, hints=self.hints, memory=self.memory,
@@ -156,9 +164,18 @@ class Analyzer:
                 self._watch_hidden(state, log)
             if adjust is not None:
                 adjust(state)
-            res = Analysis(screen, gv, state, choose(state, st))
+            if self.decider is not None:   # redesign phase C: the search decides alone
+                self._search(img, gv, state, now, log)
+                res = Analysis(screen, gv, state, Decision(None, "wait: search"))
+            else:
+                res = Analysis(screen, gv, state, choose(state, st))
             if self.lattices is not None:
                 self._chest_scatter(gv, res, now, log)
+            if self.decider is not None and now >= self.scatter_until:
+                res.decision = self.decider.decide(
+                    state, lambda: picture_from_frame(img, self.palette, self.cfg.vision,
+                                                      self.cfg.planner.cell_px, state.shells,
+                                                      state.pic_locks), now, log)
             if self.planner is not None and now >= self.scatter_until:
                 res.decision = self.planner.decide(img, gv, state, res.decision, now, log)
             if gv.counter is None:
@@ -169,6 +186,15 @@ class Analyzer:
         res.reads, res.fails = self.reads, self.fails
         res.speed_x2, res.speed_read = self.speed.state, speed_read
         return res
+
+    def _search(self, img, gv, state: LevelState, now: float, log) -> None:
+        """decider: search - the belief sees every gameplay frame (also while a chest
+        settles); the level's signature gives it the level memory."""
+        if self.decider.signature is None:
+            from levelmemory import level_signature
+
+            self.decider.start(level_signature(gv.labels()))
+        self.decider.observe(state, now)
 
     def _watch_hidden(self, state: LevelState, log) -> None:
         """Level memory (levelmemory.LevelMemory.revealed): the colour of a bucket that was

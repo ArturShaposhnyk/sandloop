@@ -75,6 +75,7 @@ class LevelMixin:
                        taps=len(self.level_taps), tap_log=self.level_taps,
                        start=self.level_first, end=self.level_last,
                        plans=planner.log if planner is not None else [],
+                       searches=getattr(getattr(an, "decider", None), "log", None) or [],
                        chests=list(getattr(an, "chest_log", [])),
                        speed_x2=getattr(getattr(an, "speed", None), "state", None),
                        revealed=dict(getattr(an, "revealed", {}) or {}))

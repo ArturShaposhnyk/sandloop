@@ -100,6 +100,7 @@ class RunLog:
         cfg_data = dataclasses.asdict(cfg) if dataclasses.is_dataclass(cfg) else None
         self.commit = git_commit()
         self.strategy = cfg_data.get("strategy") if cfg_data else None
+        self.decider = cfg_data.get("decider") if cfg_data else None
         self._write_json("run.json", {"started": time.strftime("%Y-%m-%d %H:%M:%S"),
                                       "args": args, "commit": self.commit, "config": cfg_data})
 
@@ -120,7 +121,8 @@ class RunLog:
         """One played level -> <debug>/levels.jsonl (across runs, for tuning the strategy
         weights from results): run, commit, the strategy config it ran with + ``data``."""
         rec = {"run": self.dir.name, "commit": self.commit,
-               "time": time.strftime("%Y-%m-%d %H:%M:%S"), **data, "strategy": self.strategy}
+               "time": time.strftime("%Y-%m-%d %H:%M:%S"), **data, "strategy": self.strategy,
+               "decider": self.decider}
         with (self.root / "levels.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, default=str) + "\n")
         return rec

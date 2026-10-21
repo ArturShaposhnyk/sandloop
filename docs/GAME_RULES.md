@@ -354,6 +354,25 @@
   -> re-plan from the real belt; if that plan waits too, the greedy strategy decides until the
   board changes. Every planned tap logs "plan check": predicted vs real belt and time.
 
+## Search decider (redesign phase C, user 2026-10-21; `decider: search`, `decider.py`)
+Behind the config switch (default `old` = the rules above + the level plan). With `search`:
+- Hard: only game rules (path rule, a free slot, locks / ice / curtains / tunnels / chests /
+  walls, shells and towers exactly as the simulator models them) and perception guards (the
+  first tap must be tappable on the frame: face and path rule agree, confident colour after an
+  unlock, not under a hint arrow, not a dead tap; counter read; chest settle).
+- The bot rules above (25 % / exposure minimums, sand margins, slot / key / ice / endgame
+  reserves, "tower top must fill", "no shell bucket before its shell is at the bottom", stalled
+  colour) are **score terms**, not vetoes (`decider:` weights): idle slot-seconds, belt buckets
+  or tower stages short of sand, exposed colours without a free slot, jams.
+- Unknown buckets (tunnel drops, under ice / locks / curtains, chests, mystery) get colours
+  sampled from the colour balance (`worlds.py`); colours seen in earlier attempts are used.
+- **Never idle**: waiting only while a belt bucket is really gaining sand (`belief.py`: grew
+  >= `gain_min` points within `gain_window_s`, or tapped < `fresh_grace_s` ago); otherwise the
+  best tap, whatever its score. No legal tap: wait.
+- Online correction: a colour whose belt slots are all stalled gets no sand from its current
+  contact layer in the simulator (only sand uncovered later); a slot that really gains gets its
+  observed rate instead of the fitted curve for `override_s` simulated seconds.
+
 ## Chests and mystery buckets (user, 2026-10-19, L186; weights in `config.yaml` `strategy:`)
 - A move that opens a path to a chest is risky: its N buckets fill up to N free cells and can
   close paths. Prefer it when free cells are few, when it doesn't cut off important paths, or

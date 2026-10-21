@@ -351,6 +351,48 @@ planner:                     # levelplan.py + sim.py: whole-level plan (docs/GAM
   burst_max: 3               # hint 4: back-to-back plan steps tapped in one burst (bot.burst_gap_s apart)
   burst_tap_s: 1.0           # ... and their belt seconds per tap in the simulator
 
+decider:                     # redesign phase C (docs/STATUS.md): which decider plays
+  # old = strategy.py rules + levelplan.py plan (default); search = decider.py: belief of the
+  # belt (belief.py, slots by identity, observed fill rates) + receding-horizon beam search in
+  # the simulator over sampled worlds for unknown buckets. The old vetoes are score terms.
+  # Short form for the switch alone: "decider: search".
+  mode: old
+  particles: 4               # sampled worlds for unknown buckets (tunnels, ice, locks, chests ...)
+  beam: 6                    # nodes per depth (+ the best one of every first action)
+  max_depth: 40              # actions per search
+  budget_s: 1.0              # search time per decision (the level's first: start_budget_s)
+  start_budget_s: 3.0
+  wait_max_s: 20.0           # one simulated wait at most
+  wait_idle_s: 3.0           # ... in a world where nothing moves
+  replan_s: 3.0              # same board + same belt count: re-search at most this often
+  keep_margin: 0.02          # the last decision stays while within this of the best (stable gate)
+  seed: 0
+  # belief: a slot gaining = grew >= gain_min points within gain_window_s (or tapped within
+  # fresh_grace_s); stalled = read without growth for stall_s. Waiting is allowed only while a
+  # slot is gaining. Online correction: a stalled colour's contact sand counts 0 in the sim
+  # (only sand uncovered later counts); a gaining slot's observed rate replaces the fill curve
+  # for override_s simulated seconds (the fitted curve is pessimistic: gain recall 51 % on L189)
+  gain_min: 3
+  gain_window_s: 4.0
+  fresh_grace_s: 2.0
+  stall_s: 5.0
+  rate_window_s: 6.0
+  override_s: 15.0
+  forget_s: 3.0
+  # score terms (mean over the sampled worlds): the old vetoes (25 % rule, sand margins, slot
+  # reserves, key colours, tower top must fill, shell bucket early) priced, not forbidden
+  weight_win: 10.0
+  weight_lost: 5.0           # jam / belt full of buckets that never fill
+  weight_collect: 1.0        # share of the sand collected
+  weight_dead: 0.3           # belt bucket or later tower stage short of sand
+  weight_stuck: 0.05         # belt bucket collecting nothing at the end of the search
+  weight_idle: 0.002         # per belt slot-second collecting nothing (timing, early shell bucket)
+  weight_free: 0.02
+  weight_tap: 0.1            # progress: per bucket released (self-play: 0.03 -> 0.1 won L187 generous 7/8 vs 6/8)
+  weight_open: 0.05          # per cell opened
+  weight_full: 0.05          # per tap into the last free slot
+  weight_deficit: 0.1        # exposed colour with a bucket waiting and no free slot (reserves)
+
 flow:                        # flow.py: screens outside gameplay (docs/GAME_RULES.md "Bot behaviour outside gameplay")
   # win -> NEXT, menu -> PLAY (popups -> red ✕ first), revive -> Quit (else the popup's ✕),
   # fail -> Try Again, ads -> wait for a ✕. Never Keep Playing / Watch Ad / Get App / purchases.

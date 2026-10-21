@@ -32,10 +32,10 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | R-B | redesign phase B: simulator fitted (`tools/fit_sim.py`), 4 px picture, 5x faster sim | `1aa57d8` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 976 pass.
+Tests: `python -m pytest -q` - all 997 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
-## Redesign: one search-based decider (agreed with the user 2026-10-21) - NEXT: phase C
+## Redesign: one search-based decider (agreed with the user 2026-10-21) - phase C done, awaiting OK
 Why: three decision layers (level plan, strategy rules, slot reserves) vetoed each other and the
 bot idled while nothing filled (L190 runs 122825 / 143729: plan step -> rule rejects -> reserve
 blocks -> re-plan, in a loop). Target design:
@@ -60,7 +60,7 @@ blocks -> re-plan, in a loop). Target design:
 |---|---|---|
 | A | replay harness + accuracy report (no behaviour change) | done `e2a4857` |
 | B | fit the sim, 4 px picture, speed-up | done `1aa57d8` |
-| C | belief (slot-level belt tracker + online correction) + new decider behind `decider: search` | next |
+| C | belief (slot-level belt tracker + online correction) + new decider behind `decider: search` | done (uncommitted), gate NOT met - old stays default |
 | D | self-play harness, weight tuning by win rate | |
 | E | live check with the user, delete the old layers, bot notes -> docs/STRATEGY.md | |
 
@@ -95,6 +95,54 @@ Tools: `python -m tools.replay` (accuracy), `python -m tools.fit_sim [--cell-px 
 `debug/replay/` (reports, cache - `--rebuild` after vision changes).
 
 ## Where it stands (2026-10-21)
+### Redesign phase C: belief + search decider behind `decider: search` (old stays default)
+- New: `belief.py` (BeltBelief: slots by identity, k authoritative, tap lag tolerated,
+  per-slot observed rate, gaining / stalled), `worlds.py` (hidden buckets sampled from the
+  colour balance: ice / lock / curtain cells, mystery, tunnel queues, chest scatter; memory
+  colours fixed), `decider.py` (SearchDecider), config `decider:` (`decider: search` short
+  form), sim hooks (stall `offsets`, per-slot observed `rate` reaching 2x contact deep,
+  `strict_shells`, `short_slots`, colour `mult` for self-play worlds). Wired in analyzer.py
+  (search mode skips strategy.choose and the PlanRunner), bot.py (belief gets every tap),
+  levels.jsonl `searches` + `decider` config. Old decider untouched (PlanRunner got a
+  `picture()` hook and `preset_hidden` for self-play only).
+- Search: beam (6 + best node per first action, depth 40, 1 s; first decision 3 s) in one
+  sampled world, then each first action's best line replayed in all K=4 worlds (a tap of a
+  bucket whose colour differs there passes its time), mean score; warm start: the rest of the
+  last chosen line is always re-scored (without it the beam lost its own good line every
+  decision: L187 model-world collected 35 % -> 52 %). Waiting is a candidate only while the
+  belief has a gaining slot; else the best tap. Score = old vetoes as terms (`decider:`).
+- Stall correction interpretation: "reachable sand 0 until the board changes" is done as
+  "the contact sand the sim sees at the stall does not count, sand uncovered later does"
+  (board changes that uncover sand lift it in the sim); live it ends when the slot gains again.
+- **Self-play** (`python -m tools.selfplay`, start frames: L187 000105 #9, L189 112241 #234,
+  L190 143729 #5; 2x; hidden colours drawn per seed, L189 truth from "revealed"; per-colour
+  speed noise; 20 % of belt readings hidden; `--memory` = deciders know colours under locks).
+  **Fidelity limit**: no world reproduces the real games - the real winning tap sequences of
+  L187 000105 and L189 112241, replayed at their real times, lose in every world tried (even
+  10x contact depth, 400 %/s: 12 / 18 taps meet a full simulated belt; the sim under-collects
+  some colours - real L187 orange / blue left in 4-9 s - and over-collects others - darkgreen
+  real 23-33 %, sim 76-99 %). Worlds: model (= the fitted sim), medium (fill_min 0.02,
+  contact x1.5), generous (fill_min 0, contact x2). Final gate, 16 seeds, `--memory`
+  (debug/selfplay/gate-final.json):
+
+  | world | L187 old / search | L189 old / search | L190 old / search |
+  |---|---|---|---|
+  | model | 0 / 0 | 0 / 0 | 0 / 0 |
+  | medium | 0 / 0 | 0 / 0 | 5 / 1 |
+  | generous | **15 / 12** | 0 / 0 | 2 / 7 |
+
+  Gate (search >= old on L187 and L189) **not met** (L187 12 vs 15); L189 is not won by either
+  decider in any world (the sim cannot win it), so it does not discriminate.
+- **Decisions on the recorded boards** (`python -m tools.decisions`, debug/decisions/<run>.txt;
+  belief rebuilt from the run's events, no memory): same tap / other tap / old waits-new taps
+  (belt not gaining) / old taps-new waits: L187 224631 7/14/3/6, 000105 8/16/1/5; L189 092045
+  1/11/7/2, 101655 10/23/1/10, 112241 16/10/2+2/8; L190 122825 9/10/2+1/1, 143729 31/45/13+6/44.
+  Every "old waited while nothing gained" frame (L189 092045 108-324 s, 112241 140 s / 316 s,
+  L190 143729 131-377 s: "no bucket passes the rules" / "plan step waits for the belt") is a
+  tap for the new decider. It waits more often than the old one while slots still gain
+  (L190 143729: 44 frames).
+- Tests: `tests/test_decider.py` (belief, sim hooks, worlds, never idle, perception guard,
+  warm start, config switch, bot end to end in search mode).
 ### Redesign phase B: simulator fitted to the runs (`tools/fit_sim.py`)
 - **Measurement fixes** in tools/replay.py (the phase A numbers were partly label noise): the
   belt is a loop and only part of it is on screen - a colour not read in the second half of the
@@ -578,6 +626,13 @@ Tools: `python -m tools.replay` (accuracy), `python -m tools.fit_sim [--cell-px 
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
+-8. Phase C live check (user's choice): `python -m bot --dry-run` with `decider: search` in
+   config.yaml on L187 / L189 / L190 (watch "wait: search - the belt is gaining (...)", "tap
+   ... (search ... - no belt bucket is gaining, waiting would idle", decision time per frame);
+   then a real run `python -m bot --levels 3` with `decider: search`; set it back to `old`
+   after. Compare with `python -m tools.decisions <run>` and levels.jsonl `searches`.
+-7. Phase D first: a world that reproduces the real wins (fit on the real tap sequences:
+   winning ones must win, losing ones lose) before tuning weights by self-play.
 -6. Live L190 `python -m bot --levels 1` (L190 SUPER HARD, tunnels): watch the grid lines read
    `tunnel5:right` / `tunnel5:left` / `tunnel5:up`, that the bot never taps a tunnel, and that
    after a tap in front of a tunnel the plan ends there ("horizon") and re-plans once the

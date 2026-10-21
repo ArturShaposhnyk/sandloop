@@ -115,10 +115,17 @@ class Picture:
         counts, n = self._contact_counts()
         return counts[self.names.index(colour)] / n if n else 0.0
 
-    def take(self, colour: str, n: int) -> int:
-        """Remove up to ``n`` cells of ``colour`` from the contact layer, lowest first."""
+    def take(self, colour: str, n: int, reach: Optional[int] = None) -> int:
+        """Remove up to ``n`` cells of ``colour`` from the contact layer, lowest first.
+        ``reach``: cells per column to search instead of the contact layer (decider.py: a slot
+        that really gains while the picture model shows none of its colour at the bottom)."""
         if n <= 0 or colour not in self.names:
             return 0
+        if reach is not None and reach > self.contact:
+            self._layer = None
+            got = self._take_deep(self.names.index(colour), n, reach)
+            self._layer = None
+            return got
         counts, size = self._contact_counts()
         counts, contact = list(counts), self.contact   # (copies share the cached list)
         i, got = self.names.index(colour), 0
@@ -143,6 +150,25 @@ class Picture:
             if got >= n:
                 break
         self._layer = (contact, counts, size)
+        if self._totals is not None:
+            self._totals[i] -= got
+        return got
+
+    def _take_deep(self, i: int, n: int, reach: int) -> int:
+        got = 0
+        for k, col in enumerate(self.cols):
+            j = 0
+            while j < reach and j < len(col) and got < n:
+                if col[j] == i:
+                    del col[j]
+                    got += 1
+                    for s in self.shells:
+                        if s.col == k and s.below > j:
+                            s.below -= 1
+                else:
+                    j += 1
+            if got >= n:
+                break
         if self._totals is not None:
             self._totals[i] -= got
         return got
@@ -201,6 +227,8 @@ class Slot:
     stage: int = 0
     credit: float = 0.0               # cells collected but not yet whole
     shell: bool = False               # L188 shell bucket still waiting for its shell
+    rate: Optional[float] = None      # observed fill %/s (decider.py online correction) ...
+    rate_until: float = 0.0           # ... replacing the curve until this simulated second
 
     @property
     def colour(self) -> str:
@@ -219,6 +247,8 @@ class SimConfig:
     burst_tap_s: float = 4.2          # ... per tap that follows a tap (live: a burst of plan steps)
     burst_max: int = 1                # taps in one burst (the first one costs tap_s)
     idle_rate: float = 2.0            # a belt bucket filling slower than this %/s is idle
+    strict_shells: bool = True        # shell buckets tapped only with their shell at the bottom
+    #   (the live rule of the old decider); decider.py: any time, the slot's idle time is priced
 
     @property
     def laps_per_tap(self) -> int:
@@ -249,6 +279,11 @@ class Sim:
     # ^ colours seen under ice / locks / curtains in earlier attempts (levelmemory), shared
     idle: float = 0.0                 # slot-seconds of belt buckets slower than idle_rate
     opened: int = 0                   # cells opened: ice, key locks, chain gates, revealed
+    offsets: Dict[str, float] = field(default_factory=dict)
+    # ^ decider.py, a colour stalled on the real belt: this much of its contact share is not
+    #   reachable (only sand uncovered later counts); shared by clones
+    mult: Dict[str, float] = field(default_factory=dict)
+    # ^ fill speed factor per colour (tools/selfplay.py worlds that differ from the model); shared
 
     # -- construction ---------------------------------------------------------------------
 
@@ -296,11 +331,11 @@ class Sim:
         return cls(grid, belt, pic, cap, sc, hidden=hidden)
 
     def clone(self) -> "Sim":
-        return Sim(self.grid, [Slot(s.stages, s.left, s.stage, s.credit, s.shell)
-                               for s in self.belt],
-                   self.pic.copy(), self.capacity, self.sc, list(self.taps),
-                   list(self.actions), self.fills, self.collected, self.jam, self.t,
-                   self.full_taps, self.pics_opened, self.hidden, self.idle, self.opened)
+        nxt = copy.copy(self)         # grid, capacity, hidden, offsets ... shared (subclasses too)
+        nxt.belt = [Slot(s.stages, s.left, s.stage, s.credit, s.shell, s.rate, s.rate_until)
+                    for s in self.belt]
+        nxt.pic, nxt.taps, nxt.actions = self.pic.copy(), list(self.taps), list(self.actions)
+        return nxt
 
     # -- queries --------------------------------------------------------------------------
 
@@ -317,7 +352,8 @@ class Sim:
         for p in self.grid.tappable:
             c = self.grid.cell(p)
             if c.kind is Kind.BUCKET and c.color and (
-                    not c.shell or self.pic.shell_down(c.color) is not None):
+                    not c.shell or not self.sc.strict_shells
+                    or self.pic.shell_down(c.color) is not None):
                 out.append(p)
         return out
 
@@ -328,6 +364,19 @@ class Sim:
             need[s.colour] = need.get(s.colour, 0) + s.left
         return sum(1 for s in self.belt
                    if s.colour != UNREAD and self.pic.count(s.colour) < need[s.colour])
+
+    def short_slots(self) -> int:
+        """Belt buckets that cannot finish: the sand left of their current stage's colour or of
+        a later tower stage's (after what the belt needs before it) is short - a tower whose
+        top or lower stage starves keeps its slot (decider.py)."""
+        need: Dict[str, int] = {}
+        for s in self.belt:
+            for i in range(s.stage, len(s.stages)):
+                c = s.stages[i]
+                need[c] = need.get(c, 0) + (s.left if i == s.stage
+                                            else self.capacity.get(c, 1))
+        short = {c for c, n in need.items() if c != UNREAD and self.pic.count(c) < n}
+        return sum(1 for s in self.belt if short.intersection(s.stages[s.stage:]))
 
     def stuck_slots(self) -> int:
         """Belt buckets that collect nothing now (their colour too little in the contact layer)."""
@@ -420,13 +469,21 @@ class Sim:
                     continue
                 self.pic.shells.remove(down)
                 s.shell = False
-            rate = self.sc.rate(self.pic.share(s.colour))
+            share = self.pic.share(s.colour)
+            if self.offsets and s.colour in self.offsets:
+                share = max(0.0, share - self.offsets[s.colour])
+            rate = self.sc.rate(share)
+            deep = s.rate is not None and self.t <= s.rate_until
+            if deep:
+                rate = max(rate, s.rate)
+            if self.mult:
+                rate *= self.mult.get(s.colour, 1.0)
             idle -= rate >= self.sc.idle_rate
             if rate <= 0:
                 continue
             s.credit += rate / 100 * self.capacity.get(s.colour, 1) * self.sc.lap_s
             want = min(s.left, int(s.credit))
-            n = self.pic.take(s.colour, want)
+            n = self.pic.take(s.colour, want, 2 * self.pic.contact if deep else None)
             if n < want:                  # the contact layer ran out of the colour
                 s.credit = 0.0
                 got += n

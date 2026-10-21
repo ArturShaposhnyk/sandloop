@@ -340,6 +340,46 @@ class PlannerConfig:
 
 
 @dataclass
+class DeciderConfig:
+    """decider.py (redesign phase C): belief (belief.py) + receding-horizon search in the
+    simulator. ``mode``: "old" = strategy.py + levelplan.py (default), "search" = decider.py.
+    The old vetoes are score terms here (weights below); only game rules and perception guards
+    are hard."""
+    mode: str = "old"
+    # search
+    particles: int = 4                # sampled worlds for unknown buckets (1 if none)
+    beam: int = 6                     # nodes kept per depth (+ the best one per first action)
+    max_depth: int = 40               # actions per search
+    budget_s: float = 1.0             # search time per decision
+    start_budget_s: float = 3.0       # ... for the level's first decision
+    wait_max_s: float = 20.0          # one simulated wait at most (until a bucket leaves)
+    wait_idle_s: float = 3.0          # a wait in a world where nothing moves: belt seconds
+    replan_s: float = 3.0             # same board, same belt count: re-search at most this often
+    keep_margin: float = 0.02         # keep the last decision while within this of the best
+    seed: int = 0                     # sampling seed (mixed with the board signature)
+    # belief (belt slots by identity) and online correction
+    gain_min: int = 3                 # fill points that count as growth
+    gain_window_s: float = 4.0        # a slot "gaining" = it grew within this long
+    fresh_grace_s: float = 2.0        # a bucket tapped this recently counts as gaining
+    stall_s: float = 5.0              # seen without growth this long = stalled
+    rate_window_s: float = 6.0        # observed fill rate over this window
+    override_s: float = 15.0          # simulated seconds an observed rate replaces the curve
+    forget_s: float = 3.0             # a slot not read this long: its readings are stale
+    # score = mean over the sampled worlds of these terms (weights per unit)
+    weight_win: float = 10.0
+    weight_lost: float = 5.0          # belt full and nothing collects (jam) / full of dead
+    weight_collect: float = 1.0       # share of the sand collected
+    weight_dead: float = 0.3          # belt bucket (or a later tower stage) short of sand
+    weight_stuck: float = 0.05        # belt bucket collecting nothing at the end
+    weight_idle: float = 0.002        # belt slot-second collecting nothing (timing, shells)
+    weight_free: float = 0.02         # free slot at the end
+    weight_tap: float = 0.1           # bucket released (progress)
+    weight_open: float = 0.05         # cell opened (ice, key lock, chain gate, mystery)
+    weight_full: float = 0.05         # tap into the last free slot
+    weight_deficit: float = 0.1       # exposed colour with a bucket waiting but no free slot
+
+
+@dataclass
 class PathsConfig:
     dataset: str = "dataset"
     debug: str = "debug"
@@ -361,6 +401,7 @@ class Config:
     flow: FlowConfig = field(default_factory=FlowConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
+    decider: DeciderConfig = field(default_factory=DeciderConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
 
@@ -487,6 +528,14 @@ def validate(cfg: Config) -> Config:
         raise ConfigError("bot.speed_confirm_frames >= 1, speed_max_taps / speed_retap_s >= 0")
     if cfg.planner.speed_x2_factor <= 0:
         raise ConfigError("planner.speed_x2_factor must be > 0")
+    dc = cfg.decider
+    if dc.mode not in ("old", "search"):
+        raise ConfigError('decider.mode must be "old" or "search"')
+    if min(dc.particles, dc.beam, dc.max_depth) < 1 or min(
+            dc.budget_s, dc.start_budget_s, dc.wait_max_s, dc.wait_idle_s, dc.replan_s,
+            dc.keep_margin, dc.gain_min, dc.gain_window_s, dc.fresh_grace_s, dc.stall_s,
+            dc.rate_window_s, dc.override_s, dc.forget_s) < 0:
+        raise ConfigError("decider: particles / beam / max_depth must be >= 1, times >= 0")
     fl = cfg.flow
     if fl.confirm_frames < 1 or fl.same_button_max < 1 or fl.max_taps_between_levels < 1:
         raise ConfigError("flow.confirm_frames, same_button_max, max_taps_between_levels "
@@ -521,6 +570,8 @@ def from_dict(data: Optional[dict]) -> Config:
     unknown = set(data) - {f.name for f in dataclasses.fields(cfg)}
     if unknown:
         raise ConfigError(f"unknown config sections: {sorted(unknown)}")
+    if isinstance(data.get("decider"), str):   # the switch alone: "decider: search"
+        data = {**data, "decider": {"mode": data["decider"]}}
     for f in dataclasses.fields(cfg):
         setattr(cfg, f.name, _merge_section(getattr(cfg, f.name), data.get(f.name), f.name))
     return validate(cfg)

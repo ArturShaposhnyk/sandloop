@@ -386,8 +386,9 @@ class Bot(LevelMixin):
                                    if self.prev_game is not None else set(st.tappable))
         both = {p for p in both if not self.ledger.guarded(p, now)}
         covering = self.trend.covering(b.color for b in st.conveyor if b.color)
-        moves = ([(move, f"confirmed, level plan step {move.level_plan}")]
-                 + [(f, f"burst {k + 2}: level plan step {f.level_plan}")
+        step = "" if (move.level_plan or "").startswith("search") else "level plan step "
+        moves = ([(move, f"confirmed, {step}{move.level_plan}")]
+                 + [(f, f"burst {k + 2}: {step}{f.level_plan}")
                     for k, f in enumerate(itertools.takewhile(lambda f: f.pos in both,
                                                               move.follow))]
                  if move.level_plan
@@ -430,6 +431,10 @@ class Bot(LevelMixin):
             planner = getattr(self.analyzer, "planner", None)
             if planner is not None:
                 planner.tapped(cand.pos)   # whole-level sequences for the level memory
+            decider = getattr(self.analyzer, "decider", None)
+            if decider is not None:        # the belief adds the slot (colour, tower stages)
+                decider.tapped(cand.pos, cand.color,
+                               (cell.body,) if cell is not None and cell.body else (), last)
             r, c = cand.pos
             self.log.log(f"TAP #{self.taps} r{r}c{c} {cand.color} ({why})"
                          f"{' [dry-run]' if self.dry_run else ''}")
