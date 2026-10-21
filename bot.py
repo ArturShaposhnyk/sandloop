@@ -4,6 +4,7 @@
     python -m bot --max-taps 5         # real taps, stop after 5 (first live test)
     python -m bot                      # real taps until one level ends
     python -m bot --levels 10          # 10 levels in a row (win -> NEXT -> PLAY, fail -> retry)
+    python -m bot --levels 3 --decider search   # the phase C search decider for this run
 
 Loop: capture -> screen type -> (gameplay) analyse -> 2-frame confirmed decision -> tap(s)
 via actions.Tapper. Safety (never remove): cursor in a screen corner = stop (checked every
@@ -449,6 +450,8 @@ class Bot(LevelMixin):
                                  executed=tr.executed, frame_png=raw, annotated_png=ann,
                                  gamble=cand.gamble, lost=cand.lost,
                                  lookahead=cand.outlook.describe() if cand.outlook else None,
+                                 decider=self.cfg.decider.mode,
+                                 decision=res.decision.reason if i == 0 else None,
                                  alternatives=sum(1 for x in res.decision.candidates
                                                   if x.rejected is None and x.pos != cand.pos))
             self.level_taps.append({**evt, "decision": self.level_last} if i == 0 else evt)
@@ -469,6 +472,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--countdown", type=float, default=3.0,
                     help="seconds before the first capture (default 3)")
     ap.add_argument("--config", default=None)
+    ap.add_argument("--decider", choices=("old", "search"), default=None,
+                    help="override config.yaml decider.mode for this run")
     args = ap.parse_args(argv)
     if args.max_taps is not None and args.max_taps < 1:
         ap.error("--max-taps must be >= 1")
@@ -482,6 +487,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     from analyzer import Analyzer
 
     cfg = load_config(args.config)
+    if args.decider is not None:
+        import dataclasses
+
+        cfg.decider = dataclasses.replace(cfg.decider, mode=args.decider)
     permissions.require(screen=True, accessibility=not args.dry_run)
     grabber = Grabber(cfg.screen.capture)
     tracker = WindowTracker(cfg, grabber)
@@ -491,6 +500,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     hotkeys = Hotkeys(cfg.safety.hotkey_pause, cfg.safety.hotkey_quit).start()
     failsafe = Failsafe(cfg.safety.failsafe_corner_pt)
     log.log(f"run log: {log.dir}")
+    log.log(f"decider: {cfg.decider.mode}"
+            + (" (search: belief + simulator search, docs/STATUS.md phase C)"
+               if cfg.decider.mode == "search" else " (rules + level plan)"))
     log.log(f"{'DRY RUN (no clicks)' if args.dry_run else 'LIVE: real taps'}; "
             f"pause {cfg.safety.hotkey_pause}, quit {cfg.safety.hotkey_quit}, "
             f"cursor in a screen corner = stop")

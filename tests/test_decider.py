@@ -269,4 +269,6 @@ def test_bot_plays_a_search_decision_on_a_real_frame(tmp_path):
     taps = [e for e in load_events(log.dir) if e["type"] == "tap"]
     assert len(tapper.taps) == 1 and taps[0]["pos"] == [1, 1]
     assert taps[0]["why"].startswith("confirmed, search 1/")
+    assert taps[0]["decider"] == "search"
+    assert taps[0]["decision"].startswith("tap r1c1 cyan (search ") and "belt:" in taps[0]["decision"]
     assert an.planner is None

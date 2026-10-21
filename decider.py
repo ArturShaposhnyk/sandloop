@@ -441,8 +441,12 @@ class SearchDecider:
                                    exposed=state.exposed.get(cell.color or "", 0.0),
                                    stages=[cell.body] if cell.body else []))
         belt = self.belief.describe(now)
-        if best == WAIT:
-            return Decision(None, f"wait: search - the belt is gaining ({belt}); {text}", cands)
+        if best == WAIT:   # stable text (the bot logs a wait when its reason changes)
+            gain = sorted({s.describe().split()[0] for s in self.belief.gaining_slots(now)})
+            alt = next((a for a, _ in ranked if a != WAIT), None)
+            return Decision(None, f"wait: search - belt gaining ({', '.join(gain)}); waiting "
+                                  f"scores best" + (f", next r{alt[1][0]}c{alt[1][1]}" if alt
+                                                    else ""), cands)
         move = next(c for c in cands if c.pos == best[1])
         path = res.paths.get(best, (best,))
         n = sum(1 for a in path if a[0] == "tap")
@@ -450,7 +454,7 @@ class SearchDecider:
         move.follow = self._burst(state, path, cands)
         why = "" if gaining else " - no belt bucket is gaining, waiting would idle"
         return Decision(move, f"tap r{best[1][0]}c{best[1][1]} {move.color} (search "
-                              f"{fmt_rank(v)}{why}; {text})", cands)
+                              f"{fmt_rank(v)}{why}; {text}; belt: {belt})", cands)
 
     def _burst(self, state: LevelState, path: Tuple[Action, ...], cands) -> List[Any]:
         """Taps that follow the first one at once in the best line (no wait between)."""

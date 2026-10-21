@@ -626,11 +626,13 @@ Tools: `python -m tools.replay` (accuracy), `python -m tools.fit_sim [--cell-px 
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
--8. Phase C live check (user's choice): `python -m bot --dry-run` with `decider: search` in
-   config.yaml on L187 / L189 / L190 (watch "wait: search - the belt is gaining (...)", "tap
-   ... (search ... - no belt bucket is gaining, waiting would idle", decision time per frame);
-   then a real run `python -m bot --levels 3` with `decider: search`; set it back to `old`
-   after. Compare with `python -m tools.decisions <run>` and levels.jsonl `searches`.
+-8. Phase C live check on L190 (user, 2026-10-21: the real game is the judge):
+   `python -m bot --levels 3 --decider search` (no config edit; without the flag config.yaml's
+   `decider: old` plays). The log starts with "decider: search"; every tap logs its search
+   reason when confirmed ("tap r..c.. <colour> (search <score> ...; <alternatives>; belt:
+   <slots gaining / stalled, rates>) CONFIRMED"), waits "wait: search - belt gaining (...)";
+   tap events carry "decider" and "decision", levels.jsonl "searches" (every search's top
+   values) and "decider". Then: analyse old vs new on real outcomes.
 -7. Phase D first: a world that reproduces the real wins (fit on the real tap sequences:
    winning ones must win, losing ones lose) before tuning weights by self-play.
 -6. Live L190 `python -m bot --levels 1` (L190 SUPER HARD, tunnels): watch the grid lines read
