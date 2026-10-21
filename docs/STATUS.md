@@ -23,12 +23,64 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | first L187 win (run 000105); finished board no longer starts a level | `66a279d` |
 | 7 | belt speed 2x (▶▶2x tapped at level start, planner 2x fill speeds, 1x / 2x calibration), ad chains, key colour on the last slot | `fdc832d` |
 | 7 | L189 run 092045: ice needs its number, ice slot reserve, lost-position finish, booster arrow row | `bdc4c98` |
+| 7 | L189 run 101655: popup screen, level memory (record order, face-free signature, whole-level bans, colours under locks, clean end reads), player hints in the planner, 2x belt speeds | (this commit) |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 823 pass.
+Tests: `python -m pytest -q` - all 832 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+### L189 run `20261021-101655` (3 attempts, all lost; flow between them perfect)
+- **The three attempts (levels.jsonl)**: each tapped the same 15 buckets - the whole top group,
+  the only reachable ones; L189's ice is 15, so it opens only with the 15th tap - in almost the
+  same order (r0c0 cyan, r0c1 cream, r0c6 cyan first every time; r0c3 red, r2c1 darkred, r2c2
+  red last). Each ended the same way: 4 buckets of buried colours (red / yellow / darkred,
+  under cyan + orange) on the belt, the 15th tap (a lost-position tap, belt stuck 16-20 s)
+  broke the ice and filled the belt, the cyan under it (attempt 1's end read: r3c1 cyan-up) had
+  no slot. Attempt 3 at the 15th tap: belt yellow 73, darkred 92, red 92, cream 70.
+- **Why the level memory did not make them differ** (all fixed):
+  1. the plans were never stored: `levels._level_left` reset the analyzer (and its PlanRunner)
+     before `_record_level` ("plans": [] in all three records);
+  2. attempt 3 had its own board signature: its first frame (after an ad) read the top row
+     face-down -> no memory at all. The signature now ignores faces and is recomputed from
+     each record's start grid (old records match again);
+  3. bans compared a plan's OWN taps (counted from the re-plan's board) with whole-level
+     sequences, and plans were 9-11 taps long: nothing was ever banned after the first re-plan,
+     and the greedy strategy (most taps after the plan ran out) never looks at the memory.
+     Plans are now prefixed with the level's taps (`PlanRunner.done`, fed by bot.py);
+  4. attempts 2 / 3 ended on a frame read under the revive popup (board "green", sand ~0):
+     that "end" went into the capacity correction. End reads with colours the start never
+     shows are skipped (`levelmemory._clean_end`), and the popup is no gameplay frame any more.
+- **Popup** (user: skip board analysis while a popup is shown): the revive popup sliding in
+  (frame 00507, "Keep Playing" 0.49) read as gameplay. `screens.popup_bar`: a bright green bar
+  >= 0.65 of the width over >= 1.5 % of the height -> screen "popup" (no board read, no tap,
+  not a level end by itself). 0 false positives on every saved tap frame and test frame.
+- **Player hints -> planner** (docs/GAME_RULES.md "Level plan", `config.yaml planner:`):
+  1. timing: `weight_idle` 0.002 per belt slot-second of a bucket filling < 2 %/s (the sim
+     predicts when a colour reaches the contact layer) - plans no longer wait 600 s on a
+     creeping darkred, and release buried colours later;
+  2. further ahead: `weight_tap` 0.03 per bucket released, start plan beam 24 / 6 s (was 8 / 3 s);
+  3. go deep: `weight_open` 0.05 per cell opened (ice, key lock, chain gate, mystery); colours
+     seen under locks in earlier attempts (`levelmemory.revealed`, new `revealed` field in
+     levels.jsonl, `Analyzer._watch_hidden`) open to known buckets in the simulator, so on Try
+     Again the plan reaches past the ice (L189: r3c1 cyan, from attempt 1);
+  4. play fast: back-to-back plan steps (up to `burst_max` 3) are tapped in one burst
+     (`Candidate.follow`, each tappable on the frame and passing the sand rules / reserves),
+     a follow-up costs `burst_tap_s` 1 s in the simulator. L189 start plan now: r0c0, r0c1,
+     r0c5 in one burst.
+- **Belt speed 2x calibrated** (645 samples, 4 runs): `speed_x2_fill_*` 90 x (share - 0.03),
+  max 60 %/s (was the doubled 1x guess 200 x (share - 0.08): nothing below 8 %).
+- **Honest limit - the simulator is too pessimistic for L189**: from the start frame, even
+  wide searches (beam 256, any ranking I tried, measured capacities) end at the 15th tap with
+  the belt full (red / yellow / darkred at 0-45 % under cyan + orange), while the real belt at
+  that point was 70-92 % full. Its picture model (vertical columns, a 4-cell contact layer)
+  does not reproduce how the real sand pile slides; the plan therefore stops at 13 of 15 taps
+  and the live ice reserve / strategy decide the rest. Next step if L189 keeps failing: fit the
+  contact depth / sliding against the run's belt.csv + frames (plan checks in levels.jsonl now
+  hold the predicted vs real belt).
+- Tests: `tests/test_run_20261021_101655.py` (frames 00005, 00507, the 3 attempts trimmed);
+  `tests/test_speed.py` checks the measured 2x values.
+
 ### L189 run `20261021-092045` (14 taps, stopped by the user after 200 s on a lost board)
 - **User's analysis**: belt 4/5 (red 23, yellow 27, darkred 8, red 57), the picture's bottom is
   cyan / cream; the cyan bucket needed is under the ice "1" at r3c1, and the tap that breaks
@@ -335,6 +387,11 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
+-4. Live L189 again `python -m bot --levels 3` (Try Again uses the memory): check the start log
+   "level plan (start, 3 failed sequence(s) avoided, capacity from earlier attempts, r3c1 cyan
+   seen under its lock before, belt 2x)", bursts ("burst 2: level plan step 2/..."), "r3c1:
+   cyan under its lock (level memory)" when the ice opens, no "green" board at the end, and
+   levels.jsonl records with "plans" and "revealed".
 -3. Live L189 `python -m bot --levels 3` (from L189): watch "ice r3c1 (N): keep ... slot(s)",
    that ice 1 reads `ice1` (no "STUCK ... misread grid?"), "hint arrows: 4 masked out" with no
    r5c2 / r5c6 unknowns, and on a lost board "lost position: tap ..." after ~15 s followed by
@@ -444,6 +501,9 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L189 live run 20261021-101655 (2026-10-21): lost 3x, memory did not help
+- See "Where it stands". Tests: `tests/test_run_20261021_101655.py`.
 
 ## L189 live run 20261021-092045 (2026-10-21): lost behind the ice, 200 s stuck
 - See "Where it stands". Tests: `tests/test_run_20261021_092045.py`.

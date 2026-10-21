@@ -138,6 +138,14 @@ vision:                      # vision.py / screens.py; colours come from dataset
   contact_layer: 0.022
   contact_reach: 0.07        # how far above the bottom edge that sand is looked for
   canonical_width: 301       # frames are resized to this width for template matching
+  # popup over gameplay (run 20261021-101655 00507: the revive popup's "Keep Playing" sliding in
+  # matched 0.49, the frame read "gameplay" and the board under it "green"): a bright green bar
+  # >= 0.65 of the screen width over >= 1.5 % of its height (revive 0.72-0.76 / 2.3 %;
+  # gameplay shots <= 0.58, no such rows) = screen "popup", the board is not analysed
+  popup_bar_hue: [35, 85]
+  popup_bar_min_sv: [120, 150]
+  popup_bar_min_run: 0.65
+  popup_bar_min_rows: 0.015
   template_threshold: 0.75
   # gameplay reaches 0.67 on level_completed, menus 0.60 on next, win screens 0.63 on status_icons
   template_thresholds: {close_red: 0.95, ad_mute: 0.85, level_completed: 0.85, next: 0.85,
@@ -296,9 +304,12 @@ planner:                     # levelplan.py + sim.py: whole-level plan (docs/GAM
   # tap_s is the bot's own cycle and stays. null = 1x value x speed_x2_factor (rate / max) or
   # the 1x value (min exposed) - set them from python -m tools.belt_speed once 2x runs exist
   speed_x2_factor: 2.0
-  speed_x2_fill_rate: null
-  speed_x2_fill_max: null
-  speed_x2_fill_min_exposed: null
+  # measured (python -m tools.belt_speed on runs 000105 / 001541 / 092045 / 101655, 645 2x
+  # samples): 90 x (share - 0.03), max 60 %/s - the doubled 1x guess (200 x (share - 0.08))
+  # gave buckets at 3-8 % of the contact layer nothing; live they filled slowly
+  speed_x2_fill_rate: 90.0
+  speed_x2_fill_max: 60.0
+  speed_x2_fill_min_exposed: 0.03
   max_wait_s: 60.0           # one simulated wait at most
   # live: a plan step waiting for the belt is given up (re-plan; if the new plan waits too, the
   # strategy decides until the board changes) when the belt is wait_grace_s behind the plan's
@@ -312,6 +323,16 @@ planner:                     # levelplan.py + sim.py: whole-level plan (docs/GAM
   weight_stuck: 0.05
   weight_free: 0.02
   weight_full: 0.05          # per planned tap that takes the last free slot: only for >= 5 % more sand
+  # user's player hints (L189 run 20261021-101655): the plan used to stop where the collected
+  # sand peaked (11 of the 15 taps that break L189's ice 15) and never planned past it
+  weight_tap: 0.03           # hint 2/3: per bucket released (deeper plans rank higher)
+  weight_open: 0.05          # hint 3: per cell opened (ice, key lock, chain gate, revealed mystery)
+  weight_idle: 0.002         # hint 1: per belt slot-second of a bucket that collects nothing (release
+                             # a bucket shortly before its colour is exposed, not long before)
+  start_beam: 24             # hint 2: the plan at level start searches wider / longer
+  start_budget_s: 6.0
+  burst_max: 3               # hint 4: back-to-back plan steps tapped in one burst (bot.burst_gap_s apart)
+  burst_tap_s: 1.0           # ... and their belt seconds per tap in the simulator
 
 flow:                        # flow.py: screens outside gameplay (docs/GAME_RULES.md "Bot behaviour outside gameplay")
   # win -> NEXT, menu -> PLAY (popups -> red ✕ first), revive -> Quit (else the popup's ✕),

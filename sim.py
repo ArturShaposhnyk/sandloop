@@ -184,6 +184,9 @@ class SimConfig:
     fill_max: float = 30.0            # % of a bucket per s at most
     tap_s: float = 4.2                # belt seconds that pass per tap of the bot
     max_wait_s: float = 60.0
+    burst_tap_s: float = 4.2          # ... per tap that follows a tap (live: a burst of plan steps)
+    burst_max: int = 1                # taps in one burst (the first one costs tap_s)
+    idle_rate: float = 2.0            # a belt bucket filling slower than this %/s is idle
 
     @property
     def laps_per_tap(self) -> int:
@@ -210,20 +213,33 @@ class Sim:
     t: float = 0.0                    # belt seconds since the start
     full_taps: int = 0                # taps that took the last free slot
     pics_opened: int = 0              # picture locks opened by keys in the simulation
+    hidden: Dict[Pos, Tuple[str, Optional[str]]] = field(default_factory=dict)
+    # ^ colours seen under ice / locks / curtains in earlier attempts (levelmemory), shared
+    idle: float = 0.0                 # slot-seconds of belt buckets slower than idle_rate
+    opened: int = 0                   # cells opened: ice, key locks, chain gates, revealed
 
     # -- construction ---------------------------------------------------------------------
 
     @classmethod
     def start(cls, state: LevelState, pic: Picture, sc: SimConfig,
-              capacity: Optional[Dict[str, int]] = None) -> "Sim":
+              capacity: Optional[Dict[str, int]] = None,
+              hidden: Optional[Dict[Pos, Tuple[str, Optional[str]]]] = None) -> "Sim":
         """From a live state: its grid, its belt (fill -> cells left) and the picture.
-        ``capacity``: cells per stage for some colours (memory); the rest is balanced."""
+        ``capacity``: cells per stage for some colours (memory); the rest is balanced.
+        ``hidden``: colours under ice / locks / curtains seen in earlier attempts (memory):
+        those cells open to buckets of that colour instead of the plan's horizon."""
         grid = copy.deepcopy(state)
         grid.sand, grid.exposed, grid.above, grid.lower = {}, {}, {}, {}
         grid.belt_stalled = {}
         stages: Dict[str, float] = {}
+        hidden = {p: v for p, v in (hidden or {}).items()
+                  if grid.cell(p) is not None and grid.cell(p).kind in (Kind.LOCK, Kind.UNKNOWN)}
         for c in grid.cells(Kind.BUCKET):
             for col in (c.color, c.body):
+                if col:
+                    stages[col] = stages.get(col, 0.0) + 1
+        for cols in hidden.values():   # buckets still under their lock take their sand too
+            for col in cols:
                 if col:
                     stages[col] = stages.get(col, 0.0) + 1
         for b in state.conveyor:
@@ -245,14 +261,14 @@ class Sim:
         unread = sum(1 for b in state.conveyor if not b.color) + max(
             0, (state.conveyor_k or 0) - len(state.conveyor))
         belt += [Slot((UNREAD,), 1) for _ in range(unread)]
-        return cls(grid, belt, pic, cap, sc)
+        return cls(grid, belt, pic, cap, sc, hidden=hidden)
 
     def clone(self) -> "Sim":
         return Sim(self.grid, [Slot(s.stages, s.left, s.stage, s.credit, s.shell)
                                for s in self.belt],
                    self.pic.copy(), self.capacity, self.sc, list(self.taps),
                    list(self.actions), self.fills, self.collected, self.jam, self.t,
-                   self.full_taps, self.pics_opened)
+                   self.full_taps, self.pics_opened, self.hidden, self.idle, self.opened)
 
     # -- queries --------------------------------------------------------------------------
 
@@ -312,17 +328,28 @@ class Sim:
     def tap(self, pos: Pos) -> "Sim":
         nxt = self.clone()
         cell = self.grid.cell(pos)
+        run = 0                       # taps right before this one (a burst live)
+        for a in reversed(self.actions):
+            if a[0] != "tap":
+                break
+            run += 1
         nxt.actions.append(("tap", pos, cell.color, len(self.belt)))
         g = self.grid.after_tap(pos)
         g.conveyor, g.conveyor_k = [], 0
         nxt.grid = g
         nxt.pics_opened += len(g.pics_opened)
+        nxt.opened += (sum(len(cells) for _, cells in g.unlocked + g.gates_opened)
+                       + len(g.revealed) + len(g.pics_opened))
         nxt._open_ice()
+        nxt._apply_hidden()
         nxt.belt.append(Slot((cell.color,) + ((cell.body,) if cell.body else ()),
                              nxt.capacity.get(cell.color, 1), shell=cell.shell))
         nxt.taps.append(pos)
         nxt.full_taps += nxt.free == 0
-        for _ in range(self.sc.laps_per_tap):
+        fast = 0 < run % max(1, self.sc.burst_max)
+        laps = (max(0, round(self.sc.burst_tap_s / self.sc.lap_s)) if fast
+                else self.sc.laps_per_tap)
+        for _ in range(laps):
             nxt.lap()
         return nxt
 
@@ -348,6 +375,7 @@ class Sim:
         """One lap; returns the cells the belt earned (0: nothing collects)."""
         got = 0.0
         self.t += self.sc.lap_s
+        idle = sum(1 for s in self.belt if s.colour != UNREAD)
         for s in list(self.belt):
             if s.shell:   # L188: nothing until a shell of its colour drops in
                 down = self.pic.shell_down(s.colour)
@@ -356,6 +384,7 @@ class Sim:
                 self.pic.shells.remove(down)
                 s.shell = False
             rate = self.sc.rate(self.pic.share(s.colour))
+            idle -= rate >= self.sc.idle_rate
             if rate <= 0:
                 continue
             s.credit += rate / 100 * self.capacity.get(s.colour, 1) * self.sc.lap_s
@@ -377,13 +406,26 @@ class Sim:
                     s.left, s.credit = self.capacity.get(s.colour, 1), 0.0
                 else:
                     self.belt.remove(s)
+        self.idle += max(0, idle) * self.sc.lap_s
         return got
 
     def _open_ice(self) -> None:
         g = self.grid
         for lock in [l for l in g.locks if l.kind == "ice" and l.counter == 0]:
             g.locks.remove(lock)
+            self.opened += len(lock.cells)
             self._unknown(lock.cells, "ice opened")
+
+    def _apply_hidden(self) -> None:
+        """Opened cells whose colour an earlier attempt saw (levelmemory) become buckets."""
+        g, done = self.grid, False
+        for (r, c), (top, body) in self.hidden.items():
+            cell = g.grid[r][c]
+            if cell is not None and cell.kind is Kind.UNKNOWN:
+                g.grid[r][c] = Cell(r, c, Kind.BUCKET, color=top, body=body)
+                done = True
+        if done:
+            g.tappable = [p for p in g.playable() if p not in g.disagreements]
 
     def _fill_curtains(self) -> None:
         g = self.grid

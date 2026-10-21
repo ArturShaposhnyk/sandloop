@@ -96,6 +96,9 @@ class Analyzer:
         self._labels: Optional[List[List[str]]] = None   # last read's labels
         self.scatter_until = -1.0              # a chest opened: no decisions until then
         self.mechanics_noted: set = set()      # "unknown mechanic" notes logged this level
+        self.hiding: Optional[set] = None      # cells under ice / key locks / curtains at start
+        self.revealed: Dict[str, str] = {}     # "r,c" -> colour seen there once open (memory)
+        self._reveal_seen: Dict[Pos, str] = {}
         from hud import SpeedTracker
 
         self.speed = SpeedTracker(cfg.bot.speed_confirm_frames)   # ▶▶2x, per level
@@ -107,9 +110,14 @@ class Analyzer:
         may amend the state before the decision (bot.py: what it knows of released towers)."""
         from vision import VisionError, read_gameplay
 
+        from screens import ScreenResult, popup_bar
+
         now = self.clock() if now is None else now
         found = self.classifier.classify(img)
         screen = found.screen
+        if screen == "gameplay" and popup_bar(img, self.cfg.vision):
+            # a popup sliding in (revive): the board under it is not read (run 101655 00507)
+            screen, found = "popup", ScreenResult("popup", found.matches)
         if screen != "gameplay":
             if self.lattices is not None:
                 self.lattices.unlock()   # another level may follow
@@ -141,6 +149,8 @@ class Analyzer:
                 state.colour_capacity = dict(self.colour_capacity)
             state.belt_stalled = self.belt.update(state.conveyor, now)
             self._note_mechanics(state, log)
+            if self.lattices is not None:
+                self._watch_hidden(state, log)
             if adjust is not None:
                 adjust(state)
             res = Analysis(screen, gv, state, choose(state, st))
@@ -156,6 +166,31 @@ class Analyzer:
         res.reads, res.fails = self.reads, self.fails
         res.speed_x2, res.speed_read = self.speed.state, speed_read
         return res
+
+    def _watch_hidden(self, state: LevelState, log) -> None:
+        """Level memory (levelmemory.LevelMemory.revealed): the colour of a bucket that was
+        under ice / a key lock / a curtain at the level's start, once read the same twice in a
+        row (not hidden by an arrow, not disagreeing with the path rule). Try Again restarts the
+        same board, so the planner can plan past that lock next time."""
+        from cells import Kind
+
+        if self.hiding is None:
+            self.hiding = {(c.row, c.col) for c in state.cells(Kind.LOCK)
+                           if c.lock in ("ice", "lock", "curtain")}
+        for pos in self.hiding:
+            key = f"{pos[0]},{pos[1]}"
+            cell = state.cell(pos)
+            if key in self.revealed or cell is None:
+                continue
+            if (cell.kind is not Kind.BUCKET or not cell.color or cell.occluded
+                    or pos in state.disagreements):
+                self._reveal_seen.pop(pos, None)
+                continue
+            label = cell.color + (f"/{cell.body}" if cell.body else "")
+            if self._reveal_seen.get(pos) == label:
+                self.revealed[key] = label
+                log(f"r{pos[0]}c{pos[1]}: {label} under its lock (level memory)")
+            self._reveal_seen[pos] = label
 
     def _note_mechanics(self, state: LevelState, log) -> None:
         """Once per level: what the bot cannot explain on this board yet (user, 2026-10-21:

@@ -144,6 +144,10 @@ class VisionConfig:
     template_thresholds: Dict[str, float] = field(  # per-anchor overrides
         default_factory=lambda: {"close_red": 0.95, "ad_mute": 0.85, "level_completed": 0.85,
                                  "next": 0.85, "status_icons": 0.85})
+    popup_bar_hue: List[int] = field(default_factory=lambda: [35, 85])   # popup button green (HSV)
+    popup_bar_min_sv: List[int] = field(default_factory=lambda: [120, 150])  # its min S / V
+    popup_bar_min_run: float = 0.65   # a row of it this wide (share of the width) ...
+    popup_bar_min_rows: float = 0.015  # ... over this share of the height: a popup over the board
     template_scales: List[float] = field(
         default_factory=lambda: [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.15, 1.3])
 
@@ -310,6 +314,14 @@ class PlannerConfig:
     weight_stuck: float = 0.05        # ... per belt bucket whose colour is not exposed now
     weight_free: float = 0.02         # ... per free slot
     weight_full: float = 0.05         # ... per tap that took the last free slot (5/5 belt)
+    # user's player hints (L189 run 20261021-101655, docs/GAME_RULES.md "Level plan")
+    weight_tap: float = 0.0           # per bucket released (progress: deeper plans rank higher)
+    weight_open: float = 0.0          # per cell opened (ice, key lock, chain gate, ...)
+    weight_idle: float = 0.0          # per belt slot-second without collecting (timing)
+    start_beam: int = 8               # beam / budget of the plan at level start (re-plans: beam)
+    start_budget_s: float = 3.0
+    burst_max: int = 1                # back-to-back plan taps live (1 = no burst)
+    burst_tap_s: float = 4.2          # belt seconds per tap after the first of a burst
     # belt speed 2x (bot.speed_x2): fill speeds in real seconds; tap_s stays (the bot's own
     # cycle). None = the 1x value x speed_x2_factor (rate / max) or as at 1x (min exposed) until
     # python -m tools.belt_speed has 2x samples

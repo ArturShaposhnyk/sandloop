@@ -23,6 +23,7 @@ logged to debug/runs/<stamp>/ (runlog.py); post-mortem: ``python -m tools.analyz
 from __future__ import annotations
 
 import argparse
+import itertools
 import sys
 import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -352,7 +353,11 @@ class Bot(LevelMixin):
                                    if self.prev_game is not None else set(st.tappable))
         both = {p for p in both if not self.ledger.guarded(p, now)}
         covering = self.trend.covering(b.color for b in st.conveyor if b.color)
-        moves = ([(move, f"confirmed, level plan step {move.level_plan}")] if move.level_plan
+        moves = ([(move, f"confirmed, level plan step {move.level_plan}")]
+                 + [(f, f"burst {k + 2}: level plan step {f.level_plan}")
+                    for k, f in enumerate(itertools.takewhile(lambda f: f.pos in both,
+                                                              move.follow))]
+                 if move.level_plan
                  else burst(st, move, both, self.cfg.strategy, self.bc, covering))
         if self.max_taps is not None:
             if self.taps >= self.max_taps:
@@ -389,6 +394,9 @@ class Bot(LevelMixin):
             cell = st.cell(cand.pos)
             self.ledger.add(last, cand.pos, cand.color, cell.body if cell is not None else None)
             tapped.append((cand.pos, cand.color))
+            planner = getattr(self.analyzer, "planner", None)
+            if planner is not None:
+                planner.tapped(cand.pos)   # whole-level sequences for the level memory
             r, c = cand.pos
             self.log.log(f"TAP #{self.taps} r{r}c{c} {cand.color} ({why})"
                          f"{' [dry-run]' if self.dry_run else ''}")

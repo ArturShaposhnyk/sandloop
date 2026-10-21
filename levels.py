@@ -50,12 +50,12 @@ class LevelMixin:
             return
         png = self.log.frame(f"{self.frame_no:05d}-screen-{res.screen}", frame)
         self.in_level = False
-        if hasattr(self.analyzer, "reset_level"):
-            self.analyzer.reset_level()
         self.log.log(f"LEVEL {self.level_no}: {result.upper()} ({how})")
         self.log.event("level_end", level=self.level_no, result=result, how=how, png=png,
                        taps=self.taps)
-        self._record_level(result, how)
+        self._record_level(result, how)   # before the reset: it keeps the level's plans
+        if hasattr(self.analyzer, "reset_level"):
+            self.analyzer.reset_level()
         stop = self.session.record(result)
         if stop is not None:
             raise Stop(result, stop)
@@ -71,7 +71,8 @@ class LevelMixin:
                        start=self.level_first, end=self.level_last,
                        plans=planner.log if planner is not None else [],
                        chests=list(getattr(an, "chest_log", [])),
-                       speed_x2=getattr(getattr(an, "speed", None), "state", None))
+                       speed_x2=getattr(getattr(an, "speed", None), "state", None),
+                       revealed=dict(getattr(an, "revealed", {}) or {}))
 
     def _non_gameplay(self, res: Any, frame: np.ndarray, now: float) -> None:
         from hud import read_lives

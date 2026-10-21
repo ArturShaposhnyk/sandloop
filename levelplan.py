@@ -36,20 +36,15 @@ that never jams the belt:
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from cells import Kind
+from levelmemory import LevelMemory, _record_signature, level_signature  # noqa: F401
 from sim import Picture, Sig, Sim, SimConfig, grid_signature, picture_from_frame
 from state import LevelState, Pos
-
-
-def level_signature(labels: Sequence[str]) -> str:
-    """Short id of a board (the grid labels of a level's first frame)."""
-    return hashlib.sha1("\n".join(labels).encode()).hexdigest()[:12]
 
 
 @dataclass
@@ -60,6 +55,7 @@ class Step:
     board: Sig                        # board the plan expects before the tap
     t: float = 0.0                    # predicted belt seconds since the plan was made
     belt: List[Tuple[str, int]] = field(default_factory=list)   # predicted (colour, fill %)
+    burst: bool = False               # follows the previous step at once (a burst live, hint 4)
 
 
 @dataclass
@@ -81,9 +77,16 @@ class Plan:
 
 
 def _score(s: Sim, total: int, pc: Any) -> float:
+    """Collected sand (+10 for a win) - dead / stuck belt buckets + free slots - taps into the
+    last slot; the user's player hints (L189 run 20261021-101655): + every bucket released and
+    every cell opened (progress: a deeper plan ranks above the one where the collected sand
+    peaked), - belt slot-seconds without collecting (release a bucket shortly before its colour
+    is exposed, not long before)."""
     return (s.collected / max(1, total) + (10.0 if s.won else 0.0)
             - pc.weight_dead * s.dead_slots() - pc.weight_stuck * s.stuck_slots()
-            + pc.weight_free * s.free - pc.weight_full * s.full_taps)
+            + pc.weight_free * s.free - pc.weight_full * s.full_taps
+            + pc.weight_tap * len(s.taps) + pc.weight_open * s.opened
+            - pc.weight_idle * s.idle)
 
 
 def sim_config(pc: Any, slots: int, x2: bool = False) -> SimConfig:
@@ -96,7 +99,8 @@ def sim_config(pc: Any, slots: int, x2: bool = False) -> SimConfig:
         rate = pc.speed_x2_fill_rate if pc.speed_x2_fill_rate is not None else rate * f
         cap = pc.speed_x2_fill_max if pc.speed_x2_fill_max is not None else cap * f
         e0 = pc.speed_x2_fill_min_exposed if pc.speed_x2_fill_min_exposed is not None else e0
-    return SimConfig(slots, pc.lap_s, rate, e0, cap, pc.tap_s, pc.max_wait_s)
+    return SimConfig(slots, pc.lap_s, rate, e0, cap, pc.tap_s, pc.max_wait_s, pc.burst_tap_s,
+                     pc.burst_max)
 
 
 def _lost(s: Sim) -> bool:
@@ -114,12 +118,19 @@ def _rank(s: Sim, total: int, pc: Any) -> Tuple[bool, int, float]:
 def plan_level(state: LevelState, pic: Picture, pc: Any,
                banned: Set[Tuple[Pos, ...]] = frozenset(),
                capacity: Optional[Dict[str, int]] = None,
-               forbid: Set[Pos] = frozenset(), x2: bool = False) -> Plan:
+               forbid: Set[Pos] = frozenset(), x2: bool = False,
+               hidden: Optional[Dict[Pos, Tuple[str, Optional[str]]]] = None,
+               done: Sequence[Pos] = (), beam_w: Optional[int] = None,
+               budget_s: Optional[float] = None) -> Plan:
     """Beam search from ``state`` (+ its picture); ``pc``: PlannerConfig. ``forbid``: taps not
     allowed before the first tap (the live rules reject them on this board). ``x2``: belt
-    speed 2x."""
+    speed 2x. ``hidden``: colours under locks from earlier attempts (levelmemory). ``done``:
+    the level's taps before this board - ``banned`` holds whole-level sequences."""
     t0 = time.monotonic()
-    root = Sim.start(state, pic, sim_config(pc, state.conveyor_slots, x2), capacity)
+    width = beam_w or pc.beam
+    budget = pc.budget_s if budget_s is None else budget_s
+    done = tuple(done)
+    root = Sim.start(state, pic, sim_config(pc, state.conveyor_slots, x2), capacity, hidden)
     root.grid.disagreements = []
     root.grid.tappable = root.grid.playable()
     total = max(1, pic.total())
@@ -127,7 +138,7 @@ def plan_level(state: LevelState, pic: Picture, pc: Any,
     for _ in range(pc.max_depth):
         children: List[Sim] = []
         for s in beam:
-            nxt = [s.tap(p) for p in s.moves() if tuple(s.taps + [p]) not in banned
+            nxt = [s.tap(p) for p in s.moves() if done + tuple(s.taps + [p]) not in banned
                    and (s.taps or p not in forbid)]
             if s.belt:
                 w = s.wait()
@@ -143,25 +154,28 @@ def plan_level(state: LevelState, pic: Picture, pc: Any,
             if key not in seen:
                 seen.add(key)
                 uniq.append(c)
-        beam = uniq[:pc.beam]
+        beam = uniq[:width]
         if _rank(beam[0], total, pc) > _rank(best, total, pc):
             best = beam[0]
-        if best.won or time.monotonic() - t0 > pc.budget_s:
+        if best.won or time.monotonic() - t0 > budget:
             break
     return _plan_of(root, best, total, nodes, time.monotonic() - t0, pc)
 
 
 def _plan_of(root: Sim, best: Sim, total: int, nodes: int, seconds: float, pc: Any) -> Plan:
     """Replay ``best``'s actions from ``root`` to record the board before every tap."""
-    s, steps, lines = root, [], []
+    s, steps, lines, run = root, [], [], 0
     for kind, pos, colour, belt in best.actions:
         if kind == "tap":
-            steps.append(Step(pos, colour, len(s.belt), s.signature(), s.t, s.belt_fills()))
+            steps.append(Step(pos, colour, len(s.belt), s.signature(), s.t, s.belt_fills(),
+                              burst=0 < run % max(1, pc.burst_max)))
+            run += 1
             at = s.t
             s = s.tap(pos)
             lines.append(f"{len(steps):2d}. {at:4.0f}s tap r{pos[0]}c{pos[1]} {colour}  (belt "
                          f"{belt} -> {len(s.belt)}: {_belt_text(s.belt_fills())})")
         else:
+            run = 0
             s = s.wait() or s
             lines.append(f"    {s.t:4.0f}s wait (belt {len(s.belt)}: "
                          f"{_belt_text(s.belt_fills())}; sand left {s.pic.total() / total:.0%})")
@@ -172,75 +186,6 @@ def _plan_of(root: Sim, best: Sim, total: int, nodes: int, seconds: float, pc: A
 
 def _belt_text(fills: Sequence[Tuple[str, Optional[int]]]) -> str:
     return ", ".join(f"{c} {'?' if f is None else f}" for c, f in fills) or "empty"
-
-
-# --- level memory ------------------------------------------------------------------------------
-
-
-def _record_signature(r: Dict[str, Any]) -> Optional[str]:
-    """A record's board signature; records from before it was stored (run 20261020-145310):
-    the grid of the decision behind the first tap (the level's first frames)."""
-    if r.get("signature"):
-        return r["signature"]
-    taps = r.get("tap_log") or []
-    grid = ((taps[0].get("decision") or {}).get("grid") if taps else None) or \
-        (r.get("start") or {}).get("grid")
-    return level_signature(grid) if grid else None
-
-
-class LevelMemory:
-    """Earlier attempts of a board from <debug>/levels.jsonl (bot.py writes one line per level)."""
-
-    def __init__(self, path: Path) -> None:
-        self.records: List[Dict[str, Any]] = []
-        if Path(path).exists():
-            for line in Path(path).read_text(encoding="utf-8").splitlines():
-                try:
-                    self.records.append(json.loads(line))
-                except ValueError:
-                    continue
-
-    def attempts(self, signature: str) -> List[Dict[str, Any]]:
-        return [r for r in self.records if _record_signature(r) == signature]
-
-    def banned(self, signature: str) -> Set[Tuple[Pos, ...]]:
-        """Tap sequences of attempts that did not win: the plan must not repeat one of them
-        whole (it may share a prefix and deviate later)."""
-        out = set()
-        for r in self.attempts(signature):
-            if r.get("result") != "win" and r.get("tap_log"):
-                out.add(tuple(tuple(t["pos"]) for t in r["tap_log"]))
-        return out
-
-    def capacity_shares(self, signature: str) -> Dict[str, float]:
-        """Per colour, the picture share one bucket stage really took in earlier attempts:
-        its sand drop / its stages filled (stages tapped minus what the belt still needed of it
-        at the end). Corrects the simulator's balanced guess where it was wrong."""
-        drop: Dict[str, float] = {}
-        filled: Dict[str, float] = {}
-        for r in self.attempts(signature):
-            taps = r.get("tap_log") or []
-            start = r.get("start") or ((taps[0].get("decision") or {}) if taps else {})
-            end = r.get("end") or {}
-            if not start.get("sand") or not end.get("sand"):
-                continue
-            done: Dict[str, float] = {}
-            for t in r.get("tap_log") or []:
-                for col in [t.get("color")] + list(t.get("stages") or []):
-                    if col:
-                        done[col] = done.get(col, 0.0) + 1
-            for b in end.get("conveyor") or []:
-                if b.get("color"):
-                    fill = b["fill"] if b.get("fill") is not None else 50
-                    done[b["color"]] = done.get(b["color"], 0.0) - (1 - fill / 100)
-                for col in b.get("stages") or []:
-                    done[col] = done.get(col, 0.0) - 1
-            for col, n in done.items():
-                d = start["sand"].get(col, 0.0) - end["sand"].get(col, 0.0)
-                if n >= 1 and d > 0:
-                    drop[col] = drop.get(col, 0.0) + d
-                    filled[col] = filled.get(col, 0.0) + n
-        return {c: drop[c] / filled[c] for c in drop}
 
 
 # --- following the plan live -------------------------------------------------------------------
@@ -266,6 +211,13 @@ class PlanRunner:
         self.given_up: Optional[Sig] = None     # board on which the strategy decides
         self.forbid: Dict[Sig, Set[Pos]] = {}   # per board: plan taps the sand rules rejected
         self.x2 = False                         # belt speed 2x (hud.SpeedTracker)
+        self.done: List[Pos] = []               # the level's taps so far (memory bans whole
+        #   sequences: run 20261021-101655 compared them with the re-plan's own taps)
+        self.hidden: Dict[Pos, Tuple[str, Optional[str]]] = {}   # colours under locks (memory)
+
+    def tapped(self, pos: Pos) -> None:
+        """bot.py: a bucket was tapped (plan step or not)."""
+        self.done.append(tuple(pos))
 
     def set_speed(self, x2: bool, log=print) -> None:
         """The belt speed changed (▶▶2x read on / off): the plan's timing is wrong now -
@@ -322,8 +274,35 @@ class PlanRunner:
         cand.rejected = None
         score_cand(state, cand, self.cfg.strategy)
         cand.level_plan = f"{step_i + 1}/{n}"
+        cand.follow = self._burst(state, step_i)
         return Decision(cand, f"tap r{step.pos[0]}c{step.pos[1]} {step.colour} (level plan step "
                               f"{step_i + 1}/{n}, {self.plan.result})", fallback.candidates)
+
+    def _burst(self, state: LevelState, i: int) -> List[Any]:
+        """User hint 4 (play fast): the plan steps right after step ``i`` that the plan taps at
+        once (``Step.burst``, up to ``burst_max`` taps in all) go in the same burst - each
+        tappable on this frame already, a free slot left for it and passing the sand rules
+        and slot reserves on the board after the taps before it."""
+        from strategy import _score as score_cand, evaluate
+
+        sc, out = self.cfg.strategy, []
+        st, prev = state, self.plan.steps[i].pos
+        for j in range(i + 1, len(self.plan.steps)):
+            step = self.plan.steps[j]
+            if not step.burst or len(out) + 1 >= self.pc.burst_max:
+                break
+            st = st.after_tap(prev)
+            if (step.pos not in state.tappable or step.pos not in st.tappable
+                    or not st.free_slots or _reserve(st, step.pos, step.colour, sc)):
+                break
+            c = evaluate(st, step.pos, sc, opener=True)
+            if c.rejected:
+                break
+            score_cand(st, c, sc)
+            c.level_plan = f"{j + 1}/{len(self.plan.steps)}"
+            out.append(c)
+            prev = step.pos
+        return out
 
     def _skip(self, img, state: LevelState, board: Sig, i: int, why: str, fallback, now: float,
               log):
@@ -410,14 +389,18 @@ class PlanRunner:
         banned = mem.banned(self.signature) if mem else set()
         pic = picture_from_frame(img, _palette(self.cfg), self.cfg.vision, self.pc.cell_px,
                                  state.shells, state.pic_locks)
+        self.hidden = mem.revealed(self.signature) if mem else {}
         cap = None
         shares = mem.capacity_shares(self.signature) if mem else {}
         sand = sum(state.sand.values())
         if shares and sand > 0:   # picture share -> cells, at this frame's cells per share
             cap = {c: max(1, round(v * pic.total() / sand)) for c, v in shares.items()}
+        first = why == "start" or not self.done
         self.plan = plan_level(state, pic, self.pc, banned, cap,
                                forbid or self.forbid.get(grid_signature(state.grid), set()),
-                               self.x2)
+                               self.x2, self.hidden, self.done,
+                               self.pc.start_beam if first else None,
+                               self.pc.start_budget_s if first else None)
         self.last_plan_t = now
         self.at, self.checked = None, set()
         self.replans += why != "start"
@@ -425,9 +408,16 @@ class PlanRunner:
                          "taps": len(self.plan.steps),
                          "result": self.plan.result, "collected": round(self.plan.collected, 3),
                          "banned": len(banned), "capacity": cap,
+                         "hidden": {f"{r},{c}": "/".join(filter(None, v))
+                                    for (r, c), v in self.hidden.items()},
                          "steps": [[*s.pos, s.colour, round(s.t, 1)] for s in self.plan.steps]})
         log(f"level plan ({why}{', ' + str(len(banned)) + ' failed sequence(s) avoided' if banned else ''}"
-            f"{', capacity from earlier attempts' if cap else ''}, belt {'2x' if self.x2 else '1x'}):")
+            f"{', capacity from earlier attempts' if cap else ''}"
+            + "".join(f", r{r}c{c} {'/'.join(filter(None, v))} seen under its lock before"
+                      for (r, c), v in sorted(self.hidden.items())
+                      if state.cell((r, c)) is not None
+                      and state.cell((r, c)).kind is not Kind.BUCKET)
+            + f", belt {'2x' if self.x2 else '1x'}):")
         for line in self.plan.describe():
             log(line)
 

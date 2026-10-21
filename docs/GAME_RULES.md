@@ -317,14 +317,34 @@
 - Live: each frame's board is matched to the plan's predicted board before each tap; a match
   taps that step once the belt has no more buckets than the plan had there; no match = re-plan
   (at most every `planner.replan_min_s`). No step left: the greedy strategy decides.
-- Level memory (`debug/levels.jsonl`): on Try Again (same board signature) the sequences of
-  attempts that did not win are banned (the plan must deviate) and the capacity per colour is
-  corrected from what those attempts really used.
+- Level memory (`debug/levels.jsonl`, `levelmemory.py`): on Try Again (same board signature,
+  the buckets' faces ignored) the whole-level tap sequences of attempts that did not win are
+  banned (the plan, prefixed with the level's taps so far, must deviate), the capacity per
+  colour is corrected from what those attempts really used (end reads under a popup are
+  skipped), and **colours seen under ice / key locks / curtains** in earlier attempts are
+  used: those cells open to buckets of that colour in the simulator instead of ending the plan.
+- **Player hints (user, L189 run 20261021-101655)**, as plan score terms (`planner:`):
+  1. Timing: release a bucket shortly before its colour reaches the contact layer, not long
+     before (it blocks a slot) - every belt slot-second of a bucket filling slower than
+     `sim.idle_rate` (2 %/s) costs `weight_idle`; the simulator predicts when a colour is
+     exposed (sand falls per column as layers are collected).
+  2. Think further ahead: every bucket released scores `weight_tap` (a deeper plan ranks
+     above the one where the collected sand peaked - L189's plans stopped at 9-11 of the 15
+     taps that break the ice); the start plan searches wider / longer (`start_beam`,
+     `start_budget_s`).
+  3. Go deep: every cell opened (ice, key lock, chain gate, revealed mystery) scores
+     `weight_open`, even when the taps that open it fill slowly.
+  4. Play fast: plan steps the simulator taps back to back (no wait between, up to
+     `burst_max`) are tapped live in one burst (`bot.burst_gap_s` apart, each tappable on the
+     frame already and passing the sand rules / reserves); in the simulator such a follow-up
+     tap costs `burst_tap_s` instead of `tap_s`.
 - Belt speed (measured, not a game rule: `python -m tools.belt_speed` on belt.csv of runs
   142035 / 145310 / 161536, 458 samples): a belt bucket fills ~100 %/s x (its colour's share of
   the contact layer - 8 %), at most ~30 %/s; below ~10 % it gets almost nothing (L187 run
   161536: orange at 7 % of the contact layer stayed 0 % for 30 s). The simulator uses this
-  (`planner.fill_*`); the bot needs ~4 s per tap (`planner.tap_s`).
+  (`planner.fill_*`); the bot needs ~4 s per tap (`planner.tap_s`). At 2x (645 samples, runs
+  000105 / 001541 / 092045 / 101655): ~90 %/s x (share - 3 %), at most ~60 %/s
+  (`planner.speed_x2_fill_*`).
 - A plan step never overrides the sand rules (user, run 20261020-224631: #24 orange/darkgreen
   tower at avail -5 %): a step the strategy rejects for lack of sand (exposure as for a planned
   path, enough sand left, a tower whose top cannot fill) is skipped and the bot re-plans at once
@@ -413,6 +433,8 @@ must be extensible:
 - iPhone Mirroring window (user, run 20261020-161536): activate it before the first tap (the
   first click must not be spent on focusing); if it disappears, wait up to ~30 s
   (`bot.window_lost_max_s`) for it to come back before stopping.
+- A popup sliding in over the board (the revive popup's green "Keep Playing" bar, wider than
+  any board object) is screen "popup": the board under it is not read (run 20261021-101655).
 - Ads may have no known anchor at all (run 20261020-171133 after Try Again: Trade Republic
   "6 %" with a yellow "Download" button and two small yellow discs top left (mute) / top right
   (▶| skip); Netflix). An unknown screen within `flow.ad_after_tap_s` of a screen tap is

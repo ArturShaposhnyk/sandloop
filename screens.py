@@ -66,6 +66,25 @@ def load_templates(directory: Path) -> Dict[str, np.ndarray]:
     return out
 
 
+def popup_bar(img: np.ndarray, v: VisionConfig) -> bool:
+    """A popup sliding in over gameplay (run 20261021-101655 frame 00507: the revive popup's
+    green "Keep Playing" matched only 0.49 while it moved): a bright green bar at least
+    ``popup_bar_min_run`` of the screen width wide in at least ``popup_bar_min_rows`` of its
+    rows (lower two thirds). No bucket / button of the board is that wide."""
+    import cv2
+
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img[h // 3:], cv2.COLOR_BGR2HSV)
+    m = ((hsv[..., 0] >= v.popup_bar_hue[0]) & (hsv[..., 0] <= v.popup_bar_hue[1])
+         & (hsv[..., 1] >= v.popup_bar_min_sv[0]) & (hsv[..., 2] >= v.popup_bar_min_sv[1]))
+    rows = 0
+    for row in m[m.sum(axis=1) >= v.popup_bar_min_run * w]:
+        d = np.diff(np.concatenate(([0], row.astype(np.int8), [0])))
+        if (np.flatnonzero(d == -1) - np.flatnonzero(d == 1)).max() >= v.popup_bar_min_run * w:
+            rows += 1
+    return rows >= v.popup_bar_min_rows * h
+
+
 class ScreenClassifier:
     def __init__(self, templates: Dict[str, np.ndarray], v: VisionConfig) -> None:
         self.templates = templates

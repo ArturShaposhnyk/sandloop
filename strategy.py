@@ -84,6 +84,7 @@ class Candidate:
     shell_wait: bool = False                   # L188 shell bucket whose shell is not at the bottom
     pics: List[str] = field(default_factory=list)   # picture locks its key opens (L188)
     level_plan: Optional[str] = None           # "i/n": a step of the level plan (levelplan.py)
+    follow: List["Candidate"] = field(default_factory=list)   # plan steps tapped in the same burst
     sacrifice: bool = False                    # can't fill now, opens what unblocks the belt
     sand_short: bool = False                   # rejected only for "not enough sand"
     reserved: bool = False                     # rejected only for the endgame slot reserve

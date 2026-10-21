@@ -44,8 +44,9 @@ def test_speed_tracker_needs_equal_readings():
 
 
 def test_sim_config_scales_fill_speed_not_tap_time():
-    pc = load_config().planner
-    one, two = sim_config(pc, 5), sim_config(pc, 5, x2=True)
+    pc = dataclasses.replace(load_config().planner, speed_x2_fill_rate=None,
+                             speed_x2_fill_max=None, speed_x2_fill_min_exposed=None)
+    one, two = sim_config(pc, 5), sim_config(pc, 5, x2=True)       # not calibrated: 1x x 2
     assert two.fill_rate == one.fill_rate * pc.speed_x2_factor
     assert two.fill_max == one.fill_max * pc.speed_x2_factor
     assert (two.tap_s, two.fill_min_exposed) == (one.tap_s, one.fill_min_exposed)
@@ -53,6 +54,8 @@ def test_sim_config_scales_fill_speed_not_tap_time():
                              speed_x2_fill_min_exposed=0.05)          # calibrated at 2x
     two = sim_config(pc, 5, x2=True)
     assert (two.fill_rate, two.fill_max, two.fill_min_exposed) == (150.0, 45.0, 0.05)
+    two = sim_config(load_config().planner, 5, x2=True)   # measured (runs 000105 .. 101655)
+    assert (two.fill_rate, two.fill_max, two.fill_min_exposed) == (90.0, 60.0, 0.03)
 
 
 def test_speed_change_replans():
