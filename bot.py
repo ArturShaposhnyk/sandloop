@@ -401,7 +401,7 @@ class Bot(LevelMixin):
                                  why=why, rel=[round(rel[0], 4), round(rel[1], 4)],
                                  point=[round(tr.point[0], 1), round(tr.point[1], 1)],
                                  executed=tr.executed, frame_png=raw, annotated_png=ann,
-                                 gamble=cand.gamble,
+                                 gamble=cand.gamble, lost=cand.lost,
                                  lookahead=cand.outlook.describe() if cand.outlook else None,
                                  alternatives=sum(1 for x in res.decision.candidates
                                                   if x.rejected is None and x.pos != cand.pos))

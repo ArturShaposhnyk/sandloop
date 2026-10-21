@@ -13,6 +13,16 @@
   state; if they disagree it logs a warning (and does not tap).
 - Ice block with a number N = locked; unlocks after N more buckets are tapped
   (placed on the conveyor or used in any way).
+  - There is a bucket under the ice (user, L189 run 20261021-092045). Its colour may show
+    through the ice (in L189 it did not: plain ice); the bot reads the cell as ice N, colour
+    unknown, never as a face-down bucket. Ice always shows its number: a cyan cell without one
+    is a cyan bucket (`counter: required`).
+  - **Slot rule (user, same run)**: ice N = N more taps before its bucket can be tapped, and
+    every tap takes a belt slot. With the ice reachable (b buckets in front on its path), the
+    bot keeps max(N, b) + 1 slots free (N taps to break it + 1 for the bucket under it): a tap
+    that would leave fewer is allowed only for a bucket that fills and leaves the belt again
+    (exposed >= `strategy.ice_live_exposed` 8 %, enough sand, not stalled). Only while that many
+    slots exist (ice 15 at the start of L189 reserves nothing). `endgame.ice_reserve`.
 - Curtain with a number N = locked; unlocks after N more buckets are filled to 100%.
   Its size varies between levels (2x2 in L180 is just one example): always detect its extent
   from the gold frame on screen and map it to the covered grid cells.
@@ -238,6 +248,13 @@
   themselves rank first; "uncovers for the belt" only breaks ties among them (then exposure).
   Logged "fills itself" / "opens r..c.. <colour>".
 
+## Lost position (user, L189 run 20261021-092045; `endgame.lost_finish`)
+- The belt is stuck for `strategy.lost_stuck_s` (15 s), no move passes the rules and the
+  last-slot gamble finds none: no move can win and waiting changes nothing. Do not hang: tap the
+  best remaining bucket (the gamble's ranking: can fill, uncovers for the belt, exposure) to end
+  the level quickly. The loss is recorded in `debug/levels.jsonl` (the level memory bans the
+  sequence), then revive -> Quit -> Try Again as usual. Logged "lost position: tap ...".
+
 ## Sacrifice (user, 2026-10-20)
 - A bucket that cannot fill now (not enough sand of its colour) may take a slot if the lookahead
   shows it opens the way to the colour that unblocks the belt (after 2-3 taps a belt colour that
@@ -356,7 +373,10 @@
   shows them when 4 buckets are on the belt and not full yet. They are a hint only: the bot
   ignores them (never a cell, a bucket or an unknown mechanic).
 - Vision (`hints.py`): masked colour template `dataset/templates/hints/arrow_down.png`
-  (`python -m hints cut <frame> x0 y0 x1 y1` for a new one). The arrow pixels are kept out of
+  (`python -m hints cut <frame> x0 y0 x1 y1` for a new one). An arrow matches at
+  `vision.hint_threshold` (0.8), or at `hint_row_threshold` (0.65) when another one of the same
+  size sits at the same height (the game draws them as a row; over buckets / keys / the L189
+  chain lock they matched 0.60-0.79, run 20261021-092045). The arrow pixels are kept out of
   the grid outline and inpainted before cells and curtains are read. A cell up to
   `vision.hint_cover_max` hidden is read through the inpainted pixels; a cell hidden more than
   that, or one that reads UNKNOWN through them, takes its last clean reading from earlier

@@ -121,7 +121,8 @@ CELL_LOCKS: List[CellLock] = [
     CellLock("lock", "key", lambda f, v: f.icon == "lock", coloured=True, before_empty=True),
     CellLock("key", "path", lambda f, v: f.icon == "key", coloured=True, before_empty=True),
     CellLock("chain", "key", lambda f, v: f.icon == "chain", coloured=True, before_empty=True),
-    CellLock("ice", "taps", _is_ice),
+    # ice (user): always shows its number N; a cyan bucket (L189 r4c6) passes the colour test
+    CellLock("ice", "taps", _is_ice, counter="required"),
     CellLock("chest", "path", lambda f, v: f.wood_frac >= v.chest_min_wood, counter="required"),
     CellLock("mystery", "adjacent", lambda f, v: f.grey_frac >= v.mystery_min_grey,
              counter="none"),
@@ -291,8 +292,10 @@ def empty_fraction(region_bgr: np.ndarray, palette: Palette, v: VisionConfig) ->
 
 
 def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
-                  v: VisionConfig) -> Cell:
-    """Classify a cell that is not covered by a multi-cell lock."""
+                  v: VisionConfig, skip: Sequence[str] = ()) -> Cell:
+    """Classify a cell that is not covered by a multi-cell lock. ``skip``: lock types ruled out
+    (a "required" counter that did not read: e.g. a yellow padlock fading over a bucket is no
+    chest, a cyan bucket is no ice)."""
     def lock_cell(lock: CellLock) -> Cell:
         if lock.coloured and f.icon_color is None and lock.name != "chain":
             # a chain cell may show only chain links: its gate's padlock gives the colour
@@ -302,7 +305,8 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
         return Cell(row, col, Kind.LOCK, lock=lock.name, unlock=lock.unlock,
                     color=f.icon_color if lock.coloured else None)
 
-    for lock in CELL_LOCKS:
+    locks = [lock for lock in CELL_LOCKS if lock.name not in skip]
+    for lock in locks:
         if lock.before_empty and lock.detect(f, v):
             return lock_cell(lock)
     if f.empty_frac >= v.empty_min_frac:
@@ -311,7 +315,7 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
         shell = _shell_bucket(row, col, f, palette, v)
         if shell is not None:
             return shell
-    for lock in CELL_LOCKS:
+    for lock in locks:
         if not lock.before_empty and lock.detect(f, v):
             return lock_cell(lock)
     if f.top_lab is None and f.body_lab is None:

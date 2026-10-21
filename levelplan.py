@@ -434,7 +434,7 @@ class PlanRunner:
 
 def _reserve(state: LevelState, pos: Pos, colour: str, sc: Any) -> Optional[str]:
     """Why the strategy's slot reserves forbid this tap (endgame.py), or None."""
-    from endgame import endgame_reserve, key_reserve
+    from endgame import endgame_reserve, ice_reserve, key_reserve
 
     free = state.free_slots
     if not free:
@@ -442,7 +442,7 @@ def _reserve(state: LevelState, pos: Pos, colour: str, sc: Any) -> Optional[str]
     keep = endgame_reserve(state, colour, sc)
     if keep and free - 1 < len(keep):
         return f"endgame: keep a slot for {', '.join(keep)}"
-    return key_reserve(state, pos, sc)
+    return key_reserve(state, pos, sc) or ice_reserve(state, pos, sc)
 
 
 _PALETTES: Dict[str, Any] = {}

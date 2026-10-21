@@ -1,5 +1,6 @@
-"""Belt-stuck / endgame rules for strategy.py: last-slot gamble, sacrifice, endgame reserve (pure logic on state.LevelState; user rules
-2026-10-20, docs/GAME_RULES.md "Last-slot gamble" and "Endgame")."""
+"""Belt-stuck / endgame rules for strategy.py: last-slot gamble, sacrifice, endgame / key / ice
+reserves, lost position (pure logic on state.LevelState; user rules 2026-10-20 / -21,
+docs/GAME_RULES.md "Last-slot gamble", "Endgame" and "Ice")."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional
@@ -210,3 +211,75 @@ def key_reserve(state: LevelState, pos, sc: StrategyConfig) -> Optional[str]:
     path = ", ".join(f"r{p[0]}c{p[1]} {state.cell(p).color}" for p in steps)
     return (f"keys: keep {need} slot(s) to reach {colour} r{r}c{c} (its sand covers "
             f"{', '.join(covers)} on the belt" + (f"; in front: {path}" if path else "") + ")")
+
+
+def ice_reserve(state: LevelState, pos, sc: StrategyConfig) -> Optional[str]:
+    """User (L189 run 20261021-092045): ice with N = N more taps before the bucket under it can
+    be tapped, and every tap takes a belt slot. The bot tapped red / darkred buckets that
+    collected nothing (3-6 % of the contact layer) while the ice counted down; at ice 1 the belt
+    was 4/5 with dead buckets: the tap that breaks the ice fills the belt and its cyan bucket has
+    no slot. Keep max(N, b) + 1 slots (b = buckets in front of the ice on its cheapest path:
+    those taps count the ice down too) - only while that many slots exist. A tap that would
+    leave fewer is allowed only for a bucket that fills and leaves the belt again (exposed >=
+    ``ice_live_exposed``, enough sand, not stalled). Returns why it is rejected, or None."""
+    from cells import Kind
+    from planner import shortest_path
+
+    free = state.free_slots
+    if not free:
+        return None
+    ices = [l for l in state.locks if l.kind == "ice" and l.counter]
+    if not ices:
+        return None
+    cell = state.cell(pos)
+    colour = cell.color if cell is not None else None
+    exposed = state.exposed.get(colour or "", 0.0)
+    stalled = state.belt_stalled.get(colour or "", 0.0) >= sc.stall_s
+    if (colour is not None and exposed >= sc.ice_live_exposed and not stalled
+            and can_fill(state, colour, sc)):
+        return None                     # it fills and leaves: the slot comes back
+    costs = {(c.row, c.col): (1.0 if c.kind is Kind.BUCKET else 0.0)
+             for c in state.cells() if c.kind in (Kind.BUCKET, Kind.EMPTY)}
+    for ice in sorted(ices, key=lambda l: l.counter):
+        found = min((f for f in (shortest_path(state, p, costs) for p in ice.cells) if f),
+                    key=lambda f: f[0], default=None)
+        if found is None:
+            continue                    # out of reach: its bucket is far away anyway
+        need = max(ice.counter, len(found[1])) + 1
+        if need > state.conveyor_slots or free >= need:
+            continue
+        r, c = ice.cells[0]
+        return (f"ice r{r}c{c} ({ice.counter}): keep {need} slot(s) - {need - 1} tap(s) to break "
+                f"it + 1 for the bucket under it ({free} free; {colour} {exposed:.0%} exposed "
+                f"would stay on the belt)")
+    return None
+
+
+def lost_finish(state: LevelState, cands: List["Candidate"], sc: StrategyConfig
+                ) -> Optional["Candidate"]:
+    """User (L189 run 20261021-092045: 200 s on a lost board, belt 4/5 of dead buckets, ice 1):
+    the belt has been stuck for ``lost_stuck_s``, no move passes the rules and the last-slot
+    gamble finds none - waiting changes nothing. Tap the best remaining bucket (the gamble's
+    ranking: one that can fill first, then sand uncovered for the belt, then its own exposure)
+    to end the level quickly; the loss goes to levels.jsonl (the level memory bans the
+    sequence) and the flow goes to Try Again."""
+    from strategy import _score, evaluate
+
+    stuck = belt_stuck(state, sc)
+    if not state.free_slots or stuck is None or stuck < sc.lost_stuck_s:
+        return None
+    pool = []
+    for c in cands:
+        g = evaluate(state, c.pos, sc, gamble=True)
+        if g.shell_wait:
+            continue
+        g.rejected = None
+        g.fills = gamble_fill(state, c.pos, g.color, sc)
+        g.lost, g.uncovers = True, uncovers_for_belt(state, g.color)
+        pool.append(g)
+    if not pool:
+        return None
+    best = max(pool, key=lambda c: (c.fills is not None, round(c.uncovers, 6),
+                                    round(c.exposed, 6), -c.pos[0], -c.pos[1]))
+    _score(state, best, sc)
+    return best

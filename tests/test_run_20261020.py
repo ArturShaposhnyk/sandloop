@@ -159,7 +159,9 @@ END = ["x x . . darkred-up x x",
        ". x . . . x orange-down",
        ". x . . . x purple-down"]
 # hint arrows over the boosters (partly or not masked) / sparkles joined to the grid region
-MISREAD = ["00047-wait", "00143-wait", "00147-wait", "unknown-125531-186", "unknown-125540-121"]
+MISREAD = ["00047-wait", "00147-wait", "unknown-125540-121"]
+# ... the same, but since run 20261021-092045 the 4 arrows are masked as a row (hints._in_row)
+ROW_MASKED = ["00143-wait", "unknown-125531-186"]
 
 
 def frame2(name):
@@ -189,6 +191,15 @@ def test_grid_joined_by_arrows_or_sparkles_is_a_misfit(analyzer, name):  # noqa:
     assert gv.lattice.cols == 4 and gv.lattice.fit < analyzer.cfg.vision.lattice_min_fit
 
 
+@pytest.mark.parametrize("name", ROW_MASKED)
+def test_arrow_row_masked_reads_7x7_without_a_lock(analyzer, name):  # noqa: F811
+    """The 4 booster arrows match 0.6-0.8 each; as a row (same height and scale) all are masked
+    and the frame reads the level's 7x7 by itself."""
+    gv = read2(analyzer, name)
+    assert (gv.lattice.rows, gv.lattice.cols) == (7, 7)
+    assert gv.labels()[:6] == END
+
+
 @pytest.mark.parametrize("name", ["00002-tap", "00137-wait"])
 def test_clean_frames_fit_7x7(analyzer, name):  # noqa: F811
     gv = read2(analyzer, name)
@@ -203,7 +214,7 @@ def test_misfit_frame_never_becomes_the_first_lock(analyzer):  # noqa: F811
 
     lk = lock(analyzer)
     with pytest.raises(VisionError, match="walls off"):
-        read2(analyzer, "00143-wait", lk)
+        read2(analyzer, "00147-wait", lk)
     assert not lk.locked
     gv = read2(analyzer, "00137-wait", lk)
     assert lk.locked and (gv.lattice.rows, gv.lattice.cols) == (7, 7)
@@ -214,7 +225,7 @@ def test_locked_lattice_reads_the_flip_flop_frames(analyzer):  # noqa: F811
     "new grid geometry", no merged "two objects" cells, no orange/cream-down r1c1 warning."""
     lk = lock(analyzer)
     assert read2(analyzer, "00137-wait", lk).labels()[:6] == END
-    for name in MISREAD[1:] * 2:                     # held any number of frames
+    for name in (MISREAD[1:] + ROW_MASKED) * 2:      # held any number of frames (00047: earlier board)
         gv = read2(analyzer, name, lk)
         assert (gv.lattice.rows, gv.lattice.cols) == (7, 7), name
         assert gv.labels()[:6] == END, name

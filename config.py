@@ -112,6 +112,7 @@ class VisionConfig:
     lattice_min_fit: float = 0.8      # Lattice.fit below this = misread outline (failed read)
     flight_s: float = 2.0             # a cell empty this recently stays empty (flying bucket)
     hint_threshold: float = 0.8       # hint arrow template match (hints.py)
+    hint_row_threshold: float = 0.65  # ... for each of >= 2 arrows in one row (same height / scale)
     hint_scales: List[float] = field(default_factory=lambda: [0.9, 1.0, 1.1])
     hint_downscale: float = 0.5       # hint arrows are matched on the grid zone scaled by this
     hint_cover_max: float = 0.5       # cell crop share under an arrow above which it's occluded
@@ -127,7 +128,7 @@ class VisionConfig:
     split_bg_max: float = 0.15           # background row with objects above + below: 2 objects
     foot_min_obj: float = 0.5         # object share of the strip under a crop that counts as a lower stage
     ice_min_white: float = 0.10
-    ice_min_dark: float = 0.05
+    ice_min_dark: float = 0.03
     color_max_dist: float = 22.0      # LAB distance to the nearest palette colour
     sand_max_dist: float = 18.0
     sand_min_share: float = 0.0005       # a sand colour below this share of the picture is not reported
@@ -182,6 +183,8 @@ class StrategyConfig:
     endgame_colours: int = 3              # <= this many colours on the board: endgame reserve
     key_min_exposed: float = 0.2          # key colour: this much of the contact layer while belt colours are buried
     endgame_sand_min: float = 0.5         # ... for colours with this many buckets of sand left
+    ice_live_exposed: float = 0.08        # ice reserve: a bucket this exposed (and able to fill) leaves the belt again
+    lost_stuck_s: float = 15.0            # belt stuck this long and no move passes: lost position, finish it
     belt_demand_exposure: float = 0.25    # contact-layer share one empty belt bucket claims
     relaxed_free_slots: int = 3           # this many free slots and up: min exposure relaxed
     relaxed_min_exposed: float = 0.0      # ... to this (also when no belt bucket collects)
@@ -423,8 +426,9 @@ def validate(cfg: Config) -> Config:
     if st.conveyor_slots < 1 or st.confirm_frames < 1:
         raise ConfigError("strategy.conveyor_slots and confirm_frames must be >= 1")
     if (min(st.gamble_stuck_s, st.gamble_fill_margin, st.look_min_exposed, st.look_min_gain,
-            st.look_sand_margin, st.weight_lookahead) < 0 or st.look_depth < 0 or st.look_width < 1):
-        raise ConfigError("strategy gamble / look_* settings must be >= 0 (look_width >= 1)")
+            st.look_sand_margin, st.weight_lookahead, st.ice_live_exposed, st.lost_stuck_s) < 0 or st.look_depth < 0 or st.look_width < 1):
+        raise ConfigError("strategy gamble / look_* / ice_live_exposed / lost_stuck_s settings "
+                          "must be >= 0 (look_width >= 1)")
     if st.vision_fail_max_saves < 0:
         raise ConfigError("strategy.vision_fail_max_saves must be >= 0")
     for name in ("min_exposed", "last_slot_min_exposed", "unknown_fill_need"):

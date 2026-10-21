@@ -386,9 +386,9 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
             if spec is not None and spec.counter != "none" and reader is not None:
                 cell.counter = reader.read_int(lock_digits_roi(img, lat, r, c, v), "light")
                 if cell.counter is None and spec.counter == "required":
-                    # no number, no chest: e.g. a yellow padlock still fading over a bucket
-                    f.wood_frac = 0.0
-                    cell = classify_cell(r, c, f, palette, v)
+                    # no number, not this lock: a yellow padlock still fading over a bucket is
+                    # no chest, a cyan bucket no ice (run 20261021-092045 r4c6)
+                    cell = classify_cell(r, c, f, palette, v, skip=(spec.name,))
             if occluded is not None:
                 bx0, by0, bx1, by1 = cell_box(lat, r, c, v)
                 hidden = occluded[by0:by1, bx0:bx1]

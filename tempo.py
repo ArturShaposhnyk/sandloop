@@ -99,7 +99,7 @@ def burst(state: LevelState, first: Candidate, real_tappable: Set[Pos], sc: Stra
         d = prioritize(choose(sim, sc), covering or {}, bc.weight_covering)
         if (d.move is None or d.move.avail < bc.burst_min_avail
                 or d.move.score < bc.burst_min_score or d.move.look_bonus < 0
-                or d.move.gamble or d.move.sacrifice):
+                or d.move.gamble or d.move.sacrifice or d.move.lost):
             break   # a follow-up must be a clearly good move by the same checks (run 145310)
         moves.append((d.move, f"burst {len(moves) + 1}: {d.reason}"))
     return moves

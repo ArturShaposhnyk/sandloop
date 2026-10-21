@@ -54,7 +54,8 @@ class HintArrows:
         zone = img[zy0:int(v.grid_zone[3] * h), zx0:int(v.grid_zone[2] * w)]
         k = v.hint_downscale     # match on a downscaled zone (speed), boxes in full pixels
         small = cv2.resize(zone, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
-        found: List[Tuple[float, Box, np.ndarray]] = []
+        found: List[Tuple[float, Box, np.ndarray, float]] = []
+        low = min(v.hint_threshold, v.hint_row_threshold)
         for bgr, mask in self.templates:
             for s in v.hint_scales:
                 f = s * w / TEMPLATE_WIDTH
@@ -71,17 +72,31 @@ class HintArrows:
                 fh, fw = full.shape
                 while True:
                     _, score, _, (x, y) = cv2.minMaxLoc(res)
-                    if score < v.hint_threshold:
+                    if score < low:
                         break
                     bx, by = zx0 + int(round(x / k)), zy0 + int(round(y / k))
-                    found.append((score, (bx, by, bx + fw, by + fh), full))
+                    found.append((score, (bx, by, bx + fw, by + fh), full, s))
                     res[max(0, y - th // 2):y + th // 2 + 1,
                         max(0, x - tw // 2):x + tw // 2 + 1] = -1.0
+        found = [f for f in found if f[0] >= v.hint_threshold or _in_row(f, found, v)]
         out: List[Tuple[Box, np.ndarray]] = []
-        for score, box, m in sorted(found, key=lambda f: -f[0]):   # one per place, best first
+        for score, box, m, _ in sorted(found, key=lambda f: -f[0]):   # one per place, best first
             if not any(_overlap(box, b) > 0.3 for b, _ in out):
                 out.append((box, m))
         return out
+
+
+def _in_row(f, found, v: "VisionConfig") -> bool:
+    """The game draws the booster arrows as a row (same height, same size). Over buckets / keys /
+    the chain lock they match only 0.60-0.79 (run 20261021-092045, L189): a match of at least
+    ``hint_row_threshold`` counts when another one of the same scale sits at the same height
+    (within 2 % of its size) clearly beside it."""
+    score, (x0, y0, x1, y1), _, s = f
+    if score < v.hint_row_threshold:
+        return False
+    tol = 0.02 * (y1 - y0) + 1
+    return any(g is not f and g[3] == s and g[0] >= v.hint_row_threshold
+               and abs(g[1][1] - y0) <= tol and _overlap(g[1], f[1]) == 0.0 for g in found)
 
 
 def _overlap(a: Box, b: Box) -> float:

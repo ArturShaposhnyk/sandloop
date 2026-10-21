@@ -112,7 +112,7 @@ vision:                      # vision.py / screens.py; colours come from dataset
   split_bg_max: 0.15         # background row through a cell's middle with objects above and below = two objects (UNKNOWN, never a tower). Annotated buckets <= 0.042, fading padlocks <= 0.066; the run's merged 4x4 cells: 10 of 16 >= 0.17 (two touching buckets in a lane score ~0.1: the lattice checks are the main guard)
   foot_min_obj: 0.5          # open bucket: the strip under its crop (vision.foot_strip) is a lower tower stage if object pixels fill this share and its colour is another bucket colour (L187 r1c0 orange on cream)
   ice_min_white: 0.10
-  ice_min_dark: 0.05
+  ice_min_dark: 0.03         # run 20261021-092045: a thin "1" has 0.040 dark pixels (5: 0.058); ice also needs its number
   color_max_dist: 22.0       # LAB distance to the nearest palette bucket colour
   sand_max_dist: 18.0
   sand_min_share: 0.0005     # sand colours below this share of the picture are dropped (was 0.2 %: the
@@ -124,6 +124,8 @@ vision:                      # vision.py / screens.py; colours come from dataset
   # UNKNOWN through the mask) is occluded: last clean reading reused, never tapped, never saved
   # as unknown
   hint_threshold: 0.8
+  hint_row_threshold: 0.65   # run 20261021-092045 (L189): the 4 booster arrows over buckets / keys / the chain lock
+                             # matched 0.60-0.79 (one frame none >= 0.8); 2+ arrows at one height and scale = a row
   hint_scales: [0.9, 1.0, 1.1]
   hint_downscale: 0.5        # match on the grid zone scaled by this (speed)
   hint_cover_max: 0.5        # 055: cells 39-42 % hidden still read right through the inpainted mask
@@ -219,6 +221,16 @@ strategy:                    # state.py / strategy.py (greedy), see docs/GAME_RU
                              # layer (or covering buried belt colours) keeps the slots needed to reach its
                              # nearest bucket (1 + buckets in front on the path; user, run 171133)
   endgame_sand_min: 0.5
+  # ice (user, L189 run 20261021-092045): ice N = N more taps before the bucket under it can be
+  # tapped, and every tap takes a belt slot. With the ice reachable (b buckets in front on its
+  # path), keep max(N, b) + 1 slots free: a tap that would leave fewer is allowed only for a
+  # bucket that fills and leaves (exposed >= ice_live_exposed, enough sand, not stalled) - only
+  # while that many slots exist (ice 15 at the start reserves nothing)
+  ice_live_exposed: 0.08     # = planner.fill_min_exposed: below it a belt bucket gets ~nothing
+  # lost position (user, same run): belt stuck this long, no move passes the rules and the
+  # last-slot gamble finds none -> tap the best remaining bucket to end the level quickly (the
+  # loss is recorded in levels.jsonl, the level memory bans the sequence, then Try Again)
+  lost_stuck_s: 15.0
   chest_settle_s: 1.5        # a chest opened: no decision this long (its buckets are landing), then a full re-read
   analyze_interval_s: 0.5    # overlay --dry-run: min seconds between analyses
   confirm_frames: 2          # tap only after this many consecutive analyses chose the same move

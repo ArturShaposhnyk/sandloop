@@ -12,6 +12,7 @@ from strategy import choose, rule_check
 from tests.test_state import analyzer, make_state  # noqa: F401  (fixture)
 
 SC = StrategyConfig()
+NO_LOST = dataclasses.replace(SC, lost_stuck_s=1e9)   # the gamble alone (no lost-position finish)
 # the run's end: four stalled belt buckets, one of them out of the reader's sight (k=4, 3 seen),
 # so the belt does not count as idle and the last slot needs 25 % exposure
 STUCK_BELT = [ConveyorBucket("orange", 80), ConveyorBucket("blue", 64),
@@ -67,16 +68,19 @@ def test_gamble_never_adds_a_stalled_colour_nor_one_that_cannot_fill():
     st.exposed = {"yellow": .2, "darkred": .09, "purple": .5}
     st.above["yellow"] = {"orange": .5}
     st.sand["darkred"] = .001                                # darkred would never fill
-    assert choose(st, SC).move is None
+    assert choose(st, NO_LOST).move is None
     only = stuck_state(row="yellow")                         # only the stalled yellow left
     only.exposed = {"yellow": .2, "purple": .5}
-    assert choose(only, SC).move is None
+    assert choose(only, NO_LOST).move is None
+    # stuck 30-50 s > lost_stuck_s: the lost-position finish ends the level (run 20261021-092045)
+    d = choose(only, SC)
+    assert d.move.lost and not d.move.gamble and d.reason.startswith("lost position")
 
 
 def test_gamble_short_bucket_only_when_it_opens_one_that_fills():
     st = stuck_state(row="darkred")
     st.sand["darkred"] = .001
-    assert choose(st, SC).move is None                       # opens nothing
+    assert choose(st, NO_LOST).move is None                  # opens nothing
     st = make_state(["darkred", "cream"], k=4, conveyor=STUCK_BELT, sand=dict(SAND),
                     exposed={"darkred": .09, "cream": .06, "purple": .5})
     st.belt_stalled, st.colour_capacity = dict(STALLED), {c: .04 for c in SAND}

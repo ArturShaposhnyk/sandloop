@@ -37,8 +37,8 @@ from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 from cells import Kind
 from config import StrategyConfig
-from endgame import (belt_stuck, can_fill, endgame_reserve, key_colours, key_reserve,
-                     last_slot_gamble, sacrifice)
+from endgame import (belt_stuck, can_fill, endgame_reserve, ice_reserve, key_colours,
+                     key_reserve, last_slot_gamble, lost_finish, sacrifice)
 from lookahead import Outlook, belt_outlook, outlook
 from planner import Opened, Plan, ScatterRisk, opened_value, plan, scatter_risk
 from state import LevelState, Pos
@@ -77,6 +77,7 @@ class Candidate:
     outlook: Optional[Outlook] = None          # phase 7: best 2-3 tap continuation (lookahead)
     look_bonus: float = 0.0
     gamble: bool = False                       # last-slot gamble on a stuck belt
+    lost: bool = False                         # lost position: tapped to end the level (endgame.lost_finish)
     uncovers: float = 0.0                      # ... contact share it uncovers for the belt
     fills: Optional[str] = None                # ... why it can fill ("fills itself" / "opens ...")
     jam: bool = False                          # rejected only by the lookahead (belt jams)
@@ -226,7 +227,7 @@ def evaluate(state: LevelState, pos: Pos, sc: StrategyConfig, opener: bool = Fal
             cand.rejected = (f"endgame: keep a slot for {', '.join(keep)} (still in the picture, "
                              f"{cand.color} almost done)")
         else:
-            why_key = key_reserve(state, pos, sc)
+            why_key = key_reserve(state, pos, sc) or ice_reserve(state, pos, sc)
             if why_key is not None:
                 cand.reserved = True
                 cand.rejected = why_key
@@ -369,6 +370,14 @@ def choose(state: LevelState, sc: StrategyConfig) -> Decision:
                                f"minimum; {g.fills}, uncovers {g.uncovers:.0%} for the belt, "
                                f"exposed {g.exposed:.0%})", cands, plans)
     if not allowed:
+        f = lost_finish(state, tapped_cands, sc)
+        if f is not None:
+            cands = [f if c.pos == f.pos else c for c in cands]
+            r, c = f.pos
+            return Decision(f, f"lost position: tap r{r}c{c} {f.color} to end the level (belt "
+                               f"stuck {belt_stuck(state, sc):.0f}s, no move passes the rules, "
+                               f"no last-slot gamble; {f.fills or 'cannot fill'}) - then Try "
+                               f"Again", cands, plans)
         if free == 0:
             why = "conveyor full"
         elif not tappable:

@@ -22,12 +22,50 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | L188 shells + picture locks, L189 chain lock, lattice fit by wall runs | `96363d3` |
 | 7 | first L187 win (run 000105); finished board no longer starts a level | `66a279d` |
 | 7 | belt speed 2x (▶▶2x tapped at level start, planner 2x fill speeds, 1x / 2x calibration), ad chains, key colour on the last slot | `fdc832d` |
+| 7 | L189 run 092045: ice needs its number, ice slot reserve, lost-position finish, booster arrow row | (this commit) |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 812 pass.
+Tests: `python -m pytest -q` - all 823 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+### L189 run `20261021-092045` (14 taps, stopped by the user after 200 s on a lost board)
+- **User's analysis**: belt 4/5 (red 23, yellow 27, darkred 8, red 57), the picture's bottom is
+  cyan / cream; the cyan bucket needed is under the ice "1" at r3c1, and the tap that breaks
+  the ice fills the belt: no winning move. The mistake was earlier: keep 2 free slots (1 for
+  the tap that breaks the ice, 1 for the bucket under it).
+- **Ice read** (fix 1): the ice "1" read as a face-down cream/cyan tower (thin digit: 0.040
+  dark pixels < `ice_min_dark` 0.05) -> "STUCK ... misread grid?" (frames 00113-00257); the
+  cyan bucket r4c6 read as ice without a number. Ice now needs its number (`CellLock`
+  `counter="required"`; `classify_cell(skip=...)` re-classifies without it, replacing the chest
+  `wood_frac = 0` hack), `ice_min_dark` 0.03. Run frames: ice5 / 3 / 1, r4c6 cyan-down. The ice
+  in L189 shows no colour of the bucket under it (plain ice); the cell stays "ice N", colour
+  unknown (the plan ends there: horizon). Frame 00103 (counter morphing 2 -> 1) still reads
+  r3c1 "two objects" for a frame.
+  Note: the planner's plan at 49 s had "tap r3c1 cream" - the same ice misread.
+- **Ice slot reserve** (`endgame.ice_reserve`, in `strategy.evaluate` and the plan runner's
+  `_reserve`): ice N reachable with b buckets in front -> keep max(N, b) + 1 slots; a tap that
+  leaves fewer only for a bucket that fills and leaves (exposed >= `strategy.ice_live_exposed`
+  0.08, can fill, not stalled); only while max(N, b) + 1 <= slots. Replay: #12 red (3 %, ice 4,
+  3 free) and #13 darkred (6 %, ice 3, 3 free) are now rejected ("ice r3c1 (4): keep 5
+  slot(s) ..."), the bot waits for the belt instead.
+- **Lost position** (`endgame.lost_finish`, `strategy.lost_stuck_s` 15 s): belt stuck that
+  long, nothing passes, no last-slot gamble -> "lost position: tap rXcY ... - then Try Again"
+  (tap event `lost: true`; never a burst follow-up). The loss is recorded by the existing
+  revive / fail flow (levels.jsonl, level memory). Final board: taps r2c2 red after 15 s.
+- **Booster arrows** (fix 3, "unknown cell r5c2 (two objects)"): the 4 hint arrows over the
+  bottom row matched 0.60-0.79 (frame 092236: none >= 0.8), so r5c2 (chain padlock) read two
+  objects and r5c6 (yellow key) read EMPTY. `hints._in_row`: a match >= `vision.hint_row_threshold`
+  0.65 counts when another of the same scale sits at the same height -> all 4 masked, row 5
+  reads right. Also fixes L187 frames 00143 / unknown-125531-186 (run 125351): they now read
+  the level's 7x7 by themselves (tests updated).
+- Tests: `tests/test_run_20261021_092045.py` (frames 00078, 00083, 00094, 00238, two arrow
+  frames from dataset/unknown); `tests/test_lookahead.py` gamble tests run with the lost finish
+  off (`NO_LOST`) - their belts are stuck 30-50 s, which now ends in a lost-position tap.
+- Not done / open: the planner (sim) does not model the ice reserve itself - its steps are
+  checked by the reserve at tap time (skipped + re-planned). The bucket under the ice has no
+  colour until it opens.
+
 ### Handoff summary (before /clear, `721de47` + this note)
 - **L187 (HARD) won** live (run `20261021-000105`, 29 taps, plan followed to the end); the
   finished board after a win no longer counts as a new level (`66a279d`).
@@ -297,6 +335,10 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
+-3. Live L189 `python -m bot --levels 3` (from L189): watch "ice r3c1 (N): keep ... slot(s)",
+   that ice 1 reads `ice1` (no "STUCK ... misread grid?"), "hint arrows: 4 masked out" with no
+   r5c2 / r5c6 unknowns, and on a lost board "lost position: tap ..." after ~15 s followed by
+   Quit -> Try Again (second attempt should avoid the banned sequence).
 -2. Live L188 (`--levels 3` from L188): watch "shell bucket: no X shell at the bottom", the
    shells / "picture lock" lines (python -m vision on saved frames), "picture lock ...: its key
    is not on the board yet", and whether a shell bucket on the belt fills once its shell drops.
@@ -402,6 +444,9 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## L189 live run 20261021-092045 (2026-10-21): lost behind the ice, 200 s stuck
+- See "Where it stands". Tests: `tests/test_run_20261021_092045.py`.
 
 ## L188 run 20261021-001541 + user recording (065-071), L189 start (072) - 2026-10-21
 - See "Where it stands". Tests: `tests/test_l188_l189.py` (frames from the run, dataset shots
