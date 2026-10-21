@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from vision import GameView
 
+TWO_OBJECTS_S = 2.0   # a "two objects" cell is saved as unknown only after this long
 
 
 @dataclass
@@ -69,6 +70,7 @@ class Analyzer:
         self.unknown_dir = Path(cfg.paths.dataset) / "unknown"
         self.colours_seen: set = set()                  # unknown colours saved this run
         self.cells_seen: set = set()                    # unknown cells (pos, reason) saved
+        self._two_since: Dict[Pos, float] = {}          # "two objects" cells read since
         self.reads = self.fails = self.fails_saved = 0
 
     def reset_level(self, track: bool = True) -> None:
@@ -138,7 +140,7 @@ class Analyzer:
         except VisionError as e:
             res = Analysis(screen, error=str(e), failure=f"grid: {e}")
         else:
-            self._save_unknowns(img, gv, log)
+            self._save_unknowns(img, gv, log, now)
             st = self.cfg.strategy
             state = LevelState.from_view(gv, st.conveyor_slots, st.unknown_fill_need)
             if self.lattices is not None:   # live level: per-colour capacity from its start
@@ -250,13 +252,27 @@ class Analyzer:
             res.decision = Decision(None, "wait: a chest opened, its buckets are landing",
                                     res.decision.candidates if res.decision else [])
 
-    def _save_unknowns(self, img: "np.ndarray", gv: "GameView", log) -> None:
+    def _save_unknowns(self, img: "np.ndarray", gv: "GameView", log, now: float = 0.0) -> None:
         """New unknown colours -> dataset/unknown_colours/, new UNKNOWN cells (other reasons)
-        -> dataset/unknown/; each once per run."""
+        -> dataset/unknown/; each once per run. "Two objects in one cell" only once it lasts
+        ``TWO_OBJECTS_S``: for a frame it is a bucket flying up its lane or dropping out of a
+        tunnel (run 20261021-143729 r1c0 / r2c0 / r0c4 / r3c3 / r5c3), no new mechanic."""
         from unknown_colours import save_unknown, save_unknown_colours
 
         save_unknown_colours(img, gv, self.cfg.vision, self.colour_dir, self.colours_seen, log)
-        cells = {(c.row, c.col, c.reason) for c in gv.unknown_cells() if c.lab is None}
+        cells = set()
+        two = {}
+        for c in gv.unknown_cells():
+            if c.lab is not None:
+                continue
+            if (c.reason or "").startswith("two objects"):
+                two[(c.row, c.col)] = self._two_since.get((c.row, c.col), now)
+                if now - two[(c.row, c.col)] < TWO_OBJECTS_S:
+                    continue
+                cells.add((c.row, c.col, "two objects"))
+            else:
+                cells.add((c.row, c.col, c.reason))
+        self._two_since = two
         if cells - self.cells_seen:
             self.cells_seen |= cells
             save_unknown(img, gv, self.unknown_dir, log)

@@ -28,10 +28,24 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | L190 tunnels read (annotations 073-084, templates, outlined digits), collect numbering | `069a463` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 969 pass.
+Tests: `python -m pytest -q` - all 972 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+### Fix: hint arrows below the grid, no repeated dead tap (L190 run `20261021-143729`)
+- The run stopped with "2 taps in a row had no effect": r6c2 cyan read "cyan/yellow" and was
+  tapped twice. The booster hint arrows bob down to 0.836-0.887 of the height, below the search
+  zone (grid_zone ends at 0.88): not found, not masked, an arrow read as a lower tower stage.
+  Arrows are now searched down to `vision.hint_zone_bottom` (0.95); r6c2 reads cyan-up. The
+  same fix makes two L187 frames that read a misfit 4x4 (arrows joined to the grid) read 7x7.
+- Tap point: a cell under an arrow is tapped above it (arrow box - half a cell, at most the
+  cell's top tenth; `GameView.cell_center_rel`) - the arrows bob ~20 px into the tap point.
+- A tap without effect: that cell is not tapped again on the same board for `bot.dead_tap_s`
+  (10 s); then one more try, and `max_no_effect_taps` stops the bot if it fails too.
+- "Two objects in one cell" (a bucket flying up its lane, a tunnel's drop: r1c0 / r2c0 / r0c4 /
+  r3c3 / r5c3) is saved to dataset/unknown only after it lasts 2 s.
+- Tests: `tests/test_run_20261021_143729.py`.
+
 ### Redesign phase A: replay harness (`tools/replay.py`)
 - From every saved gameplay frame of every run (710 trajectories, 27 runs; frames re-read with
   today's vision, cached in debug/replay/cache) the simulator runs forward with the real taps at

@@ -328,9 +328,17 @@ class GameView:
                 and (r, c) not in self.unsure]
 
     def cell_center_rel(self, r: int, c: int) -> Tuple[float, float]:
+        """The cell's centre - moved up above a hint arrow (its box minus half a cell: the
+        arrows bob ~20 px, run 20261021-143729 tops at 0.820-0.836 of the height; two taps 7 px
+        above the box over r6c2 had no effect), at most to the cell's top tenth."""
         x0, y0, x1, y1 = self.lattice.rect(r, c)
         w, h = self.frame_size
-        return (x0 + x1) / 2 / w, (y0 + y1) / 2 / h
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        pad = 0.5 * (y1 - y0)
+        for bx0, by0, bx1, by1 in self.hints:
+            if bx0 <= cx <= bx1 and by0 - pad <= cy <= by1:
+                cy = max(y0 + 0.1 * (y1 - y0), by0 - pad)
+        return cx / w, cy / h
 
     def unknown_cells(self) -> List[Cell]:
         """UNKNOWN cells (not the ones hidden by a hint arrow: those are not a new mechanic)."""

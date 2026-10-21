@@ -114,6 +114,7 @@ class VisionConfig:
     hint_threshold: float = 0.8       # hint arrow template match (hints.py)
     hint_row_threshold: float = 0.65  # ... for each of >= 2 arrows in one row (same height / scale)
     hint_scales: List[float] = field(default_factory=lambda: [0.9, 1.0, 1.1])
+    hint_zone_bottom: float = 0.95    # arrows are searched from grid_zone's top down to here
     hint_downscale: float = 0.5       # hint arrows are matched on the grid zone scaled by this
     hint_cover_max: float = 0.5       # cell crop share under an arrow above which it's occluded
     empty_tol: float = 10.0           # LAB distance to the empty-cell colour
@@ -234,6 +235,7 @@ class BotConfig:
     max_run_s: float = 900.0             # safety stop for one level (from its first frame)
     disagree_report_s: float = 10.0      # look != path rule this long with no move: log + frame
     loop_interval_s: float = 0.05        # min seconds between captures
+    dead_tap_s: float = 10.0             # a tap without effect: not that cell again on the same board this long
     max_saved_frames: int = 1500         # PNGs per run in debug/runs/<stamp>/frames/
     # replay data (tools/replay.py): picture + belt rows of a gameplay frame every crop_every_s
     # (0 = off) -> crops/; above crops_max_mb in all runs the oldest runs' crops/ are deleted

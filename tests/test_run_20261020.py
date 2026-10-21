@@ -159,9 +159,11 @@ END = ["x x . . darkred-up x x",
        ". x . . . x orange-down",
        ". x . . . x purple-down"]
 # hint arrows over the boosters (partly or not masked) / sparkles joined to the grid region
-MISREAD = ["00047-wait", "00147-wait", "unknown-125540-121"]
-# ... the same, but since run 20261021-092045 the 4 arrows are masked as a row (hints._in_row)
-ROW_MASKED = ["00143-wait", "unknown-125531-186"]
+MISREAD = ["00047-wait"]
+# ... the same, but since run 20261021-092045 the 4 arrows are masked as a row (hints._in_row);
+# 00147 / 125540-121 since run 20261021-143729: arrows searched below grid_zone
+# (vision.hint_zone_bottom) - they had bobbed out of the search zone
+ROW_MASKED = ["00143-wait", "unknown-125531-186", "00147-wait", "unknown-125540-121"]
 
 
 def frame2(name):
@@ -214,7 +216,7 @@ def test_misfit_frame_never_becomes_the_first_lock(analyzer):  # noqa: F811
 
     lk = lock(analyzer)
     with pytest.raises(VisionError, match="walls off"):
-        read2(analyzer, "00147-wait", lk)
+        read2(analyzer, "00047-wait", lk)
     assert not lk.locked
     gv = read2(analyzer, "00137-wait", lk)
     assert lk.locked and (gv.lattice.rows, gv.lattice.cols) == (7, 7)

@@ -106,6 +106,7 @@ class Bot(LevelMixin):
         self.settle_from: Optional[float] = None
         self.pending: Optional[Tuple[List[Tuple[Tuple[int, int], str]], Optional[int]]] = None
         self.no_effect = 0
+        self.dead_taps: Dict[Tuple[int, int], Any] = {}   # cell -> (board, t) of a tap that did nothing
         self.last_sand: Optional[float] = None
         self.disagree_since: Dict[Tuple[int, int], float] = {}   # cell -> look != path rule since
         self.disagree_reported = -1e9
@@ -229,7 +230,7 @@ class Bot(LevelMixin):
     def _analyse(self, frame: np.ndarray) -> None:
         now = self.clock()
         res = self.analyzer.analyze(frame, log=self.log.log, now=now,
-                                    adjust=lambda st: self.ledger.update(st, now))
+                                    adjust=lambda st: self._adjust(st, now))
         if res.screen != "gameplay":
             self._non_gameplay(res, frame, now)
             return
@@ -309,6 +310,22 @@ class Bot(LevelMixin):
                      f"saved: {png}")
         self.log.event("stuck", frame=self.frame_no, cells=cells, png=png)
 
+    def _adjust(self, st: Any, now: float) -> None:
+        """The state before the decision: released towers (ledger) and no tap on a cell whose
+        tap had no effect until the board changes (or ``bot.dead_tap_s`` passed: then one more
+        try, and the no-effect stop applies if that fails too)."""
+        self.ledger.update(st, now)
+        if not self.dead_taps:
+            return
+        from sim import grid_signature
+
+        board = grid_signature(st.grid)
+        for pos, (sig, t) in list(self.dead_taps.items()):
+            if sig != board or now - t >= self.bc.dead_tap_s:
+                del self.dead_taps[pos]
+            elif pos in st.tappable:
+                st.tappable = [p for p in st.tappable if p != pos]
+
     def _verify(self, st: Any) -> None:
         """First settled gameplay frame after taps: did the tapped cells change?"""
         if self.pending is None or self.dry_run:
@@ -337,6 +354,10 @@ class Bot(LevelMixin):
             self.no_effect = 0
             return
         self.no_effect += 1
+        from sim import grid_signature
+
+        for pos, _ in tapped:   # not again on this board (run 20261021-143729: r6c2 twice)
+            self.dead_taps[tuple(pos)] = (grid_signature(st.grid), self.clock())
         self.log.log(f"warning: tap had no visible effect ({self.no_effect}/"
                      f"{self.bc.max_no_effect_taps})")
         if self.no_effect >= self.bc.max_no_effect_taps:
@@ -353,6 +374,14 @@ class Bot(LevelMixin):
         if self.ledger.guarded(move.pos, now):
             self.log.log(f"r{move.pos[0]}c{move.pos[1]} was just tapped - not again yet")
             return
+        if self.dead_taps.get(tuple(move.pos)) is not None:
+            from sim import grid_signature
+
+            sig, t = self.dead_taps[tuple(move.pos)]
+            if sig == grid_signature(st.grid) and now - t < self.bc.dead_tap_s:
+                self.log.log(f"r{move.pos[0]}c{move.pos[1]}: its tap had no effect on this "
+                             "board - not again until the board changes")
+                return
         both = set(st.tappable) & (set(self.prev_game.state.tappable)
                                    if self.prev_game is not None else set(st.tappable))
         both = {p for p in both if not self.ledger.guarded(p, now)}

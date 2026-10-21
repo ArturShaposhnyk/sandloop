@@ -128,6 +128,9 @@ vision:                      # vision.py / screens.py; colours come from dataset
                              # matched 0.60-0.79 (one frame none >= 0.8); 2+ arrows at one height and scale = a row
   hint_scales: [0.9, 1.0, 1.1]
   hint_downscale: 0.5        # match on the grid zone scaled by this (speed)
+  hint_zone_bottom: 0.95     # arrows are searched down to here: they bob below grid_zone (run
+                             # 20261021-143729: 0.836-0.887 > 0.88, never masked, r6c2 cyan read
+                             # cyan/yellow and tapped twice without effect)
   hint_cover_max: 0.5        # 055: cells 39-42 % hidden still read right through the inpainted mask
   lower_band: 0.3            # "lower part" of the picture zone: sand there reaches the belt soon (strategy: unlock value)
   # "exposed" = the contact layer: the lowest rows of sand right above the picture's bottom edge
@@ -287,6 +290,9 @@ bot:                         # python -m bot: plays one level (docs/GAME_RULES.m
   speed_retap_s: 3.0
   loop_interval_s: 0.05
   max_saved_frames: 1500     # PNGs per run in debug/runs/<stamp>/frames/
+  # a tap without effect: that cell is not tapped again on the same board for dead_tap_s (run
+  # 20261021-143729: r6c2 tapped twice -> stop); then one more try, max_no_effect_taps applies
+  dead_tap_s: 10.0
   # replay data (tools/replay.py, user 2026-10-21): the picture + belt rows (crop_rows, share of
   # the screen height) of a gameplay frame every crop_every_s s (0 = off) -> crops/ (~210 KB
   # each, crops/index.csv); above crops_max_mb in all runs the oldest runs' crops/ are deleted

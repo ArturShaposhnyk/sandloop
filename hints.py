@@ -51,7 +51,8 @@ class HintArrows:
             return []
         h, w = img.shape[:2]
         zx0, zy0 = int(v.grid_zone[0] * w), int(v.grid_zone[1] * h)
-        zone = img[zy0:int(v.grid_zone[3] * h), zx0:int(v.grid_zone[2] * w)]
+        zy1 = int(max(v.grid_zone[3], v.hint_zone_bottom) * h)   # arrows bob below the grid
+        zone = img[zy0:zy1, zx0:int(v.grid_zone[2] * w)]
         k = v.hint_downscale     # match on a downscaled zone (speed), boxes in full pixels
         small = cv2.resize(zone, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
         found: List[Tuple[float, Box, np.ndarray, float]] = []

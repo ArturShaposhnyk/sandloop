@@ -138,10 +138,14 @@ def test_confirmed_move_is_tapped_then_fail_screen_stops(cfg, analyzer, tmp_path
 def test_no_effect_taps_stop_the_bot(cfg, analyzer, tmp_path):
     g = shot(S056)
     tapper = Tapper()
-    bot, log = make_bot(cfg, analyzer, tmp_path, [g] * 8, tapper=tapper)
+    c = dataclasses.replace(cfg, bot=dataclasses.replace(cfg.bot, dead_tap_s=0.5))
+    bot, log = make_bot(c, analyzer, tmp_path, [g] * 30, tapper=tapper)
     assert run(bot, log) == "stopped"
     res = json.loads((log.dir / "result.json").read_text())
     assert "no effect" in res["reason"] and len(tapper.taps) == cfg.bot.max_no_effect_taps
+    # the only bucket: tapped again only after bot.dead_tap_s on the unchanged board (run 143729)
+    taps = [e for e in load_events(log.dir) if e["type"] == "tap"]
+    assert taps[1]["t"] - taps[0]["t"] >= c.bot.dead_tap_s
 
 
 def test_dry_run_never_stops_for_missing_effect_and_retap_guard(cfg, analyzer, tmp_path):
