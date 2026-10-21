@@ -229,6 +229,7 @@ class BotConfig:
     max_no_effect_taps: int = 2          # taps in a row that changed nothing -> stop
     screen_confirm_frames: int = 3       # leaving gameplay: non-gameplay this many in a row
     win_sand_max: float = 0.01           # level ends with less sand than this -> inferred win
+    infer_win_start_sand: float = 0.05   # ... only after taps, from at least this much sand
     window_lost_max_s: float = 30.0      # window missing / geometry check failing this long -> stop
     max_run_s: float = 900.0             # safety stop for one level (from its first frame)
     disagree_report_s: float = 10.0      # look != path rule this long with no move: log + frame

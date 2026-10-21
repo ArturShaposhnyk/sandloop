@@ -47,6 +47,7 @@ class Cell:
     seen_from: str = ""               # ... and where: "rim" (open bucket) | "top" | "disc"
     hidden: int = 0                   # lookahead (state.py): buckets of unknown colour here
     shell: bool = False               # L188 shell bucket: collects nothing until its shell drops in
+    opening: Optional[str] = None     # L190 tunnel: "up" | "down" | "left" | "right" (its exit side)
 
     @property
     def is_obstacle(self) -> bool:
@@ -61,7 +62,8 @@ class Cell:
             return f"{self.lock}:{self.color or '?'}"
         if self.kind is Kind.LOCK:
             short = {"curtain": "cur"}.get(self.lock or "", self.lock or "lock")
-            return f"{short}{'' if self.counter is None else self.counter}"
+            return (f"{short}{'' if self.counter is None else self.counter}"
+                    + (f":{self.opening}" if self.opening else ""))
         if self.kind is Kind.BUCKET:
             col = f"{self.color}/{self.body}" if self.body else f"{self.color}"
             return f"{col}-{'up' if self.face_up else 'down'}{'+shell' if self.shell else ''}"
@@ -112,6 +114,11 @@ def _is_ice(f: CellFeatures, v: VisionConfig) -> bool:
 # chain (L189, user 2026-10-21): a padlock with chains - a GATE, impassable for the path rule
 # until the key of its colour flies to it; then its cells are empty (nothing under it).
 ICON_LOCKS = ("lock", "key", "chain")
+# tunnel (L190, user 2026-10-21): a dispenser with a number N in its own cell, never passable
+# (a wall for the path rule). When the bucket in the cell in front of its opening is taken, the
+# next of its N buckets drops into that cell (random colour, not visible in advance) and N goes
+# down by 1; empty, it stays. Icon templates "tunnel_<opening>-..." (no colour of its own).
+TUNNEL_OPENINGS = {"up": (-1, 0), "down": (1, 0), "left": (0, -1), "right": (0, 1)}
 
 # Single-cell locks, checked in order after "empty" (unless before_empty) and before "bucket".
 # chest (L186): a wooden box with a number N; opens when the path rule connects it (like a key)
@@ -121,6 +128,8 @@ CELL_LOCKS: List[CellLock] = [
     CellLock("lock", "key", lambda f, v: f.icon == "lock", coloured=True, before_empty=True),
     CellLock("key", "path", lambda f, v: f.icon == "key", coloured=True, before_empty=True),
     CellLock("chain", "key", lambda f, v: f.icon == "chain", coloured=True, before_empty=True),
+    CellLock("tunnel", "drops", lambda f, v: (f.icon or "").startswith("tunnel_"),
+             before_empty=True),
     # ice (user): always shows its number N; a cyan bucket (L189 r4c6) passes the colour test
     CellLock("ice", "taps", _is_ice, counter="required"),
     CellLock("chest", "path", lambda f, v: f.wood_frac >= v.chest_min_wood, counter="required"),
@@ -303,7 +312,9 @@ def classify_cell(row: int, col: int, f: CellFeatures, palette: Palette,
             return Cell(row, col, Kind.UNKNOWN, reason=f"{lock.name} colour not in palette",
                         lab=f.icon_lab)
         return Cell(row, col, Kind.LOCK, lock=lock.name, unlock=lock.unlock,
-                    color=f.icon_color if lock.coloured else None)
+                    color=f.icon_color if lock.coloured else None,
+                    opening=(f.icon or "").partition("_")[2] or None
+                    if lock.name == "tunnel" else None)
 
     locks = [lock for lock in CELL_LOCKS if lock.name not in skip]
     for lock in locks:

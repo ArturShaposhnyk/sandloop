@@ -374,9 +374,11 @@ def read_grid(img: np.ndarray, palette: Palette, v: VisionConfig,
                 icon = icon_crop(img, lat, r, c, v)
                 kind, score = icons.match(icon)
                 lab = icon_lab(icon) if kind is not None and score >= v.icon_threshold else None
+                if (kind or "").startswith("tunnel_") and score >= v.icon_threshold:
+                    f.icon = kind          # L190 tunnel: no colour of its own
                 # an icon has a coloured body: without any coloured pixels the match is the
                 # cell pattern (L189's light yellow key template matched empty L188 cells 0.8)
-                if lab is not None:
+                elif lab is not None:
                     f.icon = kind
                     f.icon_lab = lab
                     f.icon_color = (None if f.icon_lab is None else

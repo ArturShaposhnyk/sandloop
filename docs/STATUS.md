@@ -24,12 +24,36 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | belt speed 2x (▶▶2x tapped at level start, planner 2x fill speeds, 1x / 2x calibration), ad chains, key colour on the last slot | `fdc832d` |
 | 7 | L189 run 092045: ice needs its number, ice slot reserve, lost-position finish, booster arrow row | `bdc4c98` |
 | 7 | L189 run 101655: popup screen, level memory (record order, face-free signature, whole-level bans, colours under locks, clean end reads), player hints in the planner, 2x belt speeds | `44fdfc0` |
+| 7 | run 112241: L189 WON; no phantom level / inferred win; L190 tunnel model | (this commit) |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
-Tests: `python -m pytest -q` - all 832 pass.
+Tests: `python -m pytest -q` - all 840 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+### Run `20261021-112241`: **L189 WON** (attempt 2), then a false win
+- The start plan used the memory ("4 failed sequence(s) avoided, capacity from earlier
+  attempts, r3c1 cyan/cream seen under its lock before"); attempt 2 won at 421 s.
+- **False "LEVEL 3: WIN (inferred ...)" at 430 s** - it was not L190: after NEXT and the "take a
+  break" ad, the finished L189 board faded back in (frame `tests/data/run-20261021-112241/
+  00470-finished-board-faded.png`): no sand, the empty cells dimmed (LAB 80/-1/-13), read as
+  "two objects" / unknown colours (also the r4c6 / r5c6 "two objects" the user saw), so the
+  finished-board check (all cells empty) failed, a level started and the next screen change
+  "won" it. Fixed: (1) a board without sand (< `bot.win_sand_max`) never starts a level; (2) an
+  inferred win needs this level's own taps and a start with >= `bot.infer_win_start_sand` (5 %)
+  sand. The run therefore never saw L190 - no L190 frame exists yet.
+- **L190 tunnel / dispenser** (user-confirmed, docs/GAME_RULES.md "Tunnel"): lock cell
+  `tunnel` with number + opening side (`Cell.opening`, `Lock.opening`, `Lock.front()`); a wall
+  for the path rule; taking the bucket in front of it drops the next one (UNKNOWN, worst case:
+  the cell stays blocked, the plan's horizon) and counts N down; N counts as buckets still to
+  come. Recognition is template-driven (annotation `tunnelN:<side>` -> `tools.build_palette`
+  -> `dataset/templates/icons/tunnel_<side>-*.png`, matched like lock icons, no colour needed),
+  but **no template exists yet**: on L190 a tunnel reads UNKNOWN (never tapped, an obstacle,
+  saved to dataset/unknown/). Needs L190 screenshots (see NEXT).
+- `state.after_tap` now counts the "taps" locks down from the state after the keys / chests
+  that were already flying (was: the state before them; same results in every test).
+- Tests: `tests/test_run_20261021_112241.py`.
+
 ### L189 run `20261021-101655` (3 attempts, all lost; flow between them perfect)
 - **The three attempts (levels.jsonl)**: each tapped the same 15 buckets - the whole top group,
   the only reachable ones; L189's ice is 15, so it opens only with the 15th tap - in almost the
@@ -387,6 +411,10 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   padlock's colour (00285 "orange" was only luck before yellow existed).
 
 ## NEXT
+-5. L190 screenshots: on L190 run `python -m tools.collect --manual --label l190` and snap
+   (ctrl+alt+s) the start board + a frame right after a tunnel dropped a bucket; then
+   annotate the grid (`tunnelN:<side>` per tunnel) in dataset/annotations.json, `python -m
+   tools.build_palette`, and check `python -m vision <shot>` reads every tunnel.
 -4. Live L189 again `python -m bot --levels 3` (Try Again uses the memory): check the start log
    "level plan (start, 3 failed sequence(s) avoided, capacity from earlier attempts, r3c1 cyan
    seen under its lock before, belt 2x)", bursts ("burst 2: level plan step 2/..."), "r3c1:
@@ -501,6 +529,9 @@ Global hotkeys: `ctrl+alt+p` pause, `ctrl+alt+q` quit. Cursor in a screen corner
   is the greedy choice only.
 
 # History (newest first)
+
+## Run 20261021-112241 (2026-10-21): L189 WON, phantom L190 "win"
+- See "Where it stands". Tests: `tests/test_run_20261021_112241.py`.
 
 ## L189 live run 20261021-101655 (2026-10-21): lost 3x, memory did not help
 - See "Where it stands". Tests: `tests/test_run_20261021_101655.py`.

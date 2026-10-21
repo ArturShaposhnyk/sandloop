@@ -39,7 +39,12 @@ class LevelMixin:
         """Gameplay left for a confirmed other screen: win / fail, or not over yet."""
         result, how = RESULTS.get(res.screen), f"screen {res.screen}"
         sand = self.last_sand
-        if result is None and sand is not None and sand < self.bc.win_sand_max:
+        start = (self.level_first or {}).get("sand_total") or 0.0
+        # an inferred win needs evidence (run 20261021-112241: a phantom "level" on the finished
+        # board, 0 taps, sand 0 % from its first frame, "won" at the next screen change): this
+        # level's own taps took the sand from >= infer_win_start_sand to ~0
+        if (result is None and sand is not None and sand < self.bc.win_sand_max
+                and self.level_taps and start >= self.bc.infer_win_start_sand):
             result, how = "win", f"inferred: sand left {sand:.1%}, then screen {res.screen}"
         if result is None:
             if not self.left_unclear:
@@ -115,18 +120,17 @@ class LevelMixin:
         the finished level's board again - empty grid, 0/5, no sand - and each such frame
         started a "level" that was won at once (3 wins counted for one). A level starts only on
         a board with something to play: a bucket, lock or unknown cell, or sand. Such a frame
-        is skipped and the Analyzer forgets it (its grid lock, its empty capacities)."""
-        from cells import Kind
-
+        is skipped and the Analyzer forgets it (its grid lock, its empty capacities).
+        Run 20261021-112241: the finished L189 board fading back in after an ad read its empty
+        cells as unknown (LAB 80/-1/-13) and started a phantom level - a level always starts
+        with sand in the picture, so a board without sand never starts one."""
         st = res.state
         if st is None:
             return False
-        if any(c.kind is not Kind.EMPTY for c in st.cells()) or \
-                sum(st.sand.values()) >= self.bc.win_sand_max:
+        if sum(st.sand.values()) >= self.bc.win_sand_max:
             return False
         if self.last_screen_reason != "finished board":
-            self.log.log("gameplay frame with an empty board and no sand (the finished level) - "
-                         "not a new level")
+            self.log.log("gameplay frame without sand (the finished level) - not a new level")
             self.log.event("finished_board", frame=self.frame_no)
             self.last_screen_reason = "finished board"
         if hasattr(self.analyzer, "reset_level"):

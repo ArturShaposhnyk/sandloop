@@ -75,7 +75,8 @@ def test_cell_label_notation():
 def test_lock_registry_is_data():
     names = [lock.name for lock in CELL_LOCKS]
     assert len(names) == len(set(names)) and "ice" in names
-    assert all(lock.unlock in ("taps", "fills", "key", "path", "adjacent") for lock in CELL_LOCKS)
+    assert all(lock.unlock in ("taps", "fills", "key", "path", "adjacent", "drops")
+               for lock in CELL_LOCKS)
     assert {"lock", "key", "chest", "mystery"} <= set(names)
     assert all(lock.counter in ("optional", "required", "none") for lock in CELL_LOCKS)
 

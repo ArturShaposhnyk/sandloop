@@ -267,6 +267,8 @@ bot:                         # python -m bot: plays one level (docs/GAME_RULES.m
   max_no_effect_taps: 2      # taps in a row that changed nothing -> stop
   screen_confirm_frames: 3   # leaving gameplay: non-gameplay this many analyses in a row (then flow: takes over)
   win_sand_max: 0.01         # no level_complete template yet: level left with less sand = win
+  infer_win_start_sand: 0.05 # ... only if the level had taps and started with at least this much sand
+                             # (run 20261021-112241: a phantom level on the finished board "won" at once)
   window_lost_max_s: 30.0    # no window / failed geometry check this long -> stop (run 161536:
                              # Mirroring vanished at 76 s; the bot waits for it to come back)
   max_run_s: 900.0           # one level, from its first gameplay frame

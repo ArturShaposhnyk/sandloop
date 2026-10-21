@@ -47,6 +47,9 @@ def parse_label(label: str) -> Tuple[str, Optional[str], Optional[str], Optional
     'key:yellow', 'chain:yellow' (L189 gate), 'pink-down+shell' (L188 shell bucket, see ``is_shell``) -> (kind, color, body,
     face_up, counter)."""
     label = label.removesuffix("+shell")
+    if label.startswith("tunnel"):   # L190 'tunnel5:down': colour slot = its opening side
+        num, _, opening = label[len("tunnel"):].partition(":")
+        return "tunnel", opening or None, None, None, int(num) if num else None
     for kind in ("lock", "key", "chain"):
         if label.startswith(kind + ":"):
             return kind, label[len(kind) + 1:], None, None, None
@@ -183,9 +186,14 @@ def build_icons(dataset: Path, ann: dict, pal: Palette, v: VisionConfig, out: Pa
                     cv2.imwrite(str(shells / f"{name}.png"), shell_grey(cell_crop(img, lat, r, c, v)))
                     names.append(name)
                     continue
-                if kind not in ("lock", "key", "chain"):
+                if kind not in ("lock", "key", "chain", "tunnel"):
                     continue
                 crop = icon_crop(img, lat, r, c, v)
+                if kind == "tunnel":   # L190: kind "tunnel_<opening>", no colour of its own
+                    name = f"tunnel_{colour}-x-{seq}-r{r}c{c}"
+                    cv2.imwrite(str(out / f"{name}.png"), icon_grey(crop))
+                    names.append(name)
+                    continue
                 name = f"{kind}-{colour}-{seq}-r{r}c{c}"
                 cv2.imwrite(str(out / f"{name}.png"), icon_grey(crop))
                 names.append(name)

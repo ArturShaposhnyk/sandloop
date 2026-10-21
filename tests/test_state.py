@@ -13,7 +13,8 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
     """Rows of space-separated cells: '.' empty, 'x' no cell, 'ice3' lock, 'cur2' curtain cell,
     'red' face-up bucket, 'red_' face-down bucket, 'red/blue' tower (top/body),
     'lock:red' / 'key:red' lock icon / key, 'chain:yellow' / 'chain:?' chain gate (L189),
-    'chest4' chest, 'mystery' mystery bucket, '<bucket>+shell' shell bucket (L188)."""
+    'chest4' chest, 'mystery' mystery bucket, '<bucket>+shell' shell bucket (L188),
+    'tunnel5:down' tunnel with 5 buckets, opening down (L190)."""
     grid = []
     for r, line in enumerate(rows):
         out = []
@@ -29,6 +30,10 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
                 out.append(Cell(r, c, Kind.LOCK, lock=kind,
                                 unlock="path" if kind == "key" else "key",
                                 color=None if colour == "?" else colour))
+            elif t.startswith("tunnel"):          # L190 'tunnel5:down'
+                num, _, opening = t[len("tunnel"):].partition(":")
+                out.append(Cell(r, c, Kind.LOCK, lock="tunnel", unlock="drops",
+                                counter=int(num) if num else None, opening=opening or None))
             elif t.startswith("chest"):
                 out.append(Cell(r, c, Kind.LOCK, lock="chest", unlock="path", counter=int(t[5:])))
             elif t == "mystery":
@@ -49,7 +54,7 @@ def make_state(rows: List[str], k: Optional[int] = 0, conveyor=(), sand: Optiona
         for cell in row:
             if cell is not None and cell.kind is Kind.LOCK and cell.region is None:
                 locks.append(Lock(cell.lock, cell.unlock, cell.counter, ((cell.row, cell.col),),
-                                  cell.color))
+                                  cell.color, cell.opening))
     from state import _merge_lock_icons
 
     st = LevelState(grid, exits, [], [], _merge_lock_icons(locks), k, 5, list(conveyor),

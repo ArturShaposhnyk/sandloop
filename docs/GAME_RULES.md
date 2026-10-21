@@ -403,6 +403,22 @@
   frames (same lattice), else UNKNOWN "hidden by hint arrow". Such cells are never tapped and
   never saved to `dataset/unknown/`.
 
+## Tunnel / dispenser (L190 SUPER HARD; user, 2026-10-21)
+- A tube / box in its own grid cell with a number N (L190 has several showing "5"). It holds N
+  buckets. When the bucket in the cell in front of the tunnel's opening is taken, the next
+  bucket drops out into that cell (in the direction of the opening) and N goes down by 1. An
+  empty tunnel stays on the board.
+- The dropped buckets have random colours from the level's palette; the next colour is NOT
+  visible in advance.
+- The tunnel itself is never passable: a wall for the path rule.
+- Bot: the tunnel is a lock cell `tunnel` with its number and opening side (annotation
+  `tunnelN:<up|down|left|right>`, icon templates `tunnel_<side>-...` from annotated shots,
+  `python -m tools.build_palette`). Taking the bucket in front of it (`state._drop_from_tunnel`)
+  leaves a bucket of unknown colour there - the worst case: that cell stays blocked and the plan
+  ends there (horizon) until the new bucket is seen; the tunnel's N count as buckets still to
+  come (`hidden_buckets`). Until the templates exist (no L190 frame yet) a tunnel cell reads
+  UNKNOWN: never tapped, an obstacle, saved to `dataset/unknown/`.
+
 ## Unknown / future obstacles
 Later levels introduce new obstacle / lock types beyond ice and curtains. Vision and strategy
 must be extensible:
@@ -454,6 +470,8 @@ must be extensible:
   it stay there (blocking that column) or disappear? The recording shows no frame of a shell
   dropping in (the blue shell and the r3c3 blue shell bucket both vanished between 066 and 067).
 - L188: when a picture lock opens, do its sand colours match what shows through the overlay?
+- L190: does a tunnel drop its first bucket at once when the cell in front of it is empty at
+  the start (or after a key / chest empties it), or only when a bucket is taken from there?
 - L189: the chain lock covers r4c2 + r5c2 on screen (padlock on their border, chains through
   both): one gate of two cells (as modelled) or a gate in r5c2 only?
 - Path rule vs. picture: in shot 010 the blue bucket at r4c4 (0-based) looks face-down although

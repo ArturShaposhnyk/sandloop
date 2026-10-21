@@ -31,11 +31,22 @@ class Lock:
     curtain."""
     kind: str                     # "ice", "curtain", "lock", "key", ...
     unlock: str                   # "taps" (any bucket tapped) | "fills" (a bucket reaches 100%)
-                                  # | "key" (the key of its colour arrives) | "path" (key: flies
+                                  # | "key" (the key of its colour arrives) | "drops" (L190 tunnel) | "path" (key: flies
                                   # when the path rule connects it to the exit)
     counter: Optional[int]        # number shown on it, None if not read
     cells: Tuple[Pos, ...]
     color: Optional[str] = None   # lock / key colour
+    opening: Optional[str] = None  # tunnel (L190): the side its buckets drop out of
+
+    def front(self) -> Optional[Pos]:
+        """Tunnel: the cell in front of its opening (where its next bucket drops)."""
+        from cells import TUNNEL_OPENINGS
+
+        d = TUNNEL_OPENINGS.get(self.opening or "")
+        if d is None:
+            return None
+        (r, c), = self.cells
+        return r + d[0], c + d[1]
 
 
 @dataclass(frozen=True)
@@ -102,7 +113,7 @@ class LevelState:
             for cell in row:
                 if cell is not None and cell.kind is Kind.LOCK and cell.region is None:
                     locks.append(Lock(cell.lock or "lock", cell.unlock or "", cell.counter,
-                                      ((cell.row, cell.col),), cell.color))
+                                      ((cell.row, cell.col),), cell.color, cell.opening))
         locks = _merge_lock_icons(locks)
         # the k/5 counter is authoritative: edge slots without a label may be end posts or
         # buckets entering/leaving, and at k=0 anything seen on the belt is decoration
@@ -179,6 +190,9 @@ class LevelState:
         n = sum(len(lock.cells) for lock in self.locks
                 if lock.kind in ("curtain", "lock", "mystery"))
         n += sum(lock.counter or 1 for lock in self.locks if lock.kind == "chest")
+        # L190 tunnels: N more buckets each (unread number: at least 1)
+        n += sum(1 if lock.counter is None else lock.counter for lock in self.locks
+                 if lock.kind == "tunnel")
         return n + sum(c.hidden for c in self.cells(Kind.UNKNOWN))
 
     def pending_buckets(self) -> float:
@@ -227,12 +241,13 @@ class LevelState:
         nxt.grid[r][c] = Cell(r, c, Kind.EMPTY)
         nxt.revealed = nxt._reveal_mysteries(pos)
         nxt.locks = [Lock(l.kind, l.unlock, max(0, l.counter - 1), l.cells)
-                     if l.unlock == "taps" and l.counter is not None else l for l in self.locks]
+                     if l.unlock == "taps" and l.counter is not None else l for l in nxt.locks]
         for lock in nxt.locks:
             for lr, lc in lock.cells:
                 lcell = nxt.grid[lr][lc]
                 if lcell is not None and lcell.kind is Kind.LOCK:
                     lcell.counter = lock.counter
+        nxt._drop_from_tunnel(pos)
         nxt.unlocked = nxt._release_keys()
         nxt.chests_opened = nxt._open_chests()
         nxt.conveyor = self.conveyor + [
@@ -242,6 +257,25 @@ class LevelState:
         nxt.disagreements = [p for p in self.disagreements if p != pos]
         nxt.tappable = [p for p in nxt.playable() if p not in nxt.disagreements]
         return nxt
+
+    def _drop_from_tunnel(self, pos: Pos) -> None:
+        """L190 (user): the bucket in front of a tunnel's opening was taken -> its next bucket
+        drops into that cell (colour random, not visible: UNKNOWN here - the worst case, it
+        blocks the cell again) and its number goes down by 1. An unread number counts as at
+        least one bucket left; an empty tunnel stays (a wall)."""
+        for lock in list(self.locks):
+            if lock.kind != "tunnel" or lock.front() != tuple(pos) or lock.counter == 0:
+                continue
+            r, c = pos
+            self.grid[r][c] = Cell(r, c, Kind.UNKNOWN, hidden=1,
+                                   reason="tunnel drop: colour not seen yet")
+            left = None if lock.counter is None else lock.counter - 1
+            self.locks[self.locks.index(lock)] = Lock(lock.kind, lock.unlock, left, lock.cells,
+                                                      lock.color, lock.opening)
+            (tr, tc), = lock.cells
+            if self.grid[tr][tc] is not None:
+                self.grid[tr][tc].counter = left
+            return
 
     def _release_keys(self) -> List[Tuple[str, Tuple[Pos, ...]]]:
         """Keys the path rule connects to the exit fly to the lock of their colour: the key's
