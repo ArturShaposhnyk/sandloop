@@ -377,6 +377,14 @@ class DeciderConfig:
     weight_open: float = 0.05         # cell opened (ice, key lock, chain gate, mystery)
     weight_full: float = 0.05         # tap into the last free slot
     weight_deficit: float = 0.1       # exposed colour with a bucket waiting but no free slot
+    # the simulator the search plans in (phase D fit, tools/simfit.py: reproduces all 10 real
+    # outcomes); None = the level planner's (planner: 2x fields)
+    model_fill_rate: Optional[float] = 600.0
+    model_fill_max: Optional[float] = 40.0
+    model_fill_min_exposed: Optional[float] = 0.0
+    model_reach_delay_s: float = 3.5
+    model_finish_tol: float = 0.03
+    model_contact_scale: float = 3.0
     fallback_lost: float = 0.5        # every candidate lost in this share of the worlds: the
     #   old decider (strategy + level plan) decides (user, live L190 run 20261021-232340)
 
@@ -536,7 +544,8 @@ def validate(cfg: Config) -> Config:
     if min(dc.particles, dc.beam, dc.max_depth) < 1 or min(
             dc.budget_s, dc.start_budget_s, dc.wait_max_s, dc.wait_idle_s, dc.replan_s,
             dc.keep_margin, dc.gain_min, dc.gain_window_s, dc.fresh_grace_s, dc.stall_s,
-            dc.rate_window_s, dc.override_s, dc.forget_s, dc.fallback_lost) < 0:
+            dc.rate_window_s, dc.override_s, dc.forget_s, dc.fallback_lost,
+            dc.model_reach_delay_s, dc.model_finish_tol) < 0 or dc.model_contact_scale <= 0:
         raise ConfigError("decider: particles / beam / max_depth must be >= 1, times >= 0")
     fl = cfg.flow
     if fl.confirm_frames < 1 or fl.same_button_max < 1 or fl.max_taps_between_levels < 1:

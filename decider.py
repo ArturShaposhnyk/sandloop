@@ -48,10 +48,27 @@ def search_config(cfg: Any, slots: int, x2: bool) -> SimConfig:
     """The planner's fitted simulator; shell buckets may go any time (their idle is priced)."""
     from levelplan import sim_config
 
+    dc = cfg.decider
     sc = sim_config(cfg.planner, slots, x2)
     sc.strict_shells = False
-    sc.max_wait_s = cfg.decider.wait_max_s
+    sc.max_wait_s = dc.wait_max_s
+    if x2:   # the phase D fit (2x belt runs only)
+        for name in ("fill_rate", "fill_max", "fill_min_exposed"):
+            v = getattr(dc, f"model_{name}")
+            if v is not None:
+                setattr(sc, name, v)
+        sc.reach_delay_s, sc.finish_tol = dc.model_reach_delay_s, dc.model_finish_tol
     return sc
+
+
+def scaled(pic: Picture, cfg: Any, x2: bool) -> Picture:
+    """The picture with the fitted contact depth (``decider.model_contact_scale``, 2x)."""
+    k = cfg.decider.model_contact_scale if x2 else 1.0
+    if k != 1.0:
+        pic = pic.copy()
+        pic.contact = max(1, round(pic.contact * k))
+        pic._layer = None
+    return pic
 
 
 # --- score -------------------------------------------------------------------------------------
@@ -398,6 +415,7 @@ class SearchDecider:
         st = state.fork()
         st.conveyor = self.belief.buckets()
         sc = search_config(self.cfg, state.conveyor_slots, self.x2)
+        pic = scaled(pic, self.cfg, self.x2)
         cap = None
         sand = sum(state.sand.values())
         if self.capacity_shares and sand > 0:   # memory: picture share -> cells

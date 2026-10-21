@@ -165,10 +165,11 @@ def outcome(cfg, level: str, run: str, attempt: int, world, starts) -> Dict[str,
     taps = [(t["t"], tuple(t["pos"])) for t in rec["tap_log"] if t.get("executed", True)]
     state, pic = starts[level]
     w = sp.make_world(cfg, state, pic, 0, 0.0, sp.truth(cfg, level), world)
-    total, now, blocked = w.pic.total(), 0.0, 0
+    total, now, blocked, last_gain = w.pic.total(), 0.0, 0, 0.0
     for t, pos in taps:
         while now < t - taps[0][0]:
-            w.lap()
+            if w.lap() > 0:
+                last_gain = now
             now += w.sc.lap_s
         cell = w.grid.cell(pos)
         if (cell is None or cell.kind is not Kind.BUCKET or not cell.color or w.free <= 0
@@ -177,11 +178,14 @@ def outcome(cfg, level: str, run: str, attempt: int, world, starts) -> Dict[str,
             continue
         w.place(pos)
     for _ in range(300):
-        w.lap()
+        if w.lap() > 0:
+            last_gain = now
+        now += w.sc.lap_s
     won = w.won or w.pic.total() <= 0.005 * total
     return {"level": level, "run": run, "attempt": attempt, "real": rec["result"],
             "sim": "win" if won else "fail", "blocked": blocked, "taps": len(taps),
-            "collected": round(w.collected / max(1, total), 3)}
+            "collected": round(w.collected / max(1, total), 3),
+            "sim_end_s": round(last_gain), "real_end_s": round(rec.get("duration_s") or 0)}
 
 
 def evaluate(cfg, run_dirs: Sequence[Path], world: Dict[str, float], horizon: float = 40.0,
@@ -254,7 +258,8 @@ def report(r: Dict[str, Any]) -> List[str]:
     for o in r["outcomes"]:
         lines.append(f"    {o['level']} {o['run']} #{o['attempt']}: real {o['real']}, sim "
                      f"{o['sim']} ({o['blocked']}/{o['taps']} taps blocked, collected "
-                     f"{o['collected']:.0%})")
+                     f"{o['collected']:.0%}; belt last collected at {o['sim_end_s']} s, real "
+                     f"level {o['real_end_s']} s)")
     return lines
 
 

@@ -392,6 +392,17 @@ decider:                     # redesign phase C (docs/STATUS.md): which decider 
   weight_open: 0.05          # per cell opened
   weight_full: 0.05          # per tap into the last free slot
   weight_deficit: 0.1        # exposed colour with a bucket waiting and no free slot (reserves)
+  # the simulator the search plans in - phase D fit (python -m tools.simfit on tools/realcal.py:
+  # the real L187 000105 and L189 112241 #2 tap sequences win, all 8 real losses lose, belt
+  # stops near the real level end; per-bucket "left within 40 s" agreement 0.84). Real buckets
+  # read 0 % for ~3 s, then jump 50-70 points in ~1 s, then plateau: fast collection of what
+  # is reachable (contact layer x3), a travel delay, 99 % = full. 2x belt only (all fitted runs).
+  model_fill_rate: 600.0
+  model_fill_max: 40.0
+  model_fill_min_exposed: 0.0
+  model_reach_delay_s: 3.5
+  model_finish_tol: 0.03
+  model_contact_scale: 3.0
   # safety (user, live L190 run 20261021-232340: 3 losses in 35-60 s, every candidate "lost"):
   # every search candidate lost in at least this share of the sampled worlds -> the old
   # decider (strategy + level plan, kept running alongside) decides this frame

@@ -47,6 +47,9 @@ PRESETS: Dict[str, Dict[str, float]] = {
     "model": {},
     "medium": {"fill_min_exposed": 0.02, "contact": 1.5},
     "generous": {"fill_min_exposed": 0.0, "contact": 2.0},
+    # phase D fit (tools/simfit.py): reproduces the 10 real outcomes (config decider.model_*)
+    "fitted": {"fill_rate": 600.0, "fill_max": 40.0, "fill_min_exposed": 0.0,
+               "reach_delay_s": 3.5, "finish_tol": 0.03, "contact": 3.0},
 }
 
 
