@@ -28,6 +28,25 @@ Tests: `python -m pytest -q` - all 812 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
 
 ## Where it stands (2026-10-21)
+### Handoff summary (before /clear, `721de47` + this note)
+- **L187 (HARD) won** live (run `20261021-000105`, 29 taps, plan followed to the end); the
+  finished board after a win no longer counts as a new level (`66a279d`).
+- **Belt speed 2x**: the free ▶▶2x button (resets every level) is tapped at level start
+  (`bot.speed_x2`), the planner uses 2x fill speeds (`tap_s` not scaled, user agreed); 2x
+  calibration still to do (`python -m tools.belt_speed <2x run>` -> `planner.speed_x2_fill_*`).
+- **Ads**: chains of skip ▶| / ✕ (incl. a small ✕ on a yellow disc) tapped every 3 s until a
+  known screen (`flow.ad_retap_s`, cap `ad_chain_max_s` 10 min); never INSTALL / Download / Get.
+- **Endgame rules (user)**: gamble only buckets that can fill (or open one that can), plan
+  steps the sand rules reject are skipped + re-planned, towers only when the top can fill, key
+  colour may take the reserved last slot at 20 %; margins stay 1.0 (run 171133 evidence).
+- **L188**: shell buckets (tap only with a shell of their colour at the bottom), shells in the
+  picture, picture locks (keys under the curtain, confirmed; box sand masked); **L189**: chain
+  lock gate + magenta lock / key. Details below; mechanics in docs/GAME_RULES.md. Not yet
+  live-tested: L188 / L189 code. Open questions for the user: listed at the end of
+  GAME_RULES.md (one shell per shell bucket? shell at the bottom with no bucket waiting? the
+  chain lock as one 2-cell gate?).
+- NEXT: live `python -m bot --levels 3` from L188 (see NEXT below).
+
 - **L188 / L189 mechanics (user-confirmed, docs/GAME_RULES.md)**. L188 run `20261021-001541`
   stopped by the user: the grid failed "grid geometry 6x4: walls off its cell boundaries (fit
   0.77)" - the board WAS read right (4 columns + 2-cell top lane); blue / pink (shell) bucket
@@ -116,7 +135,7 @@ The shared test Analyzers use a frozen fake clock, so results never depend on ma
   were the cut picture edge (fixed in `6198f3b`). At 0.9 the bot repeats that tap (171133
   regression test). `sufficiency_margin` (0.5) untouched. tap_s not scaled at 2x (user
   agreed). Lookahead-jam moves now count for the last-slot gamble too.
-### Handoff summary (before /clear, `d1cd250`)
+### Earlier handoff summary (2026-10-20, `d1cd250`)
 - **Planner** (`levelplan.py`, `sim.py`, `planner:` in config.yaml): beam search over tap / wait
   sequences at level start and on every unmatched board; ranked win > fewer dead belt buckets >
   sand collected; full belts of dead buckets dropped; unread belt buckets keep their slots; a
