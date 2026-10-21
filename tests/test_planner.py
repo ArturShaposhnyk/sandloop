@@ -98,8 +98,8 @@ def test_path_to_a_key():
     assert choose(st, NO_PATHS).move.color == "orange"
     d = choose(st, SC)
     key = d.plans[0]
-    assert key.label == "key yellow" and key.steps == [(0, 1), (1, 1)]
-    assert d.move.pos == (0, 1) and "path to key yellow: step 1/2" in d.reason
+    assert key.label.startswith("key yellow (lock: ") and key.steps == [(0, 1), (1, 1)]
+    assert d.move.pos == (0, 1) and "path to key yellow (lock: 0 bucket(s) behind): step 1/2" in d.reason
 
 
 def test_one_step_targets_are_left_to_the_unlock_value():

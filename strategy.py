@@ -17,8 +17,8 @@ Score of the rest: avail + buckets / lock cells the tap connects to the exit (on
 - the risk of a chest it opens (its N buckets land in free cells at random: expected cuts of
 paths + the share of free cells, planner.scatter_risk) + a bonus per mystery bucket it reveals
 (more if that one is then connected to the exit)
-+ the unlock value (usefulness of the opened buckets' colours, planner.py) + buckets under a
-lock that a released key opens - a penalty for a stalled colour - a penalty per later tower
++ the unlock value (usefulness of the opened buckets' colours, planner.py) + lock cells a
+released key frees (a lock is a blocking cell, no bucket under it) - a penalty for a stalled colour - a penalty per later tower
 stage whose colour has not enough sand left (a tower takes one belt slot until ALL its stages
 are full, so a starving stage blocks that slot) + a bonus for a colour not on the belt yet + the
 path bonus for the first step of the best safe path to a useful hidden bucket or a key
@@ -117,7 +117,7 @@ class Candidate:
         extra = f", {len(self.opens_locks)} lock cell(s)" if self.opens_locks else ""
         extra += "".join(f", opens chain lock {col}" for col, _ in self.gates)
         extra += "".join(f", opens picture lock {col}" for col in self.pics)
-        extra += "".join(f", opens lock {col} with {len(cells)} bucket(s)"
+        extra += "".join(f", opens lock {col} ({len(cells)} cell(s) free)"
                          for col, cells in self.unlocks)
         if self.stages:
             extra += ", tower then " + "/".join(

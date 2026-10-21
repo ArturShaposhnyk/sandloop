@@ -154,7 +154,7 @@ def test_live_regression_054_face_up_tower_on_another_colour(analyzer):  # noqa:
     assert move.pos == (2, 5) and move.color == "darkgreen"
     assert move.unlocks == [("yellow", ((2, 1),))]
     assert move.stages == ["cyan"] and move.short_stages == []   # plenty of cyan sand
-    assert "opens lock yellow with 1 bucket(s)" in move.describe()
+    assert "opens lock yellow (1 cell(s) free)" in move.describe()
     nxt = res.state.after_tap((2, 5))
     assert nxt.cell((2, 5)).kind is Kind.EMPTY and nxt.cell((2, 6)).kind is Kind.EMPTY
     assert nxt.conveyor[-1].stages == ("cyan",)

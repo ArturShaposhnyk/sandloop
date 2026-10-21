@@ -103,12 +103,10 @@ def targets(state: LevelState, sc: StrategyConfig) -> List[Tuple[Pos, str, float
         locks = [l for l in state.locks if l.kind in ("lock", "chain") and l.color == key.color]
         if len(locks) != 1:   # several locks of its colour: which one opens is not known
             continue
-        if locks[0].kind == "chain":   # L189 gate: worth the buckets it lets the path reach
-            n = len(state.behind_gate(locks[0]))
-            out.append((key.cells[0], f"key {key.color} (chain: {n} bucket(s) behind)",
-                        sc.path_key_value * max(1, n)))
-        else:
-            out.append((key.cells[0], f"key {key.color}", sc.path_key_value * len(locks[0].cells)))
+        # a lock / chain gate is worth the buckets it lets the path reach (no bucket under it)
+        n = len(state.behind_gate(locks[0]))
+        out.append((key.cells[0], f"key {key.color} ({locks[0].kind}: {n} bucket(s) behind)",
+                    sc.path_key_value * max(1, n)))
     return out
 
 

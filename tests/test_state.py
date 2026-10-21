@@ -229,11 +229,11 @@ def test_key_connected_by_a_tap_flies_and_opens_its_lock():
     st = make_state(["red blue x",
                      "key:yellow pink_ lock:yellow",
                      "lock:red cyan_ cyan_"])
-    assert st.hidden_buckets == 2                 # one under every lock cell
+    assert st.hidden_buckets == 0                 # a lock hides no bucket (user, 2026-10-21)
     nxt = st.after_tap((0, 0))                    # connects the yellow key to the exit
     assert nxt.unlocked == [("yellow", ((1, 2),))]
     assert nxt.cell((1, 0)).kind is Kind.EMPTY    # the key flew away (assumption)
-    assert nxt.cell((1, 2)).kind is Kind.UNKNOWN  # lock open, bucket colour not seen yet
+    assert nxt.cell((1, 2)).kind is Kind.EMPTY    # lock open: its cell is free
     assert nxt.cell((2, 0)).kind is Kind.LOCK     # the red lock stays: its key is not here
     assert [l.kind for l in nxt.locks] == ["lock"]
     assert st.cell((1, 0)).kind is Kind.LOCK      # original state untouched
@@ -279,5 +279,5 @@ def test_strategy_credits_the_lock_a_tap_opens():
                     exposed={"red": 0.2, "blue": 0.2})
     d = choose(st, StrategyConfig())
     red = next(c for c in d.candidates if c.color == "red")
-    assert red.unlocks == [("yellow", ((2, 0),))] and "opens lock yellow with 1 bucket" in red.describe()
+    assert red.unlocks == [("yellow", ((2, 0),))] and "opens lock yellow (1 cell(s) free)" in red.describe()
     assert d.move.color == "red"                  # same exposure, but it releases the key

@@ -39,7 +39,8 @@ def _record_signature(r: Dict[str, Any]) -> Optional[str]:
     return level_signature(grid) if grid else r.get("signature")
 
 
-HIDING = ("ice", "lock:", "cur")   # start labels of cells that cover a bucket of unseen colour
+HIDING = ("ice", "cur")   # start labels of cells that cover a bucket of unseen colour (a
+#   key lock covers none: user, 2026-10-21 - its cell reads the lock's colour while it fades)
 
 
 def _colours(labels: Sequence[str]) -> Set[str]:
@@ -92,8 +93,9 @@ class LevelMemory:
         return out
 
     def revealed(self, signature: str) -> Dict[Pos, Tuple[str, Optional[str]]]:
-        """Cell -> (colour, lower stage or None) seen under ice / locks / curtains in earlier
-        attempts of the board (the latest attempt wins)."""
+        """Cell -> (colour, lower stage or None) seen under ice / curtains in earlier attempts
+        of the board (the latest attempt wins). Cells that were no ice / curtain at the start
+        are left out (a key lock's fading padlock read as a bucket, L189 run 112241 r2c4)."""
         out: Dict[Pos, Tuple[str, Optional[str]]] = {}
         for r in self.attempts(signature):
             seen = dict(r.get("revealed") or {})
@@ -103,8 +105,12 @@ class LevelMemory:
                     for j, (la, lb) in enumerate(zip(a.split(), b.split())):
                         if la.startswith(HIDING) and lb.endswith(("-up", "-down")):
                             seen[f"{i},{j}"] = lb.rsplit("-", 1)[0]
+            rows = [line.split() for line in start or []]
             for key, label in seen.items():
                 row, col = (int(x) for x in key.split(","))
+                if rows and not (row < len(rows) and col < len(rows[row])
+                                 and rows[row][col].startswith(HIDING)):
+                    continue   # e.g. a key lock's cell: its fading padlock, not a bucket
                 top, _, body = label.partition("/")
                 out[(row, col)] = (top, body or None)
         return out
