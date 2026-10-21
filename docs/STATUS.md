@@ -26,10 +26,73 @@ OK. Branch: `claude/compassionate-dijkstra-osnm1j` (pushed).
 | 7 | L189 run 101655: popup screen, level memory (record order, face-free signature, whole-level bans, colours under locks, clean end reads), player hints in the planner, 2x belt speeds | `44fdfc0` |
 | 7 | run 112241: L189 WON; no phantom level / inferred win; L190 tunnel model | `f59c683` |
 | 7 | L190 tunnels read (annotations 073-084, templates, outlined digits), collect numbering | `069a463` |
+| 7 | hotfix: belt stall clock uses the k counter (L190 run 122825 idled 2 min) | `31a1002` |
+| R-A | redesign phase A: replay harness `tools/replay.py`, 1 s picture + belt crops | `e2a4857` |
+| 7 | hint arrows below the grid masked, no repeated dead tap (L190 run 143729) | `3644fa7` |
+| R-B | redesign phase B: simulator fitted (`tools/fit_sim.py`), 4 px picture, 5x faster sim | `1aa57d8` |
 | fixes | test clock (`85e5960`); L187 lattice / colours / locks (`76ea470`, `5750651`); unlock rule + this handoff (`c9e26e2`); lattice never replaced mid-level + open-tower foot (`428a308`); last-slot gamble + flying bucket (`ebd0c2a`) | |
 
 Tests: `python -m pytest -q` - all 976 pass.
 The shared test Analyzers use a frozen fake clock, so results never depend on machine load.
+
+## Redesign: one search-based decider (agreed with the user 2026-10-21) - NEXT: phase C
+Why: three decision layers (level plan, strategy rules, slot reserves) vetoed each other and the
+bot idled while nothing filled (L190 runs 122825 / 143729: plan step -> rule rejects -> reserve
+blocks -> re-plan, in a loop). Target design:
+- **One decision maker**: the simulator + search picks every move. Hard constraints only from
+  game rules (path rule, belt slots, locks / ice / tunnels / chests, shells collect nothing until
+  their shell arrives, a tower's lower stage only after the top is full - exact dynamics in the
+  sim). Perception guards stay hard (face / path disagreement, unconfident unlock colour,
+  in-flight bucket, chest settle, dead tap). Today's heuristics become **score terms**, not
+  vetoes: 25 % / exposure rules, sufficiency / tower top must fill / gamble margins -> expected
+  dead slots; key / ice / endgame reserves -> slot deficit; stalled colour -> idle slot-seconds;
+  "don't tap a shell bucket early" -> its idle cost; chest scatter / mystery reveal as now.
+- **Unknowns sampled, not a horizon**: tunnel drops, ice / curtain / lock contents, chests get K
+  sampled colours weighted by the colour balance (missing buckets ~ sand / capacity - known
+  buckets); the action with the best mean score over the samples wins.
+- **Never idle pointlessly**: "wait" is an action only while the belief has a belt bucket that is
+  actually gaining sand; otherwise the best tap now.
+- **Offline learning**: (a) replay harness: sim vs real belt / sand on all runs, fit the sand
+  model (done: A, B); (b) self-play on the recorded start boards of L187-L190, weights tuned by
+  win rate (phase D).
+
+| Phase | What | Status |
+|---|---|---|
+| A | replay harness + accuracy report (no behaviour change) | done `e2a4857` |
+| B | fit the sim, 4 px picture, speed-up | done `1aa57d8` |
+| C | belief (slot-level belt tracker + online correction) + new decider behind `decider: search` | next |
+| D | self-play harness, weight tuning by win rate | |
+| E | live check with the user, delete the old layers, bot notes -> docs/STRATEGY.md | |
+
+Results so far (replay, 942 trajectories of 26 runs; "gains sand within 10 s"):
+
+| | old sim | fitted sim (B) |
+|---|---|---|
+| stall recall all / L189 | 76 % / 26 % | 88 % / 90 % |
+| gain recall all / L189 | 63 % / 73 % | 64 % / 51 % |
+| fill MAE 5-10 / 10-20 / 20-30 s (pts) | 13.8 / 14.9 / 17.5 | 11.5 / 13.6 / 16.3 |
+| held-out runs, stall recall | 77 % / 76 % | 80 % / 85 % |
+| planner speed | 0.8-1.6 ms / node | 0.22-0.30 ms / node (4 px) |
+
+**Phase C plan** (user requirements 2026-10-21 in bold):
+1. `belief.py`: belt slots tracked by identity across frames (k counter authoritative, flicker
+   tolerant - BeltTracker's lessons), per slot observed fill rate.
+2. **Online correction both ways**: a slot whose real fill does not move while the sim predicts
+   gain -> its colour's reachable sand 0 in the sim until the picture changes (stall); **a slot
+   that is really gaining (e.g. a fresh bucket filling fast) counts as filling at once, its
+   observed rate replaces the curve's (pessimism, gain recall 51 % on L189)**.
+3. `decider.py`: receding-horizon beam search over the corrected sim, K sampled worlds for
+   unknown buckets, score terms with weights in `config.yaml decider:`; returns tap(s) / wait.
+4. **Never idle while no belt bucket is gaining sand**: wait only while the belief has a slot
+   gaining; else the best available tap.
+5. **Behind `decider: search`; the old decider stays default** until the new one wins the
+   recorded L187 and L189 scenarios at least as often in replay / self-play. The won runs of L187
+   (000105) and L189 (112241) are must-pass scenarios.
+6. **Report**: decisions on the recorded L187 / L189 / L190 boards, old vs new, and what to run
+   live.
+
+Tools: `python -m tools.replay` (accuracy), `python -m tools.fit_sim [--cell-px 4] [--cv]` (fit),
+`debug/replay/` (reports, cache - `--rebuild` after vision changes).
 
 ## Where it stands (2026-10-21)
 ### Redesign phase B: simulator fitted to the runs (`tools/fit_sim.py`)
